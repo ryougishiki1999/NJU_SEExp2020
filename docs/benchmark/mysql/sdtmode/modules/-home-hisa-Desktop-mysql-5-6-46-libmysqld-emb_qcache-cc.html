@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/libmysqld/emb_qcache.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2011, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+#include "sql_priv.h"
+#include "my_global.h"                          // HAVE_*
+
+#ifdef HAVE_QUERY_CACHE
+#include &lt;mysql.h&gt;
+#include "emb_qcache.h"
+#include "embedded_priv.h"
+#include "sql_class.h"                          // THD
+
+void Querycache_stream::store_uchar(uchar c)
+{
+  if (data_end == cur_data)
+    use_next_block(TRUE);
+  *(cur_data++)= c;
+#ifndef DBUG_OFF
+  stored_size++;
+#endif
+}
+
+void Querycache_stream::store_short(ushort s)
+{
+#ifndef DBUG_OFF
+  stored_size+= 2;
+#endif
+  if (data_end - cur_data &gt; 1)
+  {
+    int2store(cur_data, s);
+    cur_data+= 2;
+    return;
+  }
+  if (data_end == cur_data)
+  {
+    use_next_block(TRUE);
+    int2store(cur_data, s);
+    cur_data+= 2;
+    return;
+  }
+  *cur_data= ((uchar *)(&amp;s))[0];
+  use_next_block(TRUE);
+  *(cur_data++)= ((uchar *)(&amp;s))[1];
+}
+
+void Querycache_stream::store_int(uint i)
+{
+#ifndef DBUG_OFF
+  stored_size+= 4;
+#endif
+  size_t rest_len= data_end - cur_data;
+  if (rest_len &gt; 3)
+  {
+    int4store(cur_data, i);
+    cur_data+= 4;
+    return;
+  }
+  if (!rest_len)
+  {
+    use_next_block(TRUE);
+    int4store(cur_data, i);
+    cur_data+= 4;
+    return;
+  }
+  char buf[4];
+  int4store(buf, i);
+  memcpy(cur_data, buf, rest_len);
+  use_next_block(TRUE);
+  memcpy(cur_data, buf+rest_len, 4-rest_len);
+  cur_data+= 4-rest_len;
+}
+
+void Querycache_stream::store_ll(ulonglong ll)
+{
+#ifndef DBUG_OFF
+  stored_size+= 8;
+#endif
+  size_t rest_len= data_end - cur_data;
+  if (rest_len &gt; 7)
+  {
+    int8store(cur_data, ll);
+    cur_data+= 8;
+    return;
+  }
+  if (!rest_len)
+  {
+    use_next_block(TRUE);
+    int8store(cur_data, ll);
+    cur_data+= 8;
+    return;
+  }
+  memcpy(cur_data, &amp;ll, rest_len);
+  use_next_block(TRUE);
+  memcpy(cur_data, ((uchar*)&amp;ll)+rest_len, 8-rest_len);
+  cur_data+= 8-rest_len;
+}
+
+void Querycache_stream::store_str_only(const char *str, uint str_len)
+{
+#ifndef DBUG_OFF
+  stored_size+= str_len;
+#endif
+  do
+  {
+    size_t rest_len= data_end - cur_data;
+    if (rest_len &gt;= str_len)
+    {
+      memcpy(cur_data, str, str_len);
+      cur_data+= str_len;
+      return;
+    }
+    memcpy(cur_data, str, rest_len);
+    use_next_block(TRUE);
+    str_len-= rest_len;
+    str+= rest_len;
+  } while(str_len);
+}
+
+void Querycache_stream::store_str(const char *str, uint str_len)
+{
+  store_int(str_len);
+  store_str_only(str, str_len);
+}
+
+void Querycache_stream::store_safe_str(const char *str, uint str_len)
+{
+  if (str)
+  {
+    store_int(str_len+1);
+    store_str_only(str, str_len);
+  }
+  else
+    store_int(0);
+}
+
+uchar Querycache_stream::load_uchar()
+{
+  if (cur_data == data_end)
+    use_next_block(FALSE);
+  return *(cur_data++);
+}
+
+ushort Querycache_stream::load_short()
+{
+  ushort result;
+  if (data_end-cur_data &gt; 1)
+  {
+    result= uint2korr(cur_data);
+    cur_data+= 2;
+    return result;
+  }
+  if (data_end == cur_data)
+  {
+    use_next_block(FALSE);
+    result= uint2korr(cur_data);
+    cur_data+= 2;
+    return result;
+  }
+  ((uchar*)&amp;result)[0]= *cur_data;
+  use_next_block(FALSE);
+  ((uchar*)&amp;result)[1]= *(cur_data++);
+  return result;
+}
+
+uint Querycache_stream::load_int()
+{
+  int result;
+  size_t rest_len= data_end - cur_data;
+  if (rest_len &gt; 3)
+  {
+    result= uint4korr(cur_data);
+    cur_data+= 4;
+    return result;
+  }
+  if (!rest_len)
+  {
+    use_next_block(FALSE);
+    result= uint4korr(cur_data);
+    cur_data+= 4;
+    return result;
+  }
+  char buf[4], *buf_p= buf;
+  memcpy(buf, cur_data, rest_len);
+  use_next_block(FALSE);
+  memcpy(buf+rest_len, cur_data, 4-rest_len);
+  cur_data+= 4-rest_len;
+  result= uint4korr(buf_p);
+  return result;
+}
+
+ulonglong Querycache_stream::load_ll()
+{
+  ulonglong result;
+  size_t rest_len= data_end - cur_data;
+  if (rest_len &gt; 7)
+  {
+    result= uint8korr(cur_data);
+    cur_data+= 8;
+    return result;
+  }
+  if (!rest_len)
+  {
+    use_next_block(FALSE);
+    result= uint8korr(cur_data);
+    cur_data+= 8;
+    return result;
+  }
+  memcpy(&amp;result, cur_data, rest_len);
+  use_next_block(FALSE);
+  memcpy(((uchar*)&amp;result)+rest_len, cur_data, 8-rest_len);
+  cur_data+= 8-rest_len;
+  return result;
+}
+
+void Querycache_stream::load_str_only(char *buffer, uint str_len)
+{
+  do
+  {
+    size_t rest_len= data_end - cur_data;
+    if (rest_len &gt;= str_len)
+    {
+      memcpy(buffer, cur_data, str_len);
+      cur_data+= str_len;
+      buffer+= str_len;
+      break;
+    }
+    memcpy(buffer, cur_data, rest_len);
+    use_next_block(FALSE);
+    str_len-= rest_len;
+    buffer+= rest_len;
+  } while(str_len);
+  *buffer= 0;
+}
+
+char *Querycache_stream::load_str(MEM_ROOT *alloc, uint *str_len)
+{
+  char *result;
+  *str_len= load_int();
+  if (!(result= (char*) alloc_root(alloc, *str_len + 1)))
+    return 0;
+  load_str_only(result, *str_len);
+  return result;
+}
+
+int Querycache_stream::load_safe_str(MEM_ROOT *alloc, char **str, uint *str_len)
+{
+  if (!(*str_len= load_int()))
+  {
+    *str= NULL;
+    return 0;
+  }
+  (*str_len)--;
+  if (!(*str= (char*) alloc_root(alloc, *str_len + 1)))
+    return 1;
+  load_str_only(*str, *str_len);
+  return 0;
+}
+
+int Querycache_stream::load_column(MEM_ROOT *alloc, char** column)
+{
+  int len;
+  if (!(len = load_int()))
+  {
+    *column= NULL;
+    return 0;
+  }
+  len--;
+  if (!(*column= (char *)alloc_root(alloc, len + sizeof(uint) + 1)))
+    return 1;
+  *((uint*)*column)= len;
+  (*column)+= sizeof(uint);
+  load_str_only(*column, len);
+  return 1;
+}
+
+uint emb_count_querycache_size(THD *thd)
+{
+  uint result= 0;
+  MYSQL_FIELD *field;
+  MYSQL_FIELD *field_end;
+  MYSQL_ROWS *cur_row;
+  my_ulonglong n_rows;
+  MYSQL_DATA *data= thd-&gt;first_data;
+
+  while (data-&gt;embedded_info-&gt;next)
+    data= data-&gt;embedded_info-&gt;next;
+  field= data-&gt;embedded_info-&gt;fields_list;
+  field_end= field + data-&gt;fields;
+  
+  if (!field)
+    return result;
+  *data-&gt;embedded_info-&gt;prev_ptr= NULL; // this marks the last record
+  cur_row= data-&gt;data;
+  n_rows= data-&gt;rows;
+  /* n_fields + n_rows + field_info * n_fields */
+  result+= (uint) (4+8 + 42*data-&gt;fields);
+
+  for(; field &lt; field_end; field++)
+  {
+    result+= field-&gt;name_length + field-&gt;table_length +
+      field-&gt;org_name_length + field-&gt;org_table_length + field-&gt;db_length +
+      field-&gt;catalog_length;
+    if (field-&gt;def)
+      result+= field-&gt;def_length;
+  }
+  
+  if (thd-&gt;protocol == &amp;thd-&gt;protocol_binary)
+  {
+    result+= (uint) (4*n_rows);
+    for (; cur_row; cur_row=cur_row-&gt;next)
+      result+= cur_row-&gt;length;
+  }
+  else
+  {
+    result+= (uint) (4*n_rows*data-&gt;fields);
+    for (; cur_row; cur_row=cur_row-&gt;next)
+    {
+      MYSQL_ROW col= cur_row-&gt;data;
+      MYSQL_ROW col_end= col + data-&gt;fields;
+      for (; col &lt; col_end; col++)
+        if (*col)
+<span style = "background-color:#fdd">          result+= *(uint *)((*col) - sizeof(uint));        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+    }
+  }
+  return result;
+}
+
+void emb_store_querycache_result(Querycache_stream *dst, THD *thd)
+{
+  MYSQL_FIELD *field;
+  MYSQL_FIELD *field_end;
+  MYSQL_ROWS *cur_row;
+  my_ulonglong n_rows;
+  MYSQL_DATA *data= thd-&gt;first_data;
+
+  DBUG_ENTER("emb_store_querycache_result");
+
+  while (data-&gt;embedded_info-&gt;next)
+    data= data-&gt;embedded_info-&gt;next;
+  field= data-&gt;embedded_info-&gt;fields_list;
+  field_end= field + data-&gt;fields;
+
+  if (!field)
+    DBUG_VOID_RETURN;
+
+  *data-&gt;embedded_info-&gt;prev_ptr= NULL; // this marks the last record
+  cur_row= data-&gt;data;
+  n_rows= data-&gt;rows;
+
+  dst-&gt;store_int((uint)data-&gt;fields);
+  dst-&gt;store_ll((ulonglong)n_rows);
+
+  for(; field &lt; field_end; field++)
+  {
+    dst-&gt;store_int((uint)field-&gt;length);
+    dst-&gt;store_int((uint)field-&gt;max_length);
+    dst-&gt;store_uchar((uchar)field-&gt;type);
+    dst-&gt;store_short((ushort)field-&gt;flags);
+    dst-&gt;store_short((ushort)field-&gt;charsetnr);
+    dst-&gt;store_uchar((uchar)field-&gt;decimals);
+    dst-&gt;store_str(field-&gt;name, field-&gt;name_length);
+    dst-&gt;store_str(field-&gt;table, field-&gt;table_length);
+    dst-&gt;store_str(field-&gt;org_name, field-&gt;org_name_length);
+    dst-&gt;store_str(field-&gt;org_table, field-&gt;org_table_length);
+    dst-&gt;store_str(field-&gt;db, field-&gt;db_length);
+    dst-&gt;store_str(field-&gt;catalog, field-&gt;catalog_length);
+    dst-&gt;store_safe_str(field-&gt;def, field-&gt;def_length);
+  }
+  
+  if (thd-&gt;protocol == &amp;thd-&gt;protocol_binary)
+  {
+    for (; cur_row; cur_row=cur_row-&gt;next)
+      dst-&gt;store_str((char *) cur_row-&gt;data, cur_row-&gt;length);
+  }
+  else
+  {
+    for (; cur_row; cur_row=cur_row-&gt;next)
+    {
+      MYSQL_ROW col= cur_row-&gt;data;
+      MYSQL_ROW col_end= col + data-&gt;fields;
+      for (; col &lt; col_end; col++)
+      {
+<span style = "background-color:#fdd">        uint len= *col ? *(uint *)((*col) - sizeof(uint)) : 0;        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+        dst-&gt;store_safe_str(*col, len);
+      }
+    }
+  }
+  DBUG_ASSERT(emb_count_querycache_size(thd) == dst-&gt;stored_size);
+  DBUG_VOID_RETURN;
+}
+
+int emb_load_querycache_result(THD *thd, Querycache_stream *src)
+{
+  MYSQL_DATA *data= thd-&gt;alloc_new_dataset();
+  MYSQL_FIELD *field;
+  MYSQL_FIELD *field_end;
+  MEM_ROOT *f_alloc;
+  MYSQL_ROWS *row, *end_row;
+  MYSQL_ROWS **prev_row;
+  ulonglong rows;
+  MYSQL_ROW columns;
+  DBUG_ENTER("emb_load_querycache_result");
+
+  if (!data)
+    goto err;
+  init_alloc_root(&amp;data-&gt;alloc, 8192,0);
+  f_alloc= &amp;data-&gt;alloc;
+
+  data-&gt;fields= src-&gt;load_int();
+  rows= src-&gt;load_ll();
+
+  if (!(field= (MYSQL_FIELD *)
+        alloc_root(f_alloc,data-&gt;fields*sizeof(MYSQL_FIELD))))
+    goto err;
+  data-&gt;embedded_info-&gt;fields_list= field;
+  for(field_end= field+data-&gt;fields; field &lt; field_end; field++)
+  {
+    field-&gt;length= src-&gt;load_int();
+    field-&gt;max_length= (unsigned int)src-&gt;load_int();
+    field-&gt;type= (enum enum_field_types)src-&gt;load_uchar();
+    field-&gt;flags= (unsigned int)src-&gt;load_short();
+    field-&gt;charsetnr= (unsigned int)src-&gt;load_short();
+    field-&gt;decimals= src-&gt;load_uchar();
+
+    if (!(field-&gt;name= src-&gt;load_str(f_alloc, &amp;field-&gt;name_length))          ||
+        !(field-&gt;table= src-&gt;load_str(f_alloc,&amp;field-&gt;table_length))         ||
+        !(field-&gt;org_name= src-&gt;load_str(f_alloc, &amp;field-&gt;org_name_length))  ||
+        !(field-&gt;org_table= src-&gt;load_str(f_alloc, &amp;field-&gt;org_table_length))||
+        !(field-&gt;db= src-&gt;load_str(f_alloc, &amp;field-&gt;db_length))              ||
+        !(field-&gt;catalog= src-&gt;load_str(f_alloc, &amp;field-&gt;catalog_length))    ||
+        src-&gt;load_safe_str(f_alloc, &amp;field-&gt;def, &amp;field-&gt;def_length))
+      goto err;
+  }
+  
+  data-&gt;rows= rows;
+  if (!rows)
+    goto return_ok;
+  if (thd-&gt;protocol == &amp;thd-&gt;protocol_binary)
+  {
+    uint length;
+    row= (MYSQL_ROWS *)alloc_root(&amp;data-&gt;alloc,
+                                  (size_t) (rows * sizeof(MYSQL_ROWS)));
+    end_row= row + rows;
+    data-&gt;data= row;
+
+    for (prev_row= &amp;row-&gt;next; row &lt; end_row; prev_row= &amp;row-&gt;next, row++)
+    {
+      *prev_row= row;
+      row-&gt;data= (MYSQL_ROW) src-&gt;load_str(&amp;data-&gt;alloc, &amp;length);
+      row-&gt;length= length;
+    }
+  }
+  else
+  {
+    row= (MYSQL_ROWS *)alloc_root(&amp;data-&gt;alloc,
+        (uint) (rows * sizeof(MYSQL_ROWS) +
+          rows*(data-&gt;fields+1)*sizeof(char*)));
+    end_row= row + rows;
+    columns= (MYSQL_ROW)end_row;
+
+    data-&gt;data= row;
+
+    for (prev_row= &amp;row-&gt;next; row &lt; end_row; prev_row= &amp;row-&gt;next, row++)
+    {
+      *prev_row= row;
+      row-&gt;data= columns;
+      MYSQL_ROW col_end= columns + data-&gt;fields;
+      for (; columns &lt; col_end; columns++)
+        src-&gt;load_column(&amp;data-&gt;alloc, columns);
+
+      *(columns++)= NULL;
+    }
+  }
+  *prev_row= NULL;
+  data-&gt;embedded_info-&gt;prev_ptr= prev_row;
+return_ok:
+  net_send_eof(thd, thd-&gt;server_status,
+               thd-&gt;get_stmt_da()-&gt;current_statement_warn_count());
+  DBUG_RETURN(0);
+err:
+  DBUG_RETURN(1);
+}
+
+#endif /*HAVE_QUERY_CACHE*/
+
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libjpeg-turbo/jdtrans.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*
+ * jdtrans.c
+ *
+ * This file was part of the Independent JPEG Group's software:
+ * Copyright (C) 1995-1997, Thomas G. Lane.
+ * It was modified by The libjpeg-turbo Project to include only code relevant
+ * to libjpeg-turbo.
+ * For conditions of distribution and use, see the accompanying README.ijg
+ * file.
+ *
+ * This file contains library routines for transcoding decompression,
+ * that is, reading raw DCT coefficient arrays from an input JPEG file.
+ * The routines in jdapimin.c will also be needed by a transcoder.
+ */
+
+#define JPEG_INTERNALS
+#include "jinclude.h"
+#include "jpeglib.h"
+
+
+/* Forward declarations */
+LOCAL(void) transdecode_master_selection(j_decompress_ptr cinfo);
+
+
+/*
+ * Read the coefficient arrays from a JPEG file.
+ * jpeg_read_header must be completed before calling this.
+ *
+ * The entire image is read into a set of virtual coefficient-block arrays,
+ * one per component.  The return value is a pointer to the array of
+ * virtual-array descriptors.  These can be manipulated directly via the
+ * JPEG memory manager, or handed off to jpeg_write_coefficients().
+ * To release the memory occupied by the virtual arrays, call
+ * jpeg_finish_decompress() when done with the data.
+ *
+ * An alternative usage is to simply obtain access to the coefficient arrays
+ * during a buffered-image-mode decompression operation.  This is allowed
+ * after any jpeg_finish_output() call.  The arrays can be accessed until
+ * jpeg_finish_decompress() is called.  (Note that any call to the library
+ * may reposition the arrays, so don't rely on access_virt_barray() results
+ * to stay valid across library calls.)
+ *
+ * Returns NULL if suspended.  This case need be checked only if
+ * a suspending data source is used.
+ */
+
+GLOBAL(jvirt_barray_ptr *)
+jpeg_read_coefficients(j_decompress_ptr cinfo)
+{
+  if (cinfo-&gt;global_state == DSTATE_READY) {
+    /* First call: initialize active modules */
+    transdecode_master_selection(cinfo);
+    cinfo-&gt;global_state = DSTATE_RDCOEFS;
+  }
+  if (cinfo-&gt;global_state == DSTATE_RDCOEFS) {
+    /* Absorb whole file into the coef buffer */
+    for (;;) {
+      int retcode;
+      /* Call progress monitor hook if present */
+      if (cinfo-&gt;progress != NULL)
+        (*cinfo-&gt;progress-&gt;progress_monitor) ((j_common_ptr)cinfo);
+      /* Absorb some more input */
+      retcode = (*cinfo-&gt;inputctl-&gt;consume_input) (cinfo);
+      if (retcode == JPEG_SUSPENDED)
+        return NULL;
+      if (retcode == JPEG_REACHED_EOI)
+        break;
+      /* Advance progress counter if appropriate */
+      if (cinfo-&gt;progress != NULL &amp;&amp;
+          (retcode == JPEG_ROW_COMPLETED || retcode == JPEG_REACHED_SOS)) {
+        if (++cinfo-&gt;progress-&gt;pass_counter &gt;= cinfo-&gt;progress-&gt;pass_limit) {
+          /* startup underestimated number of scans; ratchet up one scan */
+          cinfo-&gt;progress-&gt;pass_limit += (long)cinfo-&gt;total_iMCU_rows;
+        }
+      }
+    }
+    /* Set state so that jpeg_finish_decompress does the right thing */
+    cinfo-&gt;global_state = DSTATE_STOPPING;
+  }
+  /* At this point we should be in state DSTATE_STOPPING if being used
+   * standalone, or in state DSTATE_BUFIMAGE if being invoked to get access
+   * to the coefficients during a full buffered-image-mode decompression.
+   */
+  if ((cinfo-&gt;global_state == DSTATE_STOPPING ||
+       cinfo-&gt;global_state == DSTATE_BUFIMAGE) &amp;&amp; cinfo-&gt;buffered_image) {
+    return cinfo-&gt;coef-&gt;coef_arrays;
+  }
+  /* Oops, improper usage */
+  ERREXIT1(cinfo, JERR_BAD_STATE, cinfo-&gt;global_state);
+  return NULL;                  /* keep compiler happy */
+}
+
+
+/*
+ * Master selection of decompression modules for transcoding.
+ * This substitutes for jdmaster.c's initialization of the full decompressor.
+ */
+
+LOCAL(void)
+transdecode_master_selection(j_decompress_ptr cinfo)
+{
+  /* This is effectively a buffered-image operation. */
+  cinfo-&gt;buffered_image = TRUE;
+
+#if JPEG_LIB_VERSION &gt;= 80
+  /* Compute output image dimensions and related values. */
+  jpeg_core_output_dimensions(cinfo);
+#endif
+
+  /* Entropy decoding: either Huffman or arithmetic coding. */
+  if (cinfo-&gt;arith_code) {
+#ifdef D_ARITH_CODING_SUPPORTED
+    jinit_arith_decoder(cinfo);
+#else
+    ERREXIT(cinfo, JERR_ARITH_NOTIMPL);
+#endif
+  } else {
+    if (cinfo-&gt;progressive_mode) {
+#ifdef D_PROGRESSIVE_SUPPORTED
+      jinit_phuff_decoder(cinfo);
+#else
+      ERREXIT(cinfo, JERR_NOT_COMPILED);
+#endif
+    } else
+      jinit_huff_decoder(cinfo);
+  }
+
+  /* Always get a full-image coefficient buffer. */
+  jinit_d_coef_controller(cinfo, TRUE);
+
+  /* We can now tell the memory manager to allocate virtual arrays. */
+  (*cinfo-&gt;mem-&gt;realize_virt_arrays) ((j_common_ptr)cinfo);
+
+  /* Initialize input side of decompressor to consume first scan. */
+  (*cinfo-&gt;inputctl-&gt;start_input_pass) (cinfo);
+
+  /* Initialize progress monitoring. */
+  if (cinfo-&gt;progress != NULL) {
+    int nscans;
+    /* Estimate number of scans to set pass_limit. */
+    if (cinfo-&gt;progressive_mode) {
+      /* Arbitrarily estimate 2 interleaved DC scans + 3 AC scans/component. */
+      nscans = 2 + 3 * cinfo-&gt;num_components;
+    } else if (cinfo-&gt;inputctl-&gt;has_multiple_scans) {
+      /* For a nonprogressive multiscan file, estimate 1 scan per component. */
+      nscans = cinfo-&gt;num_components;
+    } else {
+      nscans = 1;
+    }
+    cinfo-&gt;progress-&gt;pass_counter = 0L;
+    cinfo-&gt;progress-&gt;pass_limit = (long)cinfo-&gt;total_iMCU_rows * nscans;
+    cinfo-&gt;progress-&gt;completed_passes = 0;
+    cinfo-&gt;progress-&gt;total_passes = 1;
+  }
+}
+      </pre>
+    </body>
+</html>

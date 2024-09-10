@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/mysys/list.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2010, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   Without limiting anything contained in the foregoing, this file,
+   which is part of C Driver for MySQL (Connector/C), is also subject to the
+   Universal FOSS Exception, version 1.0, a copy of which can be found at
+   http://oss.oracle.com/licenses/universal-foss-exception.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+/*
+  Code for handling dubble-linked lists in C
+*/
+
+#include "mysys_priv.h"
+#include &lt;my_list.h&gt;
+
+
+
+	/* Add a element to start of list */
+
+LIST *list_add(LIST *root, LIST *element)
+{
+  DBUG_ENTER("list_add");
+  DBUG_PRINT("enter",("root: 0x%lx  element: 0x%lx", (long) root, (long) element));
+  if (root)
+  {
+    if (root-&gt;prev)			/* If add in mid of list */
+      root-&gt;prev-&gt;next= element;
+    element-&gt;prev=root-&gt;prev;
+    root-&gt;prev=element;
+  }
+  else
+    element-&gt;prev=0;
+  element-&gt;next=root;
+  DBUG_RETURN(element);			/* New root */
+}
+
+
+LIST *list_delete(LIST *root, LIST *element)
+{
+  if (element-&gt;prev)
+    element-&gt;prev-&gt;next=element-&gt;next;
+  else
+    root=element-&gt;next;
+  if (element-&gt;next)
+    element-&gt;next-&gt;prev=element-&gt;prev;
+  return root;
+}
+
+
+void list_free(LIST *root, uint free_data)
+{
+  LIST *next;
+  while (root)
+  {
+    next=root-&gt;next;
+    if (free_data)
+      my_free(root-&gt;data);
+    my_free(root);
+    root=next;
+  }
+}
+
+
+LIST *list_cons(void *data, LIST *list)
+{
+  LIST *new_charset=(LIST*) my_malloc(sizeof(LIST),MYF(MY_FAE));
+  if (!new_charset)
+    return 0;
+  new_charset-&gt;data=data;
+  return list_add(list,new_charset);
+}
+
+
+LIST *list_reverse(LIST *root)
+{
+  LIST *last;
+
+  last=root;
+  while (root)
+  {
+    last=root;
+    root=root-&gt;next;
+    last-&gt;next=last-&gt;prev;
+    last-&gt;prev=root;
+  }
+  return last;
+}
+
+uint list_length(LIST *list)
+{
+  uint count;
+  for (count=0 ; list ; list=list-&gt;next, count++) ;
+  return count;
+}
+
+
+int list_walk(LIST *list, list_walk_action action, uchar* argument)
+{
+  int error=0;
+  while (list)
+  {
+    if ((error = (*action)(list-&gt;data,argument)))
+      return error;
+    list=list_rest(list);
+  }
+  return 0;
+}
+      </pre>
+    </body>
+</html>

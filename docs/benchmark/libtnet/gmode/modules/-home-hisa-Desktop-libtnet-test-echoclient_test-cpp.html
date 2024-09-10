@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/test/echoclient_test.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "ioloop.h"
+#include "log.h"
+#include "connection.h"
+#include "tnet.h"
+#include "sockutil.h"
+#include "address.h"
+
+using namespace std;
+using namespace tnet;
+
+int i = 0;
+
+void onConnEvent(const ConnectionPtr_t&amp; conn, ConnEvent event, const void* context)
+{
+    switch(event)
+    {
+        case Conn_ReadEvent:
+            {
+                const StackBuffer* buffer = (const StackBuffer*)(context);
+                LOG_INFO("echo %s", string(buffer-&gt;buffer, buffer-&gt;count).c_str());
+                
+                char buf[1024];
+                int n = snprintf(buf, sizeof(buf), "hello world %d", i);
+                conn-&gt;send(string(buf, n));
+                
+                if(++i &gt; 10)
+                {
+                    conn-&gt;shutDown();
+                }    
+            }
+            break;    
+        case Conn_CloseEvent:
+            LOG_INFO("close");
+            break;
+        case Conn_ErrorEvent:
+            LOG_INFO("error");
+            break;
+        case Conn_ConnectEvent:
+            LOG_INFO("connect");
+            conn-&gt;send("hello world");
+            break;
+        default:
+            break;
+    }    
+}
+
+int main()
+{
+    IOLoop loop;
+
+    int fd = SockUtil::create();
+
+    ConnectionPtr_t conn = std::make_shared&lt;Connection&gt;(&amp;loop, fd);
+    
+    conn-&gt;setEventCallback(std::bind(&amp;onConnEvent, _1, _2, _3));
+
+    conn-&gt;connect(Address(11181));
+
+    loop.start();
+
+    return 0;    
+}
+      </pre>
+    </body>
+</html>

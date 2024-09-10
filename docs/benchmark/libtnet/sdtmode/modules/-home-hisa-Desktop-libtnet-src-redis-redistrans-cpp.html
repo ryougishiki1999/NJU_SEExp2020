@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/redis/redistrans.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "redistrans.h"
+
+#include &lt;assert.h&gt;
+
+#include "redisconnection.h"
+#include "log.h"
+#include "redisclient.h"
+
+using namespace std;
+
+namespace tnet
+{
+    static void dummyCallback(const RedisReply&amp;)
+    {
+        
+    }
+
+    RedisTrans::RedisTrans(const RedisClientPtr_t&amp; client, const RedisConnectionPtr_t&amp; conn)
+        : m_client(client)
+        , m_conn(conn)
+        , m_transNum(0)
+    {
+        m_callback = std::bind(&amp;dummyCallback, _1);
+    }
+
+    RedisTrans::~RedisTrans()
+    {
+        LOG_INFO("destroyed");
+
+        RedisClientPtr_t client = m_client.lock();
+        if(client)
+        {
+            client-&gt;pushConn(m_conn.lock());     
+        } 
+    }
+
+    void RedisTrans::onReply(const RedisConnectionPtr_t&amp; conn, const RedisReply&amp; reply)
+    {
+        --m_transNum;
+        assert(m_transNum &gt;= 0);
+        
+        m_callback(reply);
+    }
+
+    void RedisTrans::onConnect(const RedisConnectionPtr_t&amp; conn, int status, const NewTransCallback_t&amp; callback)
+    {
+        if(status != 0)
+        {
+            LOG_ERROR("redis trans connect error");
+            callback(shared_from_this(), status);
+            return;    
+        }    
+
+        NewTransCallback_t cb = std::move(callback);
+        conn-&gt;setCallback(std::bind(&amp;RedisTrans::onReply, shared_from_this(), _1, _2));
+        cb(shared_from_this(), 0);
+    }
+
+    void RedisTrans::request(initializer_list&lt;string&gt; cmd)
+    {
+        RedisConnectionPtr_t conn = m_conn.lock();
+        if(!conn)
+        {
+            LOG_ERROR("connection was closed");
+            return;
+        }
+
+        ++m_transNum;
+        
+        conn-&gt;exec(cmd);
+    }
+
+    void RedisTrans::begin()
+    {    
+        if(m_transNum &gt; 0)
+        {
+            LOG_ERROR("already in trans");
+            return;    
+        }
+
+        m_inTrans = true;
+        static const string MultiCmd = "MULTI"; 
+        request({MultiCmd});
+    }
+   
+    void RedisTrans::exec(initializer_list&lt;string&gt; cmd)
+    {
+        if(m_transNum == 0)
+        {
+            begin();
+        }
+
+        request(cmd);
+    }
+     
+    void RedisTrans::commit(const ReplyCallback_t&amp; callback)
+    {
+        if(m_transNum == 0)
+        {
+            LOG_ERROR("not in trans, can't commit");
+            return;    
+        }    
+
+        static const string ExecCmd = "EXEC";
+    
+        m_callback = std::bind(&amp;RedisTrans::onCommit, shared_from_this(), _1, callback);
+
+        request({ExecCmd});    
+    }
+
+    void RedisTrans::cancel(const ReplyCallback_t&amp; callback)
+    {
+        if(m_transNum == 0)
+        {
+            LOG_ERROR("not in trans, can't commit");
+            return;    
+        }    
+
+        static const string CancelCmd = "DISCARD";
+    
+        m_callback = std::bind(&amp;RedisTrans::onCancel, shared_from_this(), _1, callback);
+
+        request({CancelCmd});    
+    }
+
+    void RedisTrans::onCommit(const RedisReply&amp; reply, const ReplyCallback_t&amp; callback)
+    {
+        if(m_transNum != 0)
+        {
+            return;    
+        }
+
+        ReplyCallback_t cb = std::move(callback);
+        
+        m_callback = std::bind(&amp;dummyCallback, _1);
+        
+        cb(reply);    
+    }
+
+    void RedisTrans::onCancel(const RedisReply&amp; reply, const ReplyCallback_t&amp; callback)
+    {
+        if(m_transNum != 0)
+        {
+            return;    
+        }
+
+        ReplyCallback_t cb = std::move(callback);
+        
+        m_callback = std::bind(&amp;dummyCallback, _1);
+        
+        cb(reply);    
+    }
+
+  
+}
+      </pre>
+    </body>
+</html>

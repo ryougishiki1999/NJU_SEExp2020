@@ -1,0 +1,452 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>JsonProc.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#pragma once
+#include &lt;cassert&gt;
+#include &lt;map&gt;
+#include &lt;memory&gt;
+#include &lt;regex&gt;
+#include &lt;sstream&gt;
+#include &lt;string&gt;
+#include &lt;unordered_map&gt;
+#include &lt;vector&gt;
+// used for json format transformation
+namespace Json
+{
+enum class ValueType
+{
+    NONE,
+    OBJECT,
+    INTEGER,
+    DOUBLE,
+    BOOLEAN,
+    STRING,
+    ARRAY
+};
+class Value;
+class ObjectValue;
+class IntValue;
+class DoubleValue;
+class BoolValue;
+class StringValue;
+class ArrayValue;
+using ValuePtr = std::shared_ptr&lt;Value&gt;;
+
+using Map = std::map&lt;std::string, Value *&gt;;
+
+static std::string make_indent(size_t indent)
+<span style = "background-color:#dfd">{</span>
+    static bool is_init = false;
+<span style = "background-color:#dfd">    const int bufsize = 10;
+    static std::string buf[bufsize];</span>
+
+<span style = "background-color:#dfd">    if (!is_init)</span>
+    {
+<span style = "background-color:#dfd">        for (int i = 0; i &lt; bufsize; i++)</span>
+        {
+<span style = "background-color:#dfd">            for (int j = 0; j &lt; i; j++)</span>
+            {
+<span style = "background-color:#dfd">                buf[i] += '\t';
+            }
+        }
+        is_init = true;</span>
+    }
+<span style = "background-color:#dfd">    if (indent &lt; bufsize)
+        return buf[indent];</span>
+    else
+    {
+<span style = "background-color:#fdd">        std::string str;
+        while (indent-- &gt; 0)</span>
+        {
+<span style = "background-color:#fdd">            str += '\t';
+        }
+        return str;</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+class Value
+{
+  public:
+    virtual ValueType get_type() const
+<span style = "background-color:#fdd">    {
+        return ValueType::NONE;
+    }</span>
+
+    virtual void append(const std::string &amp;key, Value &amp;v)
+<span style = "background-color:#fdd">    {
+        assert(false &amp;&amp; "not supported");
+    }</span>
+
+    virtual void append(Value &amp;v)
+<span style = "background-color:#fdd">    {
+        assert(false &amp;&amp; "not supported");
+    }</span>
+
+  public:
+    virtual std::string to_string(size_t indent = 0, bool cont_line = true) const = 0;
+
+    virtual ~Value()
+<span style = "background-color:#dfd">    {
+    }</span>
+
+    virtual void release()
+<span style = "background-color:#dfd">    {
+    }</span>
+};
+
+class ObjectValue : public Value
+{
+  private:
+    Map attributes;
+    std::vector&lt;std::pair&lt;std::string, Value *&gt;&gt; attributes_vec;
+
+    ObjectValue() = default;
+
+  public:
+    friend ObjectValue make_object();
+    friend ObjectValue &amp;new_object();
+    ObjectValue(ObjectValue &amp;v) = default;
+    ObjectValue(ObjectValue &amp;&amp;v) = default;
+
+    ValueType get_type() const override
+<span style = "background-color:#fdd">    {
+        return ValueType::OBJECT;
+    }</span>
+
+    Value &amp;get_value(const std::string &amp;key) const
+    {
+        auto it = attributes.find(key);
+        if (it == attributes.end())
+            assert(false &amp;&amp; "key not found!");
+        return *it-&gt;second;
+    }
+
+    bool contains_key(const std::string &amp;key) const
+    {
+        return (attributes.find(key) != attributes.end());
+    }
+
+    void append(const std::string &amp;key, Value &amp;v) override
+<span style = "background-color:#dfd">    {
+        attributes.insert_or_assign(key, &amp;v);
+        attributes_vec.push_back(std::make_pair(key, &amp;v));
+    }</span>
+
+    std::string to_string(size_t indent = 0, bool cont_line = true) const override
+<span style = "background-color:#dfd">    {
+        std::string str;
+        if (cont_line)
+            str += "\n";
+        str += make_indent(indent) + "{\n";
+        for (int i = 0; i &lt; attributes_vec.size(); i++)</span>
+        {
+<span style = "background-color:#dfd">            const std::pair&lt;std::string, Value *&gt; &amp;p = attributes_vec[i];
+            const std::string name = p.first;
+            const Value *v = p.second;</span>
+
+<span style = "background-color:#dfd">            str += make_indent(indent + 1) + "\"" + name + "\"" + " : " + v-&gt;to_string(indent + 2, true);</span>
+
+<span style = "background-color:#dfd">            if (i != attributes_vec.size() - 1)
+                str += ",";
+            str += "\n";
+        }
+        str += make_indent(indent) + "}";
+        return str;
+    }</span>
+
+    void release() override
+<span style = "background-color:#dfd">    {
+        for (std::pair&lt;std::string, Value *&gt; p : attributes_vec)</span>
+        {
+<span style = "background-color:#dfd">            p.second-&gt;release();
+            delete p.second;
+        }
+    }
+};</span>
+
+class IntValue : public Value
+{
+  private:
+    const int value;
+
+    using Value::append;
+
+    IntValue() = default;
+
+  public:
+    friend IntValue make_value(int);
+    friend IntValue &amp;new_value(int);
+<span style = "background-color:#dfd">    IntValue(int v) : value(v)
+    {
+    }</span>
+    IntValue(IntValue &amp;v) = default;
+    IntValue(IntValue &amp;&amp;v) = default;
+
+    ValueType get_type() const override
+<span style = "background-color:#fdd">    {
+        return ValueType::INTEGER;
+    }</span>
+
+    int get_value()
+    {
+        return value;
+    }
+
+    std::string to_string(size_t indent = 0, bool cont_line = true) const override
+<span style = "background-color:#dfd">    {
+        return (cont_line ? "" : make_indent(indent)) + std::to_string(value);
+    }</span>
+};
+
+class DoubleValue : public Value
+{
+  private:
+    const double value;
+
+    using Value::append;
+
+    DoubleValue() = default;
+
+  public:
+    friend DoubleValue make_value(double);
+    friend DoubleValue &amp;new_value(double);
+
+<span style = "background-color:#dfd">    DoubleValue(double v) : value(v)
+    {
+    }</span>
+
+    DoubleValue(DoubleValue &amp;v) = default;
+
+    DoubleValue(DoubleValue &amp;&amp;v) = default;
+
+    ValueType get_type() const override
+<span style = "background-color:#fdd">    {
+        return ValueType::DOUBLE;
+    }</span>
+
+    double get_value()
+    {
+        return value;
+    }
+
+    std::string to_string(size_t indent = 0, bool cont_line = true) const override
+<span style = "background-color:#dfd">    {
+        return (cont_line ? "" : make_indent(indent)) + std::to_string(value);
+    }</span>
+};
+
+class BoolValue : public Value
+{
+  private:
+    const bool value;
+
+    using Value::append;
+
+    BoolValue() = default;
+
+  public:
+    friend BoolValue make_value(bool);
+    friend BoolValue &amp;new_value(bool);
+
+<span style = "background-color:#fdd">    BoolValue(bool v) : value(v)
+    {
+    }</span>
+
+    BoolValue(BoolValue &amp;v) = default;
+
+    BoolValue(BoolValue &amp;&amp;v) = default;
+
+    ValueType get_type() const override
+<span style = "background-color:#fdd">    {
+        return ValueType::BOOLEAN;
+    }</span>
+
+    bool get_value()
+    {
+        return value;
+    }
+
+    std::string to_string(size_t indent = 0, bool cont_line = true) const override
+<span style = "background-color:#fdd">    {
+        return (cont_line ? "" : make_indent(indent)) + std::to_string(value);
+    }</span>
+};
+
+class StringValue : public Value
+{
+  private:
+    const std::string value;
+
+    using Value::append;
+
+    StringValue() = default;
+
+  public:
+    friend StringValue make_value(const char *);
+    friend StringValue make_value(const std::string &amp;);
+    friend StringValue make_value(std::string &amp;&amp;);
+    friend StringValue &amp;new_value(const char *);
+    friend StringValue &amp;new_value(const std::string &amp;);
+    friend StringValue &amp;new_value(std::string &amp;&amp;);
+
+<span style = "background-color:#dfd">    StringValue(const std::string &amp;v) : value(v)
+    {
+    }</span>
+
+<span style = "background-color:#fdd">    StringValue(std::string &amp;&amp;v) : value(std::move(v))
+    {
+    }</span>
+
+    ValueType get_type() const override
+<span style = "background-color:#fdd">    {
+        return ValueType::STRING;
+    }</span>
+
+    const std::string &amp;get_value()
+<span style = "background-color:#fdd">    {
+        return value;
+    }</span>
+
+    std::string to_string(size_t indent = 0, bool cont_line = true) const override
+<span style = "background-color:#dfd">    {
+        return (cont_line ? "" : make_indent(indent)) + "\"" + value + "\"";
+    }</span>
+};
+
+class ArrayValue : public Value
+{
+  private:
+    std::vector&lt;Value *&gt; arr;
+
+    ArrayValue() = default;
+
+  public:
+    friend ArrayValue make_array();
+    friend ArrayValue &amp;new_array();
+
+    ArrayValue(ArrayValue &amp;v) = default;
+
+    ArrayValue(ArrayValue &amp;&amp;v) = default;
+
+    ValueType get_type() const override
+<span style = "background-color:#fdd">    {
+        return ValueType::ARRAY;
+    }</span>
+
+    Value &amp;get_value(int index) const
+    {
+        return *arr[index];
+    }
+
+    void append(Value &amp;v) override
+<span style = "background-color:#dfd">    {
+        arr.push_back(&amp;v);
+    }</span>
+
+    std::string to_string(size_t indent = 0, bool cont_line = true) const override
+<span style = "background-color:#dfd">    {
+        std::string str;
+        if (cont_line)
+            str += "\n";
+        str += make_indent(indent);
+        str += "[\n";
+        for (int i = 0; i &lt; arr.size(); i++)</span>
+        {
+<span style = "background-color:#dfd">            Value *v = arr[i];
+            str += v-&gt;to_string(indent + 1, false);
+            if (i != arr.size() - 1)
+                str += ",";
+            str += "\n";
+        }
+        str += make_indent(indent) + "]";
+        return str;
+    }</span>
+
+    void release() override
+<span style = "background-color:#dfd">    {
+        for (Value *v : arr)</span>
+        {
+<span style = "background-color:#dfd">            v-&gt;release();
+            delete v;
+        }
+    }</span>
+};
+
+IntValue make_value(int v);
+
+DoubleValue make_value(double v);
+
+BoolValue make_value(bool v);
+
+StringValue make_value(const char *v);
+
+StringValue make_value(const std::string &amp;v);
+
+StringValue make_value(std::string &amp;&amp;v);
+
+ArrayValue make_array();
+
+ObjectValue make_object();
+
+IntValue &amp;new_value(int v);
+
+DoubleValue &amp;new_value(double v);
+
+BoolValue &amp;new_value(bool v);
+
+StringValue &amp;new_value(const char *v);
+
+StringValue &amp;new_value(const std::string &amp;v);
+
+StringValue &amp;new_value(std::string &amp;&amp;v);
+
+ObjectValue &amp;new_object();
+
+ArrayValue &amp;new_array();
+
+// translate json into string
+std::string stringify(Value &amp;root);
+
+/*
+class DestroyableValue : public Value {
+private:
+  Value *value;
+
+public:
+  DestroyableValue(Value *v) : value(v) {}
+
+  ValueType get_type() const override { return value-&gt;get_type(); }
+
+  void append(const std::string &amp;key, Value &amp;v) override {
+    value-&gt;append(key, v);
+  }
+
+  void append(Value &amp;v) override { value-&gt;append(v); }
+
+  std::string to_string() const override { return value-&gt;to_string(); }
+
+  ~DestroyableValue() override { value-&gt;release(); }
+};*/
+
+// parse str into json
+// todo: text error detection
+Value &amp;parse(std::string &amp;str);
+
+}; // namespace Json
+
+#include &lt;fstream&gt;
+#include &lt;iostream&gt;
+#include &lt;sstream&gt;
+// display the way of using Json functions, including generating, parsing and
+// stringify json data.
+void JsonUseCase();</pre>
+	</body>
+</html>

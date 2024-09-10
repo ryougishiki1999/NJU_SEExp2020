@@ -1,0 +1,1031 @@
+<html>
+<head>
+    <script src="https://cdn.staticfile.org/jquery/1.10.2/jquery.min.js"></script>
+    <script>
+        function createDependency(text, link){
+            let li = document.createElement("li");
+            let element = document.createElement("a");
+            element.setAttribute("href", link);
+            element.setAttribute("class", "ng-binding");
+            element.setAttribute("style", "font-size:15px");
+            element.text = text;
+            li.appendChild(element);
+            return li;
+        }
+
+        function changeDependenciesToWindows(){
+            console.log("windows section entered");
+            $("#windows-section").css("background-color", "blue");
+            $("#linux-section").css("background-color", "grey");
+            $("#dependencies").children().remove();
+
+            let element = createDependency("命令行用户手册", ".\\ConsoleUserManual.html");
+            $("#dependencies").append(element);
+            element = createDependency("GUI用户手册", ".\\GuiUserManual.html");
+            $("#dependencies").append(element);
+            element = createDependency("开发者手册", ".\\DeveloperManual.html");
+            $("#dependencies").append(element);
+        }
+
+        function changeDependenciesToLinux(){
+            console.log("linux section entered");
+            $("#linux-section").css("background-color","blue");
+            $("#windows-section").css("background-color", "grey");
+            $("#dependencies").children().remove();
+
+            let element = createDependency("API文档", "../../docs/api/html/index.html");
+            $("#dependencies").append(element);
+        }
+    </script>
+
+    <style>
+        .table4_11 table {
+            width:100%;
+            margin:15px 0;
+            border:0;
+        }
+        .table4_11 th {
+            background-color:#1E90FF;
+            color:#FFFFFF
+        }
+        .table4_11,.table4_11 th,.table4_11 td {
+            font-size:1.5em;
+            font-family: 微软雅黑;
+            text-align:center;
+            padding:4px;
+            border-collapse:collapse;
+        }
+        .table4_11 th,.table4_11 td {
+            border: 1px solid #7ebffe;
+            border-width:1px 0 1px 0
+        }
+        .table4_11 tr {
+            border: 1px solid #7ebffe;
+        }
+        .table4_11 tr:nth-child(odd){
+            background-color:#b4dafe;
+        }
+        .table4_11 tr:nth-child(even){
+            background-color:#fdfdfd;
+        }
+    </style>
+
+    <style type="text/css">
+        [ng\:cloak],[ng-cloak],[data-ng-cloak],[x-ng-cloak],.ng-hide:not(.ng-hide-animate)
+        {
+            display:none !important;
+        }
+        ng\:form{display:block;}
+    </style>
+
+    <meta charset="utf-8">
+
+    <style type="text/css">
+        *,::after,::before,html
+        {
+            box-sizing:border-box
+        }
+        dl,h1,h2,h3,h4,h5,h6,ol,p,pre,ul
+        {
+            margin-top:0
+        }
+        address,dl,ol,p,pre,ul
+        {
+            margin-bottom:1rem
+        }
+        body,caption
+        {
+            text-align:left
+        }
+        button,hr,input
+        {
+            overflow:visible
+        }
+        pre,textarea
+        {
+            overflow:auto
+        }
+        dd,h1,h2,h3,h4,h5,h6,label,legend
+        {
+            margin-bottom:.5rem
+        }
+        address,legend
+        {
+            line-height:inherit
+        }
+        progress,sub,sup
+        {
+            vertical-align:baseline
+        }
+        #container,svg:not(:root)
+        {
+            overflow:hidden
+        }
+        .download .item,.faq .faq-block
+        {
+            box-shadow:0 0 5px 5px rgba(0,0,0,.1)
+        }
+        html
+        {
+            font-family:sans-serif;
+            line-height:1.15;
+            -webkit-text-size-adjust:100%;
+            -ms-text-size-adjust:100%;
+            -ms-overflow-style:scrollbar;
+            -webkit-tap-highlight-color:transparent
+        }
+        .row
+        {
+            display:-ms-flexbox;
+            display:flex;
+            -ms-flex-wrap:wrap;
+            flex-wrap:wrap;
+            margin-right:-15px;
+            margin-left:-15px
+        }
+        .no-gutters>.col
+        {
+            padding-right:0;
+            padding-left:0
+        }
+        .col
+        {
+            position:relative;
+            width:100%;
+            min-height:1px;
+            padding-right:15px;
+            padding-left:15px;
+            -ms-flex-preferred-size:0;
+            flex-basis:0;
+            -webkit-box-flex:1;
+            -ms-flex-positive:1;
+            flex-grow:1;
+            max-width:100%
+        }
+        .col-2
+        {
+            position:relative;
+            width:100%;
+            min-height:1px;
+            padding-right:15px;
+            padding-left:15px;
+            -webkit-box-flex:0;
+            -ms-flex:0 0 16.666667%;
+            flex:0 0 16.666667%;
+            max-width:16.666667%
+        }
+        .col-3
+        {
+            position:relative;
+            width:100%;
+            min-height:1px;
+            padding-right:15px;
+            padding-left:15px;
+            -webkit-box-flex:0;
+            -ms-flex:0 0 25%;
+            flex:0 0 25%;
+            max-width:25%
+        }
+        .col-4
+        {
+            position:relative;
+            width:100%;
+            min-height:1px;
+            padding-right:15px;
+            padding-left:15px;
+            -webkit-box-flex:0;
+            -ms-flex:0 0 33.333333%;
+            flex:0 0 33.333333%;
+            max-width:33.333333%
+        }
+        .col-6
+        {
+            position:relative;
+            width:100%;
+            min-height:1px;
+            padding-right:15px;
+            padding-left:15px;
+            -webkit-box-flex:0;
+            -ms-flex:0 0 50%;
+            flex:0 0 50%;
+            max-width:50%
+        }
+        .col-8
+        {
+            position:relative;
+            width:100%;
+            min-height:1px;
+            padding-right:15px;
+            padding-left:15px;
+            -webkit-box-flex:0;
+            -ms-flex:0 0 66.666667%;
+            flex:0 0 66.666667%;
+            max-width:66.666667%
+        }
+
+        @media print
+        {
+            .d-print-none{display:none!important}
+            .d-print-inline{display:inline!important}
+            .d-print-inline-block{display:inline-block!important}
+            .d-print-block{display:block!important}
+            .d-print-table{display:table!important}
+            .d-print-table-row{display:table-row!important}
+            .d-print-table-cell{display:table-cell!important}
+            .d-print-flex{display:-ms-flexbox!important;display:flex!important}
+            .d-print-inline-flex{display:-ms-inline-flexbox!important;display:inline-flex!important}
+        }
+        article,aside,dialog,figcaption,figure,footer,header,hgroup,legend,main,nav,section
+        {
+            display:block
+        }
+        label,output
+        {
+            display:inline-block
+        }
+        body
+        {
+            margin:0;
+            font-family:
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    Roboto,
+                    "Helvetica Neue",
+                    Arial,
+                    sans-serif,
+                    "Apple Color Emoji",
+                    "Segoe UI Emoji",
+                    "Segoe UI Symbol";
+            font-size:1rem;
+            font-weight:400;
+            line-height:1.5;
+            color:#212529;
+            background-color:#fff
+        }
+        [tabindex="-1"]:focus
+        {
+            outline:0!important
+        }
+        hr
+        {
+            box-sizing:content-box;
+            height:0
+        }
+        abbr[data-original-title],abbr[title]
+        {
+            -webkit-text-decoration:underline dotted;
+            text-decoration:underline dotted;
+            cursor:help;
+            border-bottom:0
+        }
+        address
+        {
+            font-style:normal
+        }
+        ol ol,ol ul,ul ol,ul ul
+        {
+            margin-bottom:0
+        }
+        b,strong
+        {
+            font-weight:bolder
+        }
+        small
+        {
+            font-size:80%
+        }
+        sub,sup
+        {
+            position:relative;
+            font-size:75%;
+            line-height:0
+        }
+        sub
+        {
+            bottom:-.25em
+        }
+        sup
+        {
+            top:-.5em
+        }
+        a
+        {
+            color:#007bff;
+            text-decoration:none;
+            background-color:transparent;
+            -webkit-text-decoration-skip:objects
+        }
+        a:hover
+        {
+            color:#0056b3;
+            text-decoration:underline
+        }
+        a:not([href]):not([tabindex]),a:not([href]):not([tabindex]):focus,a:not([href]):not([tabindex]):hover
+        {
+            color:inherit;
+            text-decoration:none
+        }
+        a:not([href]):not([tabindex]):focus
+        {
+            outline:0
+        }
+        img
+        {
+            vertical-align:middle;
+            border-style:none
+        }
+        table
+        {
+            border-collapse:collapse
+        }
+        caption
+        {
+            padding-top:.75rem;
+            padding-bottom:.75rem;
+            color:#6c757d;
+            caption-side:bottom
+        }
+        th
+        {
+            text-align:inherit
+        }
+        .banner .content-row a.btn,.center,.download .item .col-4,.faq .faq-btn,.footer .download>*>*,section.card header
+        {
+            text-align:center
+        }
+        button
+        {
+            border-radius:0
+        }
+        button,input,optgroup,select,textarea
+        {
+            margin:0;
+            font-family:inherit;
+            font-size:inherit;
+            line-height:inherit
+        }
+        button,select
+        {
+            text-transform:none
+        }
+        [type=reset],[type=submit],button,html [type=button]
+        {
+            -webkit-appearance:button
+        }
+        [type=button]::-moz-focus-inner,[type=reset]::-moz-focus-inner,[type=submit]::-moz-focus-inner,button::-moz-focus-inner
+        {
+            padding:0;border-style:none
+        }
+        input[type=radio],input[type=checkbox]
+        {
+            box-sizing:border-box;
+            padding:0
+        }
+        textarea
+        {
+            resize:vertical
+        }
+        fieldset
+        {
+            min-width:0;
+            padding:0;
+            margin:0;
+            border:0
+        }
+        legend
+        {
+            width:100%;
+            max-width:100%;
+            padding:0;
+            font-size:1.5rem;
+            color:inherit;
+            white-space:normal
+        }
+        [type=number]::-webkit-inner-spin-button,[type=number]::-webkit-outer-spin-button
+        {
+            height:auto
+        }
+        [type=search]
+        {
+            outline-offset:-2px;
+            -webkit-appearance:none
+        }
+        summary
+        {
+            display:list-item;
+            cursor:pointer
+        }
+        template
+        {
+            display:none
+        }
+        [hidden]
+        {
+            display:none!important
+        }
+        :root
+        {
+            --primary-color:#2deab3;
+            --font-color:#ffffff;
+            --font-color-2:#3042ea
+        }
+        .fade-in
+        {
+            animation:2s fade-in;
+            z-index:100
+        }
+        @keyframes fade-in
+        {
+            from{opacity:0}
+            to{opacity:1}
+        }
+        .bg-left,.bg-right
+        {
+            position:absolute;
+            top:3em;
+            z-index:-1;
+            width:50%;
+            max-width:800px
+        }
+        em
+        {
+            font-style:normal;
+            color:red;
+            font-weight:700
+        }
+        #container
+        {
+            font-family:"寰蒋闆呴粦";
+            font-size:16px
+        }
+        .bg-left
+        {
+            left:0
+        }
+        .bg-right
+        {
+            right: 0
+        }
+        .banner
+        {
+            width:100%;
+            position:relative
+        }
+        .banner article>.row
+        {
+            margin:2.5vw 0
+        }
+        .banner .bg
+        {
+            width:100%;
+            height:auto
+        }
+        .banner .logo
+        {
+            max-height:54px;
+            width:auto!important
+        }
+        .banner .content-row
+        {
+            padding:0 10vw;
+            position:absolute;
+            left:0;
+            top:0;
+            width:100vw;
+            color:white;
+        }
+        .banner .content-row img
+        {
+            width:100%
+        }
+        .banner .content-row a
+        {
+            color:#fff;
+            line-height:50px
+        }
+        .banner .content-row a.btn
+        {
+            display:block;
+            width:17.5vw;
+            height:4.5vw;
+            color:#fff;
+            line-height:4.5vw;
+            font-weight:700;
+            font-size:2em;
+            margin-top:1.5em;
+            position:relative
+        }
+        .banner .content-row a.btn>*
+        {
+            display:block;
+            position:absolute;
+            z-index:2;
+            left:0;
+            top:0;
+            width:14vw;
+            height:4.5vw
+        }
+        .banner .content-row a.btn>img
+        {
+            z-index:1;
+            width:17.5vw
+        }
+        .banner .content-row a.btn:hover
+        {
+            color:#fff;
+            text-decoration:none
+        }
+        .banner .content-row .title
+        {
+            font-size:3.25em;
+            font-weight:700
+        }
+        .banner .content-row .desc
+        {
+            font-size:1.75em;
+            margin-top:1em
+        }
+        section.card
+        {
+            display:block;
+            position:relative
+        }
+        section.card header
+        {
+            font-size:3.5em;
+            padding-top:2em;
+            padding-bottom:1.75em;
+            z-index:5;
+            position:relative
+        }
+        section.card header>.h1
+        {
+            display:inline-block;
+            color:#0d1372;
+            position:relative
+        }
+        section.card header>.h1>*
+        {
+            position:absolute;
+            bottom:-10px;
+            left:0;
+            height:10px;
+            width:40px;
+            border-radius:1em;
+            display:block;
+            background-color:#0aeda8
+        }
+        section.card header>label
+        {
+            display:block;
+            width:100px;
+            margin:0 auto;
+            height:5px;
+            border-radius:10px;
+            background-color:#ccc
+        }
+        section.card .bg
+        {
+            position:absolute;
+            left:0;
+            top:0;
+            width:100%;
+            height:100%;
+            z-index:-1
+        }
+
+        .download .item.active
+        {
+            color:#0d1372;
+            cursor:pointer
+        }
+        .download .item
+        {
+            position:relative;
+            width:300px;
+            margin:0 auto 2em;
+            line-height:60px;
+            color:#a9aac7;
+            font-weight:700
+        }
+        .download .item img
+        {
+            width:40px;
+            height:40px
+        }
+        .download .item .row>*
+        {
+            padding:0
+        }
+        .introduce .desc
+        {
+            color:#8081af;
+            line-height:1.5em;
+            margin-bottom:1em
+        }
+        .introduce .icon
+        {
+            margin-top:3em
+        }
+        #introduce
+        {
+            overflow:initial;
+            overflow:visible!important
+        }
+        .location .server
+        {
+            color:#0d1372;
+            font-weight:700;
+            font-size:3em;
+            padding:.5em 0
+        }
+        .location .desc
+        {
+            color:#8081af;
+            font-size:1.5em;
+            line-height:2;
+            padding:.5em 0;
+            margin-bottom:1em
+        }
+        .location .country img
+        {
+            max-width:80%
+        }
+        .support article
+        {
+            width:50vw;
+            margin:0 auto 6vw;
+            padding:0 5vw;
+            color: #0d1372;
+        }
+        .support article h1
+        {
+            font-size:1.5em;
+            font-weight:700;
+            padding:2em 0
+        }
+        .support article .desc
+        {
+            margin-bottom:2em;
+            color:#8081af
+        }
+        #faq .bg
+        {
+            position:absolute;
+            z-index:-1;
+            left:2vw;
+            top:10em;
+            width:20vw;
+            height:auto;
+            max-width:200px
+        }
+        .faq
+        {
+            min-height:600px
+        }
+        .faq .faq-btn
+        {
+            background-color:#a9aac7;
+            color:#fff;
+            padding:10px 0;
+            border-radius:60px
+        }
+        .faq .faq-btn.active
+        {
+            background-color:#0d1372
+        }
+        .faq .faq-btn>img
+        {
+            height:40px;
+            width:40px;
+            display:inline-block;
+            margin-right:5px
+        }
+        .faq .faq-block
+        {
+            margin-top:4em;
+            margin-bottom:2em;
+            padding:1em 2em;
+            line-height:2.5em;
+            font-weight:700
+        }
+        .faq .faq-block p:last-child
+        {
+            margin-bottom:0
+        }
+        .faq .faq-block>*,.faq .faq-block>:hover
+        {
+            color:#0d1372;
+            cursor:pointer
+        }
+        .window article img,.window>section>div
+        {
+            width:100%
+        }
+        .window>section
+        {
+            width:100%;
+            height:100%;
+            overflow:hidden;
+            padding:0 2vw
+        }
+        .window>section>header
+        {
+            color:#598fec;
+            font-weight:700;
+            font-size:2em;
+            line-height:3em
+        }
+
+        .window .fast>.active
+        {
+            background-color:#598fec
+        }
+        .window .fast>*
+        {
+            margin-right:1em;
+            width:15px;
+            height:15px;
+            background-color:#CCC
+        }
+        .footer
+        {
+            background-color:#0b1231;
+            color:#cdcdcd
+        }
+        .footer>*
+        {
+            width:70%;
+            max-width:1200px;
+            margin:0 auto;
+            position:relative
+        }
+        .footer h2
+        {
+            font-weight:400;
+            padding:1em 0
+        }
+        .footer a,.footer a:hover
+        {
+            color:#cdcdcd!important
+        }
+    </style>
+
+</head>
+
+<body style="" class="">
+<img src="" width="512" style="position:fixed;top:-600px;left:-600px;z-index:-1">
+<div id="container" class="fade-in">
+    <div class="banner" id="banner">
+        <img src="https://dl.aillnet.cn/quickq/static/img/qq-banner/bg-20200210.png" width="100%" class="bg">
+        <article class="content-row">
+            <div class="row">
+                <div class="col-6">
+                    <img src="" class="logo">
+                </div>
+                <div class="col-6">
+                    <div class="row">
+                        <a class="col ng-binding ng-scope" href="#download">下载</a>
+                        <a class="col ng-binding ng-scope" href="#introduce">介绍</a>
+                        <a class="col ng-binding ng-scope" href="#manual">使用手册</a>
+                    </div>
+                </div>
+            </div>
+            <div class="row" style="padding-top:5vw">
+                <div class="col-6">
+                    <div class="title ng-binding">HiSA静态分析器</div>
+                    <div class="desc ng-binding"></div>
+                    <a href="#download" class="btn">
+                        <img src="https://dl.aillnet.cn/quickq/static/img/qq-banner/btn-dl.png"> <font class="ng-binding">下载程序</font>
+                    </a>
+                    <a href="https://github.com/shinkunyachen/SEExp2020" class="btn">
+                        <img src="https://dl.aillnet.cn/quickq/static/img/qq-banner/btn-pay.png"> <font class="ng-binding">访问git仓库</font>
+                    </a>
+                </div>
+                <div class="col-6"></div>
+            </div>
+        </article>
+    </div>
+    <section class="card download" id="download">
+        <header>
+            <span class="h1 ng-binding">应用下载<i></i></span>
+        </header>
+        <article class="row">
+            <div class="" style="width: 100%">
+                <div class="item ng-scope active">
+                    <a class="row" href="#download">
+                        <div class="col-2"></div>
+                        <div class="col-4">
+                            <img src="https://timgsa.baidu.com/timg?image&amp;quality=80&amp;size=b9999_10000&amp;sec=1592427221528&amp;di=1c3a304b05e639cf33f11b962cf0fee2&amp;imgtype=0&amp;src=http%3A%2F%2Fpic.51yuansu.com%2Fpic2%2Fcover%2F00%2F51%2F56%2F58168322a5094_610.jpg">
+                        </div>
+                        <div class="col-6 ng-binding">命令台程序</div>
+                    </a>
+                </div>
+                <div class="item ng-scope">
+                    <a class="row" href="#download">
+                        <div class="col-2"></div>
+                        <div class="col-4">
+                            <img src="https://timgsa.baidu.com/timg?image&amp;quality=80&amp;size=b9999_10000&amp;sec=1592427270720&amp;di=6894d39ab5d6687fed4bbe761b7e70d3&amp;imgtype=0&amp;src=http%3A%2F%2Fpic4.zhimg.com%2Fv2-e3b11c1472db5b16a2e6fe36ff99aa8e_1200x500.jpg">
+                        </div>
+                        <div class="col-6 ng-binding">GUI程序</div></a></div>
+                <div class="item ng-scope">
+                    <a class="row" href="#download">
+                        <div class="col-2"></div>
+                        <div class="col-4">
+                            <img src="https://ss2.bdstatic.com/70cFvnSh_Q1YnxGkpoWK1HF6hhy/it/u=1731444914,1930053468&amp;fm=26&amp;gp=0.jpg">
+                        </div>
+                        <div class="col-6 ng-binding">源代码</div>
+                    </a>
+                </div>
+                <div class="item ng-scope">
+                    <a class="row" href="https://github.com/shinkunyachen/SEExp2020">
+                        <div class="col-2"></div>
+                        <div class="col-4">
+                            <img src="https://ss0.bdstatic.com/70cFvHSh_Q1YnxGkpoWK1HF6hhy/it/u=3000368218,295699058&amp;fm=26&amp;gp=0.jpg">
+                        </div>
+                        <div class="col-6 ng-binding">github仓库</div>
+                    </a>
+                </div>
+                <div class="item ng-scope ng-hide active">
+                    <div class="row">
+                        <div class="col-2"></div>
+                        <div class="col-4">
+                            <img src="https://dl.aillnet.cn/quickq/static/img/qq-download/p-ios-active.png">
+                        </div>
+                        <div class="col-6 ng-binding">iOS</div>
+                    </div>
+                </div>
+            </div>
+        </article>
+        <img src="https://dl.aillnet.cn/quickq/static/img/qq-download/bg-left.png" class="bg-left">
+    </section>
+    <section class="card introduce" id="introduce">
+        <header>
+            <span class="h1 ng-binding">项目介绍<i></i></span>
+        </header>
+        <article class="row desc ng-scope">
+            <div class="col-2"></div>
+            <div class="col-8 ng-binding">基于CSA的Checker机制进行开发，提供软件缺陷的高效检测功能</div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row desc ng-scope">
+            <div class="col-2"></div>
+            <div class="col-8 ng-binding">为软件用户提供了方便的检测方式和快捷的检测手段</div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row desc ng-scope">
+            <div class="col-2"></div>
+            <div class="col-8 ng-binding">为开发者提供了自定义Checker接口，方便扩展开发</div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row desc ng-scope">
+            <div class="col-2"></div>
+            <div class="col-8 ng-binding">提供GUI程序，方便用户进行可视化操作</div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row icon __web-inspector-hide-shortcut__">
+            <div class="col-2"></div>
+            <div class="col-8"><article class="row">
+                <div class="clear"></div>
+            </article>
+            </div>
+            <div class="col-2"></div>
+        </article>
+    </section>
+    <section class="card location" id="location">
+        <header>
+            <span class="h1 ng-binding">项目能力<i></i></span>
+        </header>
+        <article class="row">
+            <div class="col-2"></div>
+            <div class="col-8">
+                <div class="server ng-binding">可处理百万行规模代码</div>
+                <div class="desc ng-binding">软件足以应对百万行规模的工程代码，并提供缺陷检测报告</div>
+            </div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row icon">
+            <div class="col-2"></div>
+            <div class="col-8">
+                <article class="row">
+                    <div class="col-3 intro ng-scope">
+                        <div class="ui-flex justify-center center">
+                            <img src="https://timgsa.baidu.com/timg?image&amp;quality=80&amp;size=b9999_10000&amp;sec=1591187026009&amp;di=9ec4b8fa751dba97f78f128eee5d6001&amp;imgtype=0&amp;src=http%3A%2F%2Fcdn.45squared.com%2Fwp-content%2Fuploads%2F20180304110830%2Fmysql-logo.png" width="150px">
+                        </div>
+                        <div class="intro-title ng-binding" style="text-align: center;font-size:20px">MySQL</div>
+                    </div>
+                    <div class="clear"></div>
+                    <div class="col-3 intro ng-scope">
+                        <div class="ui-flex justify-center center">
+                            <img src="https://timgsa.baidu.com/timg?image&amp;quality=80&amp;size=b9999_10000&amp;sec=1591187141811&amp;di=3669288460e0cf3cdfa2a0a0fede19e9&amp;imgtype=0&amp;src=http%3A%2F%2Fimg.cwq.com%2F201611%2F581c95c35ca62.png" width="150px" alt="not found">
+                        </div>
+                        <div class="intro-title ng-binding" style="text-align: center;font-size:20px">Python</div>
+                    </div>
+                </article>
+            </div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row">
+            <div class="col-2"></div>
+            <div class="col-8">
+                <div class="server ng-binding">可选择检测类型</div>
+                <div class="desc ng-binding">软件可根据需求选择所需的检测类型</div>
+            </div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row icon">
+            <div class="col-2"></div>
+            <div class="col-8">
+                <article class="row">
+                    <div class="ui-flex justify-center center">
+                        <img style="alignment: center" width="700px" alt="插入gui图片" src="pic1.png">
+                        <div class="desc ng-binding" style="text-align: center;font-size:40px">选择类型</div>
+                    </div>
+                    <div class="clear"></div>
+                </article>
+            </div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row">
+            <div class="col-2"></div>
+            <div class="col-8">
+                <div class="server ng-binding">高检测速度</div>
+                <div class="desc ng-binding">软件可在10分钟内完成百万行级别工程的缺陷检测</div>
+            </div>
+            <div class="col-2"></div>
+        </article>
+        <article class="row icon">
+            <div class="col-2"></div>
+            <div class="col-8">
+                <article class="row">
+                    <div class="ui-flex justify-center center">
+                        <img style="alignment: center" width="700px" alt="插入gui图片" src="pic2.png">
+                        <div class="desc ng-binding" style="text-align: center;font-size:40px">高检测速度</div>
+                    </div>
+                    <div class="clear"></div>
+                </article>
+            </div>
+            <div class="col-2"></div>
+        </article>
+        <img src="https://dl.aillnet.cn/quickq/static/img/qq-download/bg-right.png" class="bg-right">
+    </section>
+    <section class="card faq ng-scope" id="faq">
+        <header>
+            <span class="h1">软件相关文档<i></i></span>
+        </header>
+        <div class="row">
+            <div class="col-2"></div>
+            <div class="col-8"><article class="row">
+                <div class="col-3 ng-scope">
+                    <section class="faq-btn" id="windows-section" onmouseenter="changeDependenciesToWindows()" style="background-color: grey;">
+                        <img src="https://dl.aillnet.cn/quickq/static/img/qq-faq/faq-win.png">
+                        <span class="ng-binding">用户手册</span>
+                    </section>
+                </div>
+                <div class="col-3 ng-scope">
+                    <section class="faq-btn" id="linux-section" onmouseenter="changeDependenciesToLinux()" style="background-color: grey;">
+                        <img src="https://timgsa.baidu.com/timg?image&amp;quality=80&amp;size=b9999_10000&amp;sec=1591203723789&amp;di=f457ee709aa10597113da134ec9992c1&amp;imgtype=0&amp;src=http%3A%2F%2Fku.90sjimg.com%2Felement_origin_min_pic%2F00%2F92%2F56%2F9856f228a2cb703.jpg">
+                        <span class="ng-binding">API文档</span>
+                    </section>
+                </div>
+            </article>
+            </div>
+            <div class="col-2"></div>
+        </div>
+        <div class="row">
+            <div class="col-2"></div>
+            <div class="col-8">
+                <div class="faq-block">
+                    <div class="q ng-scope">
+                        <p class="ng-binding">相关文档</p>
+                    </div>
+                    <div>
+                        <ul id="dependencies">
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="col-2"></div>
+        </div>
+    </section>
+    <div class="footer">
+    <div>
+        <div class="row">
+            <div class="col-8">
+                <p class="ng-binding"></p>
+                <p class="ng-binding">开发者：程珂、吴晓阳、周若衡、陈昊东、施超烜</p>
+                <p class="ng-binding">助教：何杰煊</p>
+                <p class="ng-binding">指导老师：张天、王林章、曹春</p>
+                <p class="ng-binding">联系邮箱：530787266@qq.com</p>
+                <div class="clear"></div>
+            </div>
+            <div class="col-4">
+                <div class="clear"></div>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+</body></html>

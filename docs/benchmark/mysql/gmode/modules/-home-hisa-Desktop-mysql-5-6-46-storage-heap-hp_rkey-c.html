@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/heap/hp_rkey.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2010, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+#include "heapdef.h"
+
+int heap_rkey(HP_INFO *info, uchar *record, int inx, const uchar *key, 
+              key_part_map keypart_map, enum ha_rkey_function find_flag)
+{
+  uchar *pos;
+  HP_SHARE *share= info-&gt;s;
+  HP_KEYDEF *keyinfo= share-&gt;keydef + inx;
+  DBUG_ENTER("heap_rkey");
+  DBUG_PRINT("enter",("info: 0x%lx  inx: %d", (long) info, inx));
+
+  if ((uint) inx &gt;= share-&gt;keys)
+  {
+    DBUG_RETURN(my_errno= HA_ERR_WRONG_INDEX);
+  }
+  info-&gt;lastinx= inx;
+  info-&gt;current_record= (ulong) ~0L;		/* For heap_rrnd() */
+
+  if (keyinfo-&gt;algorithm == HA_KEY_ALG_BTREE)
+  {
+    heap_rb_param custom_arg;
+
+    custom_arg.keyseg= info-&gt;s-&gt;keydef[inx].seg;
+    custom_arg.key_length= info-&gt;lastkey_len= 
+      hp_rb_pack_key(keyinfo, (uchar*) info-&gt;lastkey,
+		     (uchar*) key, keypart_map);
+    custom_arg.search_flag= SEARCH_FIND | SEARCH_SAME;
+    /* for next rkey() after deletion */
+    if (find_flag == HA_READ_AFTER_KEY)
+      info-&gt;last_find_flag= HA_READ_KEY_OR_NEXT;
+    else if (find_flag == HA_READ_BEFORE_KEY)
+      info-&gt;last_find_flag= HA_READ_KEY_OR_PREV;
+    else
+      info-&gt;last_find_flag= find_flag;
+    if (!(pos= tree_search_key(&amp;keyinfo-&gt;rb_tree, info-&gt;lastkey, info-&gt;parents,
+			       &amp;info-&gt;last_pos, find_flag, &amp;custom_arg)))
+    {
+      info-&gt;update= 0;
+      DBUG_RETURN(my_errno= HA_ERR_KEY_NOT_FOUND);
+    }
+    memcpy(&amp;pos, pos + (*keyinfo-&gt;get_key_length)(keyinfo, pos), sizeof(uchar*));
+    info-&gt;current_ptr= pos;
+  }
+  else
+  {
+    if (!(pos= hp_search(info, share-&gt;keydef + inx, key, 0)))
+    {
+      info-&gt;update= 0;
+      DBUG_RETURN(my_errno);
+    }
+    /*
+      If key is unique and can accept NULL values, we still
+      need to copy it to info-&gt;lastkey, which in turn is used
+      to search subsequent records.
+    */
+    if (!(keyinfo-&gt;flag &amp; HA_NOSAME) || (keyinfo-&gt;flag &amp; HA_NULL_PART_KEY))
+      memcpy(info-&gt;lastkey, key, (size_t) keyinfo-&gt;length);
+  }
+  memcpy(record, pos, (size_t) share-&gt;reclength);
+  info-&gt;update= HA_STATE_AKTIV;
+  DBUG_RETURN(0);
+}
+
+
+	/* Quick find of record */
+
+uchar* heap_find(HP_INFO *info, int inx, const uchar *key)
+{
+  return hp_search(info, info-&gt;s-&gt;keydef + inx, key, 0);
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/client/readline.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*
+   Copyright (c) 2000, 2011, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+*/
+
+/* readline for batch mode */
+
+#include &lt;my_global.h&gt;
+#include &lt;my_sys.h&gt;
+#include &lt;m_string.h&gt;
+#include &lt;my_dir.h&gt;
+#include "my_readline.h"
+
+static bool init_line_buffer(LINE_BUFFER *buffer,File file,ulong size,
+			    ulong max_size);
+static bool init_line_buffer_from_string(LINE_BUFFER *buffer,char * str);
+static size_t fill_buffer(LINE_BUFFER *buffer);
+static char *intern_read_line(LINE_BUFFER *buffer, ulong *out_length);
+
+
+LINE_BUFFER *batch_readline_init(ulong max_size,FILE *file)
+{
+  LINE_BUFFER *line_buff;
+  MY_STAT input_file_stat;
+
+#ifndef __WIN__
+  if (my_fstat(fileno(file), &amp;input_file_stat, MYF(MY_WME)) ||
+      MY_S_ISDIR(input_file_stat.st_mode) ||
+      MY_S_ISBLK(input_file_stat.st_mode))
+    return 0;
+#endif
+
+  if (!(line_buff=(LINE_BUFFER*)
+        my_malloc(sizeof(*line_buff),MYF(MY_WME | MY_ZEROFILL))))
+    return 0;
+  if (init_line_buffer(line_buff,my_fileno(file),IO_SIZE,max_size))
+  {
+    my_free(line_buff);
+    return 0;
+  }
+  return line_buff;
+}
+
+
+char *batch_readline(LINE_BUFFER *line_buff, bool binary_mode)
+{
+  char *pos;
+  ulong out_length;
+
+  if (!(pos=intern_read_line(line_buff, &amp;out_length)))
+    return 0;
+  if (out_length &amp;&amp; pos[out_length-1] == '\n')
+  {
+#if defined(__WIN__)
+    /*
+      On Windows platforms we also need to remove '\r', 
+      unconditionally.
+     */
+
+    /* Remove '\n' */
+    if (--out_length &amp;&amp; pos[out_length-1] == '\r')  
+      /* Remove '\r' */
+      out_length--;                                 
+#else
+    /*
+      On Unix-like platforms we only remove it if we are not 
+      on binary mode.
+     */
+
+    /* Remove '\n' */
+    if (--out_length &amp;&amp; !binary_mode &amp;&amp; pos[out_length-1] == '\r')
+      /* Remove '\r' */
+      out_length--;                                 
+#endif
+  }
+  line_buff-&gt;read_length=out_length;
+  pos[out_length]=0;
+  DBUG_DUMP("Query: ", (unsigned char *) pos, out_length);
+  return pos;
+}
+
+
+void batch_readline_end(LINE_BUFFER *line_buff)
+{
+  if (line_buff)
+  {
+    my_free(line_buff-&gt;buffer);
+    my_free(line_buff);
+  }
+}
+
+
+LINE_BUFFER *batch_readline_command(LINE_BUFFER *line_buff, char * str)
+{
+  if (!line_buff)
+    if (!(line_buff=(LINE_BUFFER*)
+          my_malloc(sizeof(*line_buff),MYF(MY_WME | MY_ZEROFILL))))
+      return 0;
+  if (init_line_buffer_from_string(line_buff,str))
+  {
+    my_free(line_buff);
+    return 0;
+  }
+  return line_buff;
+}
+
+
+/*****************************************************************************
+      Functions to handle buffered readings of lines from a stream
+******************************************************************************/
+
+static bool
+init_line_buffer(LINE_BUFFER *buffer,File file,ulong size,ulong max_buffer)
+{
+  buffer-&gt;file=file;
+  buffer-&gt;bufread=size;
+  buffer-&gt;max_size=max_buffer;
+  if (!(buffer-&gt;buffer = (char*) my_malloc(buffer-&gt;bufread+1,
+					   MYF(MY_WME | MY_FAE))))
+    return 1;
+  buffer-&gt;end_of_line=buffer-&gt;end=buffer-&gt;buffer;
+  buffer-&gt;buffer[0]=0;				/* For easy start test */
+  return 0;
+}
+
+/*
+  init_line_buffer_from_string can be called on the same buffer
+  several times. the resulting buffer will contain a
+  concatenation of all strings separated by spaces
+*/
+static bool init_line_buffer_from_string(LINE_BUFFER *buffer,char * str)
+{
+  uint old_length=(uint)(buffer-&gt;end - buffer-&gt;buffer);
+  uint length= (uint) strlen(str);
+  if (!(buffer-&gt;buffer= buffer-&gt;start_of_line= buffer-&gt;end_of_line=
+	(char*) my_realloc((uchar*) buffer-&gt;buffer, old_length+length+2,
+                           MYF(MY_FAE|MY_ALLOW_ZERO_PTR))))
+    return 1;
+  buffer-&gt;end= buffer-&gt;buffer + old_length;
+  if (old_length)
+    buffer-&gt;end[-1]=' ';
+  memcpy(buffer-&gt;end, str, length);
+  buffer-&gt;end[length]= '\n';
+  buffer-&gt;end[length+1]= 0;
+  buffer-&gt;end+= length+1;
+  buffer-&gt;eof=1;
+  buffer-&gt;max_size=1;
+  return 0;
+}
+
+
+/*
+  Fill the buffer retaining the last n bytes at the beginning of the
+  newly filled buffer (for backward context).	Returns the number of new
+  bytes read from disk.
+*/
+
+static size_t fill_buffer(LINE_BUFFER *buffer)
+{
+  size_t read_count;
+  uint bufbytes= (uint) (buffer-&gt;end - buffer-&gt;start_of_line);
+
+  if (buffer-&gt;eof)
+    return 0;					/* Everything read */
+
+  /* See if we need to grow the buffer. */
+
+  for (;;)
+  {
+    uint start_offset=(uint) (buffer-&gt;start_of_line - buffer-&gt;buffer);
+    read_count=(buffer-&gt;bufread - bufbytes)/IO_SIZE;
+    if ((read_count*=IO_SIZE))
+      break;
+    if (buffer-&gt;bufread * 2 &gt; buffer-&gt;max_size)
+    {
+      /*
+        So we must grow the buffer but we cannot due to the max_size limit.
+        Return 0 w/o setting buffer-&gt;eof to signal this condition.
+      */
+      return 0;
+    }
+    buffer-&gt;bufread *= 2;
+    if (!(buffer-&gt;buffer = (char*) my_realloc(buffer-&gt;buffer,
+					      buffer-&gt;bufread+1,
+					      MYF(MY_WME | MY_FAE))))
+    {
+      buffer-&gt;error= my_errno;
+      return (size_t) -1;
+    }
+    buffer-&gt;start_of_line=buffer-&gt;buffer+start_offset;
+    buffer-&gt;end=buffer-&gt;buffer+bufbytes;
+  }
+
+  /* Shift stuff down. */
+  if (buffer-&gt;start_of_line != buffer-&gt;buffer)
+  {
+    bmove(buffer-&gt;buffer,buffer-&gt;start_of_line,(uint) bufbytes);
+    buffer-&gt;end=buffer-&gt;buffer+bufbytes;
+  }
+
+  /* Read in new stuff. */
+  if ((read_count= my_read(buffer-&gt;file, (uchar*) buffer-&gt;end, read_count,
+			   MYF(MY_WME))) == MY_FILE_ERROR)
+  {
+    buffer-&gt;error= my_errno;
+    return (size_t) -1;
+  }
+
+  DBUG_PRINT("fill_buff", ("Got %lu bytes", (ulong) read_count));
+
+  if (!read_count)
+  {
+    buffer-&gt;eof = 1;
+    /* Kludge to pretend every nonempty file ends with a newline. */
+<span style = "background-color:#fdd">    if (bufbytes &amp;&amp; buffer-&gt;end[-1] != '\n')        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+    {
+      read_count = 1;
+      *buffer-&gt;end = '\n';
+    }
+  }
+  buffer-&gt;end_of_line=(buffer-&gt;start_of_line=buffer-&gt;buffer)+bufbytes;
+  buffer-&gt;end+=read_count;
+  *buffer-&gt;end=0;				/* Sentinel */
+  return read_count;
+}
+
+
+char *intern_read_line(LINE_BUFFER *buffer, ulong *out_length)
+{
+  char *pos;
+  size_t length;
+  DBUG_ENTER("intern_read_line");
+
+  buffer-&gt;start_of_line=buffer-&gt;end_of_line;
+  for (;;)
+  {
+    pos=buffer-&gt;end_of_line;
+    while (*pos != '\n' &amp;&amp; pos != buffer-&gt;end)
+      pos++;
+    if (pos == buffer-&gt;end)
+    {
+      /*
+        fill_buffer() can return NULL on EOF (in which case we abort),
+        on error, or when the internal buffer has hit the size limit.
+        In the latter case return what we have read so far and signal
+        string truncation.
+      */
+      if (!(length= fill_buffer(buffer)))
+      {
+        if (buffer-&gt;eof)
+          DBUG_RETURN(0);
+      }
+      else if (length == (size_t) -1)
+        DBUG_RETURN(NULL);
+      else
+        continue;
+      pos--;					/* break line here */
+      buffer-&gt;truncated= 1;
+    }
+    else
+      buffer-&gt;truncated= 0;
+    buffer-&gt;end_of_line=pos+1;
+    *out_length=(ulong) (pos + 1 - buffer-&gt;eof - buffer-&gt;start_of_line);
+
+    DBUG_DUMP("Query: ", (unsigned char *) buffer-&gt;start_of_line, *out_length);
+    DBUG_RETURN(buffer-&gt;start_of_line);
+  }
+}
+      </pre>
+    </body>
+</html>

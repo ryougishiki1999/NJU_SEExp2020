@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/heap/hp_close.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2010, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+/* close a heap-database */
+
+#include "heapdef.h"
+
+	/* Close a database open by hp_open() */
+	/* Data is normally not deallocated */
+
+int heap_close(HP_INFO *info)
+{
+  int tmp;
+  DBUG_ENTER("heap_close");
+  mysql_mutex_lock(&amp;THR_LOCK_heap);
+  tmp= hp_close(info);
+  mysql_mutex_unlock(&amp;THR_LOCK_heap);
+  DBUG_RETURN(tmp);
+}
+
+
+int hp_close(register HP_INFO *info)
+{
+  int error=0;
+  DBUG_ENTER("hp_close");
+#ifndef DBUG_OFF
+  if (info-&gt;s-&gt;changed &amp;&amp; heap_check_heap(info,0))
+  {
+    error=my_errno=HA_ERR_CRASHED;
+  }
+#endif
+  info-&gt;s-&gt;changed=0;
+  if (info-&gt;open_list.data)
+    heap_open_list=list_delete(heap_open_list,&amp;info-&gt;open_list);
+  if (!--info-&gt;s-&gt;open_count &amp;&amp; info-&gt;s-&gt;delete_on_close)
+    hp_free(info-&gt;s);				/* Table was deleted */
+  my_free(info);
+  DBUG_RETURN(error);
+}
+      </pre>
+    </body>
+</html>

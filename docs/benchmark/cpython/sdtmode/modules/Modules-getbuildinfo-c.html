@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Modules/getbuildinfo.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "Python.h"
+
+#ifndef DONT_HAVE_STDIO_H
+#include &lt;stdio.h&gt;
+#endif
+
+#ifndef DATE
+#ifdef __DATE__
+#define DATE __DATE__
+#else
+#define DATE "xx/xx/xx"
+#endif
+#endif
+
+#ifndef TIME
+#ifdef __TIME__
+#define TIME __TIME__
+#else
+#define TIME "xx:xx:xx"
+#endif
+#endif
+
+/* XXX Only unix build process has been tested */
+#ifndef GITVERSION
+#define GITVERSION ""
+#endif
+#ifndef GITTAG
+#define GITTAG ""
+#endif
+#ifndef GITBRANCH
+#define GITBRANCH ""
+#endif
+
+const char *
+Py_GetBuildInfo(void)
+{
+    static char buildinfo[50 + sizeof(GITVERSION) +
+                          ((sizeof(GITTAG) &gt; sizeof(GITBRANCH)) ?
+                           sizeof(GITTAG) : sizeof(GITBRANCH))];
+    const char *revision = _Py_gitversion();
+    const char *sep = *revision ? ":" : "";
+    const char *gitid = _Py_gitidentifier();
+    if (!(*gitid))
+        gitid = "default";
+    PyOS_snprintf(buildinfo, sizeof(buildinfo),
+                  "%s%s%s, %.20s, %.9s", gitid, sep, revision,
+                  DATE, TIME);
+    return buildinfo;
+}
+
+const char *
+_Py_gitversion(void)
+{
+    return GITVERSION;
+}
+
+const char *
+_Py_gitidentifier(void)
+{
+    const char *gittag, *gitid;
+    gittag = GITTAG;
+    if ((*gittag) &amp;&amp; strcmp(gittag, "undefined") != 0)
+        gitid = gittag;
+    else
+        gitid = GITBRANCH;
+    return gitid;
+}
+      </pre>
+    </body>
+</html>

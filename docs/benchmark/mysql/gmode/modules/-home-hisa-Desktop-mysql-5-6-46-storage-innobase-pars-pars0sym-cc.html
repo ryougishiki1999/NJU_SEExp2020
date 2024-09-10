@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/pars/pars0sym.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 1997, 2011, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/**************************************************//**
+@file pars/pars0sym.cc
+SQL parser symbol table
+
+Created 12/15/1997 Heikki Tuuri
+*******************************************************/
+
+#include "pars0sym.h"
+
+#ifdef UNIV_NONINL
+#include "pars0sym.ic"
+#endif
+
+#include "mem0mem.h"
+#include "data0type.h"
+#include "data0data.h"
+#include "pars0grm.h"
+#include "pars0pars.h"
+#include "que0que.h"
+#include "eval0eval.h"
+#include "row0sel.h"
+
+/******************************************************************//**
+Creates a symbol table for a single stored procedure or query.
+@return	own: symbol table */
+UNIV_INTERN
+sym_tab_t*
+sym_tab_create(
+/*===========*/
+	mem_heap_t*	heap)	/*!&lt; in: memory heap where to create */
+{
+	sym_tab_t*	sym_tab;
+
+	sym_tab = static_cast&lt;sym_tab_t*&gt;(
+		mem_heap_alloc(heap, sizeof(sym_tab_t)));
+
+	UT_LIST_INIT(sym_tab-&gt;sym_list);
+	UT_LIST_INIT(sym_tab-&gt;func_node_list);
+
+	sym_tab-&gt;heap = heap;
+
+	return(sym_tab);
+}
+
+
+/******************************************************************//**
+Frees the memory allocated dynamically AFTER parsing phase for variables
+etc. in the symbol table. Does not free the mem heap where the table was
+originally created. Frees also SQL explicit cursor definitions. */
+UNIV_INTERN
+void
+sym_tab_free_private(
+/*=================*/
+	sym_tab_t*	sym_tab)	/*!&lt; in, own: symbol table */
+{
+	sym_node_t*	sym;
+	func_node_t*	func;
+
+	ut_ad(mutex_own(&amp;dict_sys-&gt;mutex));
+
+	for (sym = UT_LIST_GET_FIRST(sym_tab-&gt;sym_list);
+	     sym != NULL;
+	     sym = UT_LIST_GET_NEXT(sym_list, sym)) {
+
+		/* Close the tables opened in pars_retrieve_table_def(). */
+
+		if (sym-&gt;token_type == SYM_TABLE_REF_COUNTED) {
+
+			dict_table_close(sym-&gt;table, TRUE, FALSE);
+
+			sym-&gt;table = NULL;
+			sym-&gt;resolved = FALSE;
+			sym-&gt;token_type = SYM_UNSET;
+		}
+
+		eval_node_free_val_buf(sym);
+
+		if (sym-&gt;prefetch_buf) {
+			sel_col_prefetch_buf_free(sym-&gt;prefetch_buf);
+		}
+
+		if (sym-&gt;cursor_def) {
+			que_graph_free_recursive(sym-&gt;cursor_def);
+		}
+	}
+
+	for (func = UT_LIST_GET_FIRST(sym_tab-&gt;func_node_list);
+	     func != NULL;
+	     func = UT_LIST_GET_NEXT(func_node_list, func)) {
+
+		eval_node_free_val_buf(func);
+	}
+}
+
+/******************************************************************//**
+Adds an integer literal to a symbol table.
+@return	symbol table node */
+UNIV_INTERN
+sym_node_t*
+sym_tab_add_int_lit(
+/*================*/
+	sym_tab_t*	sym_tab,	/*!&lt; in: symbol table */
+	ulint		val)		/*!&lt; in: integer value */
+{
+	sym_node_t*	node;
+	byte*		data;
+
+	node = static_cast&lt;sym_node_t*&gt;(
+		mem_heap_alloc(sym_tab-&gt;heap, sizeof(sym_node_t)));
+
+	node-&gt;common.type = QUE_NODE_SYMBOL;
+
+	node-&gt;table = NULL;
+	node-&gt;resolved = TRUE;
+	node-&gt;token_type = SYM_LIT;
+
+	node-&gt;indirection = NULL;
+
+	dtype_set(dfield_get_type(&amp;node-&gt;common.val), DATA_INT, 0, 4);
+
+	data = static_cast&lt;byte*&gt;(mem_heap_alloc(sym_tab-&gt;heap, 4));
+	mach_write_to_4(data, val);
+
+	dfield_set_data(&amp;(node-&gt;common.val), data, 4);
+
+	node-&gt;common.val_buf_size = 0;
+	node-&gt;prefetch_buf = NULL;
+	node-&gt;cursor_def = NULL;
+
+	UT_LIST_ADD_LAST(sym_list, sym_tab-&gt;sym_list, node);
+
+	node-&gt;like_node = NULL;
+
+	node-&gt;sym_table = sym_tab;
+
+	return(node);
+}
+
+/******************************************************************//**
+Adds a string literal to a symbol table.
+@return	symbol table node */
+UNIV_INTERN
+sym_node_t*
+sym_tab_add_str_lit(
+/*================*/
+	sym_tab_t*	sym_tab,	/*!&lt; in: symbol table */
+	const byte*	str,		/*!&lt; in: string with no quotes around
+					it */
+	ulint		len)		/*!&lt; in: string length */
+{
+	sym_node_t*	node;
+	byte*		data;
+
+	node = static_cast&lt;sym_node_t*&gt;(
+		mem_heap_alloc(sym_tab-&gt;heap, sizeof(sym_node_t)));
+
+	node-&gt;common.type = QUE_NODE_SYMBOL;
+
+	node-&gt;table = NULL;
+	node-&gt;resolved = TRUE;
+	node-&gt;token_type = SYM_LIT;
+
+	node-&gt;indirection = NULL;
+
+	dtype_set(dfield_get_type(&amp;node-&gt;common.val),
+		  DATA_VARCHAR, DATA_ENGLISH, 0);
+
+	data = (len) ? static_cast&lt;byte*&gt;(mem_heap_dup(sym_tab-&gt;heap, str, len))
+	      	     : NULL;
+
+	dfield_set_data(&amp;(node-&gt;common.val), data, len);
+
+	node-&gt;common.val_buf_size = 0;
+	node-&gt;prefetch_buf = NULL;
+	node-&gt;cursor_def = NULL;
+
+	UT_LIST_ADD_LAST(sym_list, sym_tab-&gt;sym_list, node);
+
+	node-&gt;like_node = NULL;
+
+	node-&gt;sym_table = sym_tab;
+
+	return(node);
+}
+
+/******************************************************************//**
+Add a bound literal to a symbol table.
+@return	symbol table node */
+UNIV_INTERN
+sym_node_t*
+sym_tab_add_bound_lit(
+/*==================*/
+	sym_tab_t*	sym_tab,	/*!&lt; in: symbol table */
+	const char*	name,		/*!&lt; in: name of bound literal */
+	ulint*		lit_type)	/*!&lt; out: type of literal (PARS_*_LIT) */
+{
+	sym_node_t*		node;
+	pars_bound_lit_t*	blit;
+	ulint			len = 0;
+
+	blit = pars_info_get_bound_lit(sym_tab-&gt;info, name);
+	ut_a(blit);
+
+	node = static_cast&lt;sym_node_t*&gt;(
+		mem_heap_alloc(sym_tab-&gt;heap, sizeof(sym_node_t)));
+
+	node-&gt;common.type = QUE_NODE_SYMBOL;
+	node-&gt;common.brother = node-&gt;common.parent = NULL;
+
+	node-&gt;table = NULL;
+	node-&gt;resolved = TRUE;
+	node-&gt;token_type = SYM_LIT;
+
+	node-&gt;indirection = NULL;
+
+	switch (blit-&gt;type) {
+	case DATA_FIXBINARY:
+		len = blit-&gt;length;
+		*lit_type = PARS_FIXBINARY_LIT;
+		break;
+
+	case DATA_BLOB:
+		*lit_type = PARS_BLOB_LIT;
+		break;
+
+	case DATA_VARCHAR:
+		*lit_type = PARS_STR_LIT;
+		break;
+
+	case DATA_CHAR:
+		ut_a(blit-&gt;length &gt; 0);
+
+		len = blit-&gt;length;
+		*lit_type = PARS_STR_LIT;
+		break;
+
+	case DATA_INT:
+		ut_a(blit-&gt;length &gt; 0);
+		ut_a(blit-&gt;length &lt;= 8);
+
+		len = blit-&gt;length;
+		*lit_type = PARS_INT_LIT;
+		break;
+
+	default:
+		ut_error;
+	}
+
+	dtype_set(dfield_get_type(&amp;node-&gt;common.val),
+		  blit-&gt;type, blit-&gt;prtype, len);
+
+	dfield_set_data(&amp;(node-&gt;common.val), blit-&gt;address, blit-&gt;length);
+
+	node-&gt;common.val_buf_size = 0;
+	node-&gt;prefetch_buf = NULL;
+	node-&gt;cursor_def = NULL;
+
+	UT_LIST_ADD_LAST(sym_list, sym_tab-&gt;sym_list, node);
+
+	blit-&gt;node = node;
+	node-&gt;like_node = NULL;
+	node-&gt;sym_table = sym_tab;
+
+	return(node);
+}
+
+/**********************************************************************
+Rebind literal to a node in the symbol table. */
+
+sym_node_t*
+sym_tab_rebind_lit(
+/*===============*/
+					/* out: symbol table node */
+	sym_node_t*	node,		/* in: node that is bound to literal*/
+	const void*	address,	/* in: pointer to data */
+	ulint		length)		/* in: length of data */
+{
+	dfield_t*	dfield = que_node_get_val(node);
+	dtype_t*	dtype = dfield_get_type(dfield);
+
+	ut_a(node-&gt;token_type == SYM_LIT);
+
+	dfield_set_data(&amp;node-&gt;common.val, address, length);
+
+	if (node-&gt;like_node) {
+
+	    ut_a(dtype_get_mtype(dtype) == DATA_CHAR
+		 || dtype_get_mtype(dtype) == DATA_VARCHAR);
+
+		/* Don't force [FALSE] creation of sub-nodes (for LIKE) */
+		pars_like_rebind(
+			node,static_cast&lt;const byte*&gt;(address), length);
+	}
+
+	/* FIXME: What's this ? */
+	node-&gt;common.val_buf_size = 0;
+
+	if (node-&gt;prefetch_buf) {
+		sel_col_prefetch_buf_free(node-&gt;prefetch_buf);
+		node-&gt;prefetch_buf = NULL;
+	}
+
+	if (node-&gt;cursor_def) {
+		que_graph_free_recursive(node-&gt;cursor_def);
+		node-&gt;cursor_def = NULL;
+	}
+
+	return(node);
+}
+
+/******************************************************************//**
+Adds an SQL null literal to a symbol table.
+@return	symbol table node */
+UNIV_INTERN
+sym_node_t*
+sym_tab_add_null_lit(
+/*=================*/
+	sym_tab_t*	sym_tab)	/*!&lt; in: symbol table */
+{
+	sym_node_t*	node;
+
+	node = static_cast&lt;sym_node_t*&gt;(
+		mem_heap_alloc(sym_tab-&gt;heap, sizeof(sym_node_t)));
+
+	node-&gt;common.type = QUE_NODE_SYMBOL;
+
+	node-&gt;table = NULL;
+	node-&gt;resolved = TRUE;
+	node-&gt;token_type = SYM_LIT;
+
+	node-&gt;indirection = NULL;
+
+	dfield_get_type(&amp;node-&gt;common.val)-&gt;mtype = DATA_ERROR;
+
+	dfield_set_null(&amp;node-&gt;common.val);
+
+	node-&gt;common.val_buf_size = 0;
+	node-&gt;prefetch_buf = NULL;
+	node-&gt;cursor_def = NULL;
+
+	UT_LIST_ADD_LAST(sym_list, sym_tab-&gt;sym_list, node);
+
+	node-&gt;like_node = NULL;
+
+	node-&gt;sym_table = sym_tab;
+
+	return(node);
+}
+
+/******************************************************************//**
+Adds an identifier to a symbol table.
+@return	symbol table node */
+UNIV_INTERN
+sym_node_t*
+sym_tab_add_id(
+/*===========*/
+	sym_tab_t*	sym_tab,	/*!&lt; in: symbol table */
+	byte*		name,		/*!&lt; in: identifier name */
+	ulint		len)		/*!&lt; in: identifier length */
+{
+	sym_node_t*	node;
+
+	node = static_cast&lt;sym_node_t*&gt;(
+		mem_heap_zalloc(sym_tab-&gt;heap, sizeof(*node)));
+
+	node-&gt;common.type = QUE_NODE_SYMBOL;
+
+	node-&gt;name = mem_heap_strdupl(sym_tab-&gt;heap, (char*) name, len);
+	node-&gt;name_len = len;
+
+	UT_LIST_ADD_LAST(sym_list, sym_tab-&gt;sym_list, node);
+
+	dfield_set_null(&amp;node-&gt;common.val);
+
+	node-&gt;sym_table = sym_tab;
+
+	return(node);
+}
+
+/******************************************************************//**
+Add a bound identifier to a symbol table.
+@return	symbol table node */
+UNIV_INTERN
+sym_node_t*
+sym_tab_add_bound_id(
+/*=================*/
+	sym_tab_t*	sym_tab,	/*!&lt; in: symbol table */
+	const char*	name)		/*!&lt; in: name of bound id */
+{
+	sym_node_t*		node;
+	pars_bound_id_t*	bid;
+
+	bid = pars_info_get_bound_id(sym_tab-&gt;info, name);
+	ut_a(bid);
+
+	node = static_cast&lt;sym_node_t*&gt;(
+		mem_heap_alloc(sym_tab-&gt;heap, sizeof(sym_node_t)));
+
+	node-&gt;common.type = QUE_NODE_SYMBOL;
+
+	node-&gt;table = NULL;
+	node-&gt;resolved = FALSE;
+	node-&gt;token_type = SYM_UNSET;
+	node-&gt;indirection = NULL;
+
+	node-&gt;name = mem_heap_strdup(sym_tab-&gt;heap, bid-&gt;id);
+	node-&gt;name_len = strlen(node-&gt;name);
+
+	UT_LIST_ADD_LAST(sym_list, sym_tab-&gt;sym_list, node);
+
+	dfield_set_null(&amp;node-&gt;common.val);
+
+	node-&gt;common.val_buf_size = 0;
+	node-&gt;prefetch_buf = NULL;
+	node-&gt;cursor_def = NULL;
+
+	node-&gt;like_node = NULL;
+
+	node-&gt;sym_table = sym_tab;
+
+	return(node);
+}
+      </pre>
+    </body>
+</html>

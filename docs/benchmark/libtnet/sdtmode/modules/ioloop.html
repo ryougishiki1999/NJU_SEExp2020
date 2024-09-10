@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/ioloop.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "ioloop.h"
+
+#include &lt;sys/epoll.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;algorithm&gt;
+
+#include "poller.h"
+#include "log.h"
+#include "ioevent.h"
+#include "timer.h"
+#include "notifier.h"
+#include "timingwheel.h"
+
+using namespace std;
+
+namespace tnet
+{
+    class IgnoreSigPipe
+    {
+    public:
+        IgnoreSigPipe()
+        {
+            signal(SIGPIPE, SIG_IGN);    
+        }    
+    };
+
+    static IgnoreSigPipe initObj;
+
+    const int DefaultEventsCapacity = 1024;
+    const int MaxPollWaitTime = 1 * 1000;
+
+    IOLoop::IOLoop()
+    {
+        m_running = false;     
+     
+        m_poller = new Poller(this); 
+         
+        m_notifier = std::make_shared&lt;Notifier&gt;(std::bind(&amp;IOLoop::onWake, this, _1));
+        
+        m_wheel = std::make_shared&lt;TimingWheel&gt;(1000, 3600);
+
+        m_events.resize(DefaultEventsCapacity, 0);
+    }
+    
+    IOLoop::~IOLoop()
+    {
+        delete m_poller;
+        
+        for_each(m_events.begin(), m_events.end(), 
+            default_delete&lt;IOEvent&gt;());
+    }
+
+    void IOLoop::start()
+    {
+        m_running = true;
+
+        m_notifier-&gt;start(this);
+
+        m_wheel-&gt;start(this);
+
+        run();
+    }
+
+    void IOLoop::stop()
+    {
+        m_running = false;    
+    
+        m_notifier-&gt;notify();
+    }
+
+    void IOLoop::run()
+    {
+        while(m_running)
+        {
+            m_poller-&gt;poll(MaxPollWaitTime, m_events);
+       
+            handleCallbacks();
+        }
+        
+        LOG_INFO("loop stop");    
+    
+        m_notifier-&gt;stop();
+    }
+
+    int IOLoop::addHandler(int fd, int events, const IOHandler_t&amp; handler)
+    {
+        if(m_events.size() &lt;= fd)
+        {
+            m_events.resize(fd + 1, 0);    
+        }
+
+        if(m_events[fd] != 0)
+        {
+            LOG_ERROR("add duplicate handler %d", fd);
+            return -1;    
+        }
+
+        if(m_poller-&gt;add(fd, events) != 0)
+        {
+            return -1;
+        }
+
+        m_events[fd] = new IOEvent(fd, events, handler);
+<span style = "background-color:#fdd">        return 0;        Memory Leak:Potential memory leak</span>
+    }
+
+    int IOLoop::updateHandler(int fd, int events)
+    {
+        if(m_events.size() &lt;= fd || m_events[fd] == 0)
+        {
+            LOG_ERROR("invalid fd %d", fd);
+            return -1;    
+        }
+
+        if(m_events[fd]-&gt;events == events)
+        {
+            return 0;    
+        }
+
+        if(m_poller-&gt;update(fd, events) != 0)
+        {
+            return -1;
+        }
+
+        m_events[fd]-&gt;events = events;
+
+        return 0;
+    }
+
+    int IOLoop::removeHandler(int fd)
+    {
+        if(m_events.size() &lt;= fd || m_events[fd] == 0)
+        {
+            LOG_INFO("invalid fd %d", fd);
+            return -1;    
+        } 
+        
+        m_poller-&gt;remove(fd);
+
+        delete m_events[fd];
+        m_events[fd] = NULL;
+
+        return 0;
+    }
+
+    void onTimerHandler(const TimerPtr_t&amp; timer, const Callback_t&amp; callback)
+    {
+        callback();
+        timer-&gt;stop();
+    }
+
+    TimerPtr_t IOLoop::runAfter(int after, const Callback_t&amp; callback)
+    {
+        TimerPtr_t timer = std::make_shared&lt;Timer&gt;(
+            std::bind(&amp;onTimerHandler, _1, callback), after, 0);    
+        timer-&gt;start(this);
+        return timer;
+    }
+
+    void IOLoop::addCallback(const Callback_t&amp; callback)
+    {
+        {
+            SpinLockGuard g(m_lock);
+        
+            m_callbacks.push_back(callback);    
+        }
+    
+        m_notifier-&gt;notify();
+    }
+
+    void IOLoop::handleCallbacks()
+    {
+        vector&lt;Callback_t&gt; callbacks;
+        {
+            SpinLockGuard g(m_lock);
+            callbacks.swap(m_callbacks);
+        }    
+
+        for(size_t i = 0; i &lt; callbacks.size(); ++i)
+        {
+            callbacks[i]();    
+        }
+    }
+
+    void IOLoop::onWake(const NotifierPtr_t&amp; notifier)
+    {
+        //only to wakeup poll    
+    }
+
+    void IOLoop::runInWheel(int timeout, const TimingWheelHandler_t&amp; handler)
+    {
+        m_wheel-&gt;add(handler, timeout); 
+    } 
+}
+      </pre>
+    <body>
+</html>

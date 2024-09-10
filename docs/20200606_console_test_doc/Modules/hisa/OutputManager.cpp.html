@@ -1,0 +1,391 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>OutputManager.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "OutputManager.h"
+#include "HtmlPrinter.h"
+#include "ResultCollector.h"
+#include "Statistics/StatisticsHelper.h"
+#include "Json/DiagJsonTransform.h"
+#include &lt;fstream&gt;
+void OutputManager::output(const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    std::string filepath = opts.output_path;
+    for (auto &amp;mode : opts.output_formats)</span>
+    {
+<span style = "background-color:#dfd">        if (mode == "json")</span>
+        {
+<span style = "background-color:#dfd">            output_json(filepath, opts);
+        }
+        else if (mode == "html")</span>
+        {
+<span style = "background-color:#dfd">            output_html(filepath, opts);
+        }
+        else if (mode == "md")</span>
+        {
+<span style = "background-color:#dfd">            output_md(filepath, opts);
+        }
+        else if (mode == "text")</span>
+        {
+<span style = "background-color:#dfd">            output_text(filepath, opts);
+        }
+        else if (mode == "console")</span>
+        {
+<span style = "background-color:#dfd">            output_console(opts);</span>
+        }
+<span style = "background-color:#dfd">    }
+}</span>
+void OutputManager::output_json(const std::string &amp;filepath, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    std::fstream stream(filepath.back() == '/' ? filepath + "report.json" : filepath + "/report.json", std::ios::out);
+    std::string json_text = Json::stringify(ResultCollector::instance(), opts);</span>
+
+<span style = "background-color:#dfd">    stream &lt;&lt; json_text;
+    stream.close();
+}</span>
+
+void OutputManager::output_html(const std::string &amp;filepath, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    HtmlPrinter printer(filepath, opts.output_time, true, true, opts.output_checker, opts.output_description,</span>
+                        opts.output_stats);
+<span style = "background-color:#dfd">    printer.print();
+}</span>
+
+void OutputManager::output_md(const std::string &amp;filepath, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    auto &amp;rc = ResultCollector::instance();
+    std::fstream stream(filepath.back() == '/' ? filepath + "report.md" : filepath + "/report.md", std::ios::out);</span>
+
+    // print diags
+<span style = "background-color:#dfd">    int cnt = 0;
+    stream &lt;&lt; "location | ";
+    ++cnt;
+    stream &lt;&lt; "bug_type | ";
+    ++cnt;
+    if (opts.output_checker)</span>
+    {
+<span style = "background-color:#dfd">        stream &lt;&lt; "checker | ";
+        ++cnt;</span>
+    }
+<span style = "background-color:#dfd">    if (opts.output_description)</span>
+    {
+<span style = "background-color:#dfd">        stream &lt;&lt; "description | ";
+        ++cnt;</span>
+    }
+<span style = "background-color:#dfd">    stream &lt;&lt; std::endl;
+    while (cnt-- &gt; 0)
+        stream &lt;&lt; "--- | ";
+    stream &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">    for (auto &amp;diag : rc.get_diagnostics())</span>
+    {
+<span style = "background-color:#dfd">        stream &lt;&lt; diag.filename &lt;&lt; " : " &lt;&lt; diag.line_number &lt;&lt; " : " &lt;&lt; diag.column_number &lt;&lt; " | ";
+        stream &lt;&lt; diag.bug_type &lt;&lt; " | ";
+        if (opts.output_checker)</span>
+        {
+<span style = "background-color:#dfd">            stream &lt;&lt; diag.checker_name &lt;&lt; " | ";</span>
+        }
+<span style = "background-color:#dfd">        if (opts.output_description)</span>
+        {
+<span style = "background-color:#dfd">            stream &lt;&lt; diag.description &lt;&lt; " | ";</span>
+        }
+<span style = "background-color:#dfd">        stream &lt;&lt; std::endl;
+    }
+    stream &lt;&lt; std::endl &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">    if (opts.output_stats)</span>
+    {
+        // print stats
+<span style = "background-color:#dfd">        stream &lt;&lt; "filename | analysis_time | " &lt;&lt; std::endl;
+        stream &lt;&lt; "--- | --- | " &lt;&lt; std::endl;
+        for (auto &amp;stat : rc.get_stats())</span>
+        {
+<span style = "background-color:#dfd">            stream &lt;&lt; stat.filename &lt;&lt; " | " &lt;&lt; stat.analysis_time &lt;&lt; " | " &lt;&lt; std::endl;
+        }
+        stream &lt;&lt; std::endl &lt;&lt; std::endl;</span>
+
+        // print bug_type_map
+        /* auto &amp;map = ResultCollector::instance().get_bug_type_map();
+        stream &lt;&lt; "bug_type | num | " &lt;&lt; std::endl;
+        stream &lt;&lt; "--- | --- | " &lt;&lt; std::endl;
+        for (auto &amp;p : map)
+        {
+            auto &amp;bug_type = p.first;
+            auto &amp;num = p.second;
+
+            stream &lt;&lt; bug_type &lt;&lt; " | " &lt;&lt; std::to_string(num) &lt;&lt; " | " &lt;&lt; std::endl;
+        } */
+<span style = "background-color:#dfd">        stream &lt;&lt; std::endl &lt;&lt; std::endl;</span>
+    }
+
+<span style = "background-color:#dfd">    stream.close();
+}</span>
+
+static void append_space(std::ostream &amp;stream, int num)
+<span style = "background-color:#dfd">{
+    while (num-- &gt; 0)
+        stream &lt;&lt; ' ';
+}</span>
+
+struct StrBuffer
+{
+  private:
+<span style = "background-color:#dfd">    const std::string *str = nullptr;</span>
+
+<span style = "background-color:#dfd">    bool mem_mng = false;</span>
+
+<span style = "background-color:#dfd">    size_t offset = 0;</span>
+
+  public:
+    StrBuffer() = default;
+    StrBuffer(StrBuffer &amp;o) : str(o.str), offset(o.offset), mem_mng(o.mem_mng)
+    {
+        o.mem_mng = false;
+    }
+<span style = "background-color:#dfd">    StrBuffer(StrBuffer &amp;&amp;o) noexcept : str(o.str), offset(o.offset), mem_mng(o.mem_mng)
+    {
+        o.mem_mng = false;
+    }</span>
+    StrBuffer(const std::string &amp;_str)
+    {
+        reset(_str);
+    }
+<span style = "background-color:#dfd">    StrBuffer(std::string &amp;&amp;_str)</span>
+    {
+<span style = "background-color:#dfd">        reset(std::move(_str));
+    }</span>
+
+    const std::string &amp;get_str() const
+    {
+        return *str;
+    }
+
+    size_t get_offset() const
+    {
+        return offset;
+    }
+
+    void set_offset(size_t _offset)
+    {
+        offset = _offset;
+    }
+
+    bool is_end() const
+<span style = "background-color:#dfd">    {
+        return offset == str-&gt;length();
+    }</span>
+
+    void reset(const std::string &amp;_str)
+<span style = "background-color:#dfd">    {
+        if (str &amp;&amp; mem_mng)
+            delete str;
+        str = &amp;_str;
+        offset = 0;
+        mem_mng = false;
+    }</span>
+
+    void reset(std::string &amp;&amp;_str)
+<span style = "background-color:#dfd">    {
+        if (str &amp;&amp; mem_mng)
+            delete str;
+        str = new std::string(std::move(_str));
+        offset = 0;
+        mem_mng = true;
+    }</span>
+
+    size_t write(std::string &amp;dst_str, size_t length)
+    {
+        size_t dst_offset = offset + length;
+        if (dst_offset &gt; str-&gt;length())
+            dst_offset = str-&gt;length();
+        length = dst_offset - offset;
+
+        dst_str.append(str-&gt;begin() + offset, str-&gt;begin() + dst_offset);
+        offset = dst_offset;
+        return length;
+    }
+
+    size_t write(std::ostream &amp;out, size_t length)
+<span style = "background-color:#dfd">    {
+        size_t dst_offset = offset + length;
+        if (dst_offset &gt; str-&gt;length())
+            dst_offset = str-&gt;length();
+        length = dst_offset - offset;</span>
+
+<span style = "background-color:#dfd">        out.write(str-&gt;c_str() + offset, length);</span>
+        /*for (int i = offset; i &lt; dst_offset; i++) {
+          out &lt;&lt; str[i];
+        }*/
+
+<span style = "background-color:#dfd">        offset = dst_offset;
+        return length;
+    }</span>
+
+    ~StrBuffer()
+<span style = "background-color:#dfd">    {
+        if (str &amp;&amp; mem_mng)</span>
+        {
+<span style = "background-color:#dfd">            delete str;
+            mem_mng = false;</span>
+        }
+<span style = "background-color:#dfd">    }</span>
+};
+
+static void append_line(std::ostream &amp;stream, std::vector&lt;StrBuffer&gt; &amp;bufs, const std::vector&lt;int&gt; &amp;widths)
+<span style = "background-color:#dfd">{
+    while (true)</span>
+    {
+<span style = "background-color:#dfd">        bool end = true;
+        for (int i = 0; i &lt; widths.size(); i++)</span>
+        {
+<span style = "background-color:#dfd">            int width = widths[i];
+            auto &amp;buf = bufs[i];</span>
+
+<span style = "background-color:#dfd">            if (!buf.is_end())</span>
+            {
+<span style = "background-color:#dfd">                end = false;
+                size_t sz = buf.write(stream, (size_t)width - 3);
+                append_space(stream, width - sz);</span>
+            }
+<span style = "background-color:#dfd">        }
+        if (end)
+            break;
+        stream &lt;&lt; std::endl;
+    }
+}</span>
+
+static void append_line(std::ostream &amp;stream, const std::vector&lt;std::string&gt; &amp;strs, const std::vector&lt;int&gt; &amp;widths)
+{
+    std::vector&lt;StrBuffer&gt; bufs;
+    for (auto &amp;str : strs)
+        bufs.emplace_back(str);
+    append_line(stream, bufs, widths);
+}
+
+//#include &lt;Windows.h&gt;
+void OutputManager::append_text(std::ostream &amp;stream, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{</span>
+    // SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_GREEN);
+    // diags
+<span style = "background-color:#dfd">    const int loc_width = 60;
+    const int type_width = 20;
+    const int chk_width = 20;
+    const int desc_width = 60;</span>
+
+<span style = "background-color:#dfd">    std::vector&lt;int&gt; widths;
+    widths.push_back(loc_width);
+    widths.push_back(type_width);
+    if (opts.output_checker)
+        widths.push_back(chk_width);
+    if (opts.output_description)
+        widths.push_back(desc_width);</span>
+
+<span style = "background-color:#dfd">    std::vector&lt;StrBuffer&gt; bufs;
+    bufs.emplace_back("location");
+    bufs.emplace_back("bug_type");
+    if (opts.output_checker)
+        bufs.emplace_back("checker");
+    if (opts.output_description)
+        bufs.emplace_back("description");</span>
+
+<span style = "background-color:#dfd">    append_line(stream, bufs, widths);</span>
+
+<span style = "background-color:#dfd">    for (auto &amp;diag : ResultCollector::instance().get_diagnostics())</span>
+    {
+<span style = "background-color:#dfd">        int cnt = 0;
+        bufs[cnt++].reset(diag.filename + " : " + std::to_string(diag.line_number) + " : " +</span>
+                          std::to_string(diag.column_number));
+<span style = "background-color:#dfd">        bufs[cnt++].reset(diag.bug_type);
+        if (opts.output_checker)
+            bufs[cnt++].reset(diag.checker_name);
+        if (opts.output_description)
+            bufs[cnt++].reset(diag.description);</span>
+
+<span style = "background-color:#dfd">        append_line(stream, bufs, widths);
+    }
+    stream &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">    if (opts.output_stats)</span>
+    {
+        // print stats
+<span style = "background-color:#dfd">        const int filename_width = 50;
+        const int analyze_time_width = 30;
+        widths.resize(2);
+        widths[0] = filename_width;
+        widths[1] = analyze_time_width;</span>
+
+<span style = "background-color:#dfd">        bufs.resize(2);
+        bufs[0].reset("filename");
+        bufs[1].reset("analyze_time");</span>
+
+<span style = "background-color:#dfd">        append_line(stream, bufs, widths);</span>
+
+<span style = "background-color:#dfd">        for (auto &amp;stat : ResultCollector::instance().get_stats())</span>
+        {
+<span style = "background-color:#dfd">            bufs[0].reset(stat.filename);
+            bufs[1].reset(std::to_string(stat.analysis_time));</span>
+
+<span style = "background-color:#dfd">            append_line(stream, bufs, widths);
+        }
+        stream &lt;&lt; std::endl;</span>
+
+        // print bug_type_map
+<span style = "background-color:#dfd">        const int bug_type_width = 30;
+        const int num_width = 15;
+        widths.resize(2);
+        widths[0] = bug_type_width;
+        widths[1] = bug_type_width;</span>
+
+<span style = "background-color:#dfd">        bufs.resize(2);
+        bufs[0].reset("bug_type");
+        bufs[1].reset("num");</span>
+
+<span style = "background-color:#dfd">        append_line(stream, bufs, widths);</span>
+
+        /* auto &amp;bug_type_map = ResultCollector::instance().get_bug_type_map();
+        for (auto &amp;p : bug_type_map)
+        {
+            auto &amp;bug_type = p.first;
+            auto &amp;num = p.second;
+
+            bufs[0].reset(bug_type);
+            bufs[1].reset(std::to_string(num));
+
+            append_line(stream, bufs, widths);
+        } */
+<span style = "background-color:#dfd">        stream &lt;&lt; std::endl;</span>
+    }
+
+<span style = "background-color:#dfd">    stream.flush();</span>
+
+    // SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
+    //                        FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+<span style = "background-color:#dfd">}</span>
+
+void OutputManager::output_text(const std::string &amp;filepath, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    std::string path = filepath.back() == '/' ? filepath + "report.txt" : filepath + "/report.txt";
+    std::fstream stream(path, std::ios::out);
+    if (!stream.is_open())</span>
+    {
+<span style = "background-color:#fdd">        assert(false &amp;&amp; "file open failed: %s\n");
+        return;</span>
+    }
+
+<span style = "background-color:#dfd">    append_text(stream, opts);
+    stream.close();
+}</span>
+
+void OutputManager::output_console(const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    append_text(std::cout, opts);
+}</span></pre>
+	</body>
+</html>

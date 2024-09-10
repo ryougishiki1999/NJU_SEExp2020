@@ -1,0 +1,66 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>UninitializedObjectChecker.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef CHECKER_UNINITOBJCHECKER_UNINITIALIZEDOBJECT_CHECKER_H
+#define CHECKER_UNINITOBJCHECKER_UNINITIALIZEDOBJECT_CHECKER_H
+#include "../../CSADriver.h"
+#include &lt;clang/AST/Decl.h&gt;
+#include &lt;clang/AST/Stmt.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/BugReporter/BugType.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/Checker.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/SymbolManager.h&gt;
+
+//===----------------------------------------------------------------------===//
+// This file defines a checker that reports uninitialized fields in objects
+// created after a constructor call.
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------------
+//                      Uitility Functions Decl
+//===----------------------------------------------------------------------------
+
+/// Returns the region that was constructed by CtorDecl, or nullptr if that
+/// isn't possible.
+const clang::ento::TypedValueRegion *get_constructed_region(const clang::CXXConstructorDecl *ctor_decl,
+                                                            clang::ento::CheckerContext &amp;context);
+
+/// Checks whether the object constructed by \p Ctor will be analyzed later
+/// (e.g. if the object is a field of another object, in which case we'd check
+/// it multiple times).
+bool will_obj_analyzed_later(const clang::CXXConstructorDecl *ctor, clang::ento::CheckerContext &amp;context);
+
+//===----------------------------------------------------------------------------
+//                      Class UninitObjChecker Decl
+//===----------------------------------------------------------------------------
+
+class UninitObjChecker : public clang::ento::Checker&lt;clang::ento::check::EndFunction, clang::ento::check::DeadSymbols&gt;
+{
+  public:
+    // TODO: checker options
+
+<span style = "background-color:#dfd">    UninitObjChecker() : _bt_uninit_field(new clang::ento::BuiltinBug(this, "Uninitialized fields in UOC checker"))
+    {
+    }</span>
+
+    void checkEndFunction(const clang::ReturnStmt *RS, clang::ento::CheckerContext &amp;C) const;
+
+    void checkDeadSymbols(clang::ento::SymbolReaper &amp;SR, clang::ento::CheckerContext &amp;C) const;
+
+  private:
+    std::unique_ptr&lt;clang::ento::BuiltinBug&gt; _bt_uninit_field;
+};
+
+CSA_GENERATE_REGISTER_FUNCTION_DECL(UninitObjChecker)
+
+#endif</pre>
+	</body>
+</html>

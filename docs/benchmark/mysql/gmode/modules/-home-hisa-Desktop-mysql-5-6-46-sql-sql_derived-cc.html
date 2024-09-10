@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/sql/sql_derived.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2002, 2011, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software Foundation,
+   51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
+
+
+/*
+  Derived tables
+  These were introduced by Sinisa &lt;sinisa@mysql.com&gt;
+*/
+
+
+#include "my_global.h"                          /* NO_EMBEDDED_ACCESS_CHECKS */
+#include "sql_priv.h"
+#include "unireg.h"
+#include "sql_derived.h"
+#include "sql_select.h"
+#include "sql_optimizer.h"                    // JOIN
+#include "sql_view.h"                         // check_duplicate_names
+#include "sql_acl.h"                          // SELECT_ACL
+#include "sql_tmp_table.h"                    // Tmp tables
+
+
+/**
+  @brief
+  Call given derived table processor (preparing or filling tables)
+
+  @param lex        LEX for this thread
+  @param processor  procedure of derived table processing
+
+  @details
+  This function runs all derived tables present in the query through specified
+  'phases' and used for preparing derived tables and instantiating result
+  tables. The provided processor is called on all derived tables without
+  exceptions. This differs from the TABLE_LIST::handle_derived where
+  derived tables of different type are handled separately. Because of this
+  SELECT_LEX::handle_derived can't be used here (it employs
+  TABLE_LIST::handle_derived).
+  Derived tables processing doesn't run in hierarchical order thus this
+  function is suitable mostly for prepare and create stages as they don't
+  depend on whether underlying derived tables were prepared or created already.
+  This function uses SELECT_LEX::table_list/TABLE_LIST::next_local chain as
+  the list of tables.
+
+  @see TABLE_LIST::handle_derived.
+
+  @return
+    FALSE  OK
+    TRUE   Error
+*/
+
+bool
+mysql_handle_derived(LEX *lex, bool (*processor)(THD*, LEX*, TABLE_LIST*))
+{
+  bool res= FALSE;
+  if (lex-&gt;derived_tables)
+  {
+    lex-&gt;thd-&gt;derived_tables_processing= TRUE;
+    for (SELECT_LEX *sl= lex-&gt;all_selects_list;
+         sl;
+         sl= sl-&gt;next_select_in_list())
+    {
+      for (TABLE_LIST *table_ref= sl-&gt;get_table_list();
+           table_ref;
+           table_ref= table_ref-&gt;next_local)
+      {
+        if ((res= mysql_handle_single_derived(lex, table_ref, processor)))
+          goto out;
+      }
+      if (lex-&gt;describe)
+      {
+        /*
+          Force join-&gt;join_tmp creation, because we will use this JOIN
+          twice for EXPLAIN and we have to have unchanged join for EXPLAINing
+        */
+        sl-&gt;uncacheable|= UNCACHEABLE_EXPLAIN;
+        sl-&gt;master_unit()-&gt;uncacheable|= UNCACHEABLE_EXPLAIN;
+      }
+    }
+  }
+out:
+  lex-&gt;thd-&gt;derived_tables_processing= FALSE;
+  return res;
+}
+
+
+/**
+  @brief
+  Run processor on the given derived table.
+
+  @param  lex       LEX for this thread
+  @param  derived   TABLE_LIST for the upper SELECT
+  @param  processor procedure of derived table processing
+
+  @return
+    false  OK
+    true   Error
+*/
+
+bool
+mysql_handle_single_derived(LEX *lex, TABLE_LIST *derived,
+                            bool (*processor)(THD*, LEX*, TABLE_LIST*))
+{
+  return (derived-&gt;is_view_or_derived() &amp;&amp;
+          (*processor)(lex-&gt;thd, lex, derived));
+}
+
+/**
+  @brief Create temporary table structure (but do not fill it).
+
+  @param thd Thread handle
+  @param lex LEX for this thread
+  @param derived TABLE_LIST of the derived table in the upper SELECT
+
+  @details 
+
+  This function is called before any command containing derived tables is
+  executed. Currently the function is used for derived tables, i.e.
+
+  - Anonymous derived tables, or 
+  - Named derived tables (aka views) with the @c TEMPTABLE algorithm.
+   
+  The table reference, contained in @c derived, is updated with the
+  fields of a new temporary table.
+
+  Derived tables are stored in @c thd-&gt;derived_tables and closed by
+  close_thread_tables().
+
+  This function is part of the procedure that starts in
+  open_and_lock_tables(), a procedure that - among other things - introduces
+  new table and table reference objects (to represent derived tables) that
+  don't exist in the privilege database. This means that normal privilege
+  checking cannot handle them. Hence this function does some extra tricks in
+  order to bypass normal privilege checking, by exploiting the fact that the
+  current state of privilege verification is attached as GRANT_INFO structures
+  on the relevant TABLE and TABLE_REF objects.
+
+  For table references, the current state of accrued access is stored inside
+  TABLE_LIST::grant. Hence this function must update the state of fulfilled
+  privileges for the new TABLE_LIST, an operation which is normally performed
+  exclusively by the table and database access checking functions,
+  check_access() and check_grant(), respectively. This modification is done
+  for both views and anonymous derived tables: The @c SELECT privilege is set
+  as fulfilled by the user. However, if a view is referenced and the table
+  reference is queried against directly (see TABLE_LIST::referencing_view),
+  the state of privilege checking (GRANT_INFO struct) is copied as-is to the
+  temporary table.
+
+  This function implements a signature called "derived table processor", and
+  is passed as a function pointer to mysql_handle_derived().
+
+  @note This function sets @c SELECT_ACL for @c TEMPTABLE views as well as
+  anonymous derived tables, but this is ok since later access checking will
+  distinguish between them.
+
+  @see mysql_handle_derived(), mysql_derived_filling(), GRANT_INFO
+
+  @return
+    false  OK
+    true   Error
+*/
+
+bool mysql_derived_prepare(THD *thd, LEX *lex, TABLE_LIST *derived)
+{
+  SELECT_LEX_UNIT *unit= derived-&gt;get_unit();
+  ulonglong create_options;
+  DBUG_ENTER("mysql_derived_prepare");
+  bool res= FALSE;
+  DBUG_ASSERT(unit);
+  if (derived-&gt;uses_materialization())
+  {
+    SELECT_LEX *first_select= unit-&gt;first_select();
+    TABLE *table= 0;
+    select_union *derived_result;
+
+    /* prevent name resolving out of derived table */
+    for (SELECT_LEX *sl= first_select; sl; sl= sl-&gt;next_select())
+      sl-&gt;context.outer_context= 0;
+
+    if (!(derived_result= new select_union))
+      DBUG_RETURN(TRUE); // out of memory
+
+    lex-&gt;context_analysis_only|= CONTEXT_ANALYSIS_ONLY_DERIVED;
+    // st_select_lex_unit::prepare correctly work for single select
+    if ((res= unit-&gt;prepare(thd, derived_result, 0)))
+      goto exit;
+    lex-&gt;context_analysis_only&amp;= ~CONTEXT_ANALYSIS_ONLY_DERIVED;
+    if ((res= check_duplicate_names(unit-&gt;types, 0)))
+      goto exit;
+
+<span style = "background-color:#fdd">    create_options= (first_select-&gt;options | thd-&gt;variables.option_bits |        Dereference of null pointer:Access to field 'options' results in a dereference of a null pointer (loaded from variable 'first_select')</span>
+                     TMP_TABLE_ALL_COLUMNS);
+    /*
+      Temp table is created so that it honors if UNION without ALL is to be 
+      processed
+
+      As 'distinct' parameter we always pass FALSE (0), because underlying
+      query will control distinct condition by itself. Correct test of
+      distinct underlying query will be is_union &amp;&amp;
+      !unit-&gt;union_distinct-&gt;next_select() (i.e. it is union and last distinct
+      SELECT is last SELECT of UNION).
+    */
+    if ((res= derived_result-&gt;create_result_table(thd, &amp;unit-&gt;types, FALSE,
+                                                 create_options,
+                                                 derived-&gt;alias, FALSE, FALSE)))
+      goto exit;
+
+    table= derived_result-&gt;table;
+
+exit:
+    /* Hide "Unknown column" or "Unknown function" error */
+    if (derived-&gt;view)
+    {
+      if (thd-&gt;is_error() &amp;&amp;
+          (thd-&gt;get_stmt_da()-&gt;sql_errno() == ER_BAD_FIELD_ERROR ||
+          thd-&gt;get_stmt_da()-&gt;sql_errno() == ER_FUNC_INEXISTENT_NAME_COLLISION ||
+          thd-&gt;get_stmt_da()-&gt;sql_errno() == ER_SP_DOES_NOT_EXIST))
+      {
+        thd-&gt;clear_error();
+        my_error(ER_VIEW_INVALID, MYF(0), derived-&gt;db,
+                 derived-&gt;table_name);
+      }
+    }
+
+    /*
+      if it is preparation PS only or commands that need only VIEW structure
+      then we do not need real data and we can skip execution (and parameters
+      is not defined, too)
+    */
+    if (res)
+    {
+      if (table)
+	free_tmp_table(thd, table);
+      delete derived_result;
+    }
+    else
+    {
+      derived-&gt;derived_result= derived_result;
+      derived-&gt;table= table;
+      derived-&gt;table_name=        table-&gt;s-&gt;table_name.str;
+      derived-&gt;table_name_length= table-&gt;s-&gt;table_name.length;
+      table-&gt;s-&gt;tmp_table= NON_TRANSACTIONAL_TMP_TABLE;
+#ifndef NO_EMBEDDED_ACCESS_CHECKS
+      if (derived-&gt;referencing_view)
+        table-&gt;grant= derived-&gt;grant;
+      else
+        table-&gt;grant.privilege= SELECT_ACL;
+#endif
+      derived-&gt;db= (char *)"";
+      derived-&gt;db_length= 0;
+      /* Add new temporary table to list of open derived tables */
+      table-&gt;next= thd-&gt;derived_tables;
+      thd-&gt;derived_tables= table;
+    }
+  }
+  else
+    derived-&gt;set_underlying_merge();
+  DBUG_RETURN(res);
+}
+
+
+/**
+  @brief
+  Runs optimize phase for the query expression that represents a derived
+  table/view.
+
+  @note
+  If optimizer finds out that the derived table/view is of the type
+  "SELECT a_constant" this functions also materializes it.
+
+  @param thd thread handle
+  @param lex current LEX
+  @param derived TABLE_LIST of derived table
+
+  @return FALSE ok.
+  @return TRUE if an error occur.
+*/
+
+bool mysql_derived_optimize(THD *thd, LEX *lex, TABLE_LIST *derived)
+{
+  SELECT_LEX_UNIT *unit= derived-&gt;get_unit();
+  DBUG_ENTER("mysql_derived_optimize");
+
+  DBUG_ASSERT(unit);
+
+  // optimize union without execution
+  if (unit-&gt;optimize() || thd-&gt;is_error())
+    DBUG_RETURN(TRUE);
+
+  if (derived-&gt;materializable_is_const() &amp;&amp;
+      (mysql_derived_create(thd, lex, derived) ||
+       mysql_derived_materialize(thd, lex, derived)))
+    DBUG_RETURN(TRUE);
+
+  DBUG_RETURN(FALSE);
+}
+
+
+/**
+  @brief
+  Create result table for a materialized derived table/view.
+
+  @param thd     thread handle
+  @param lex     LEX of the embedding query.
+  @param derived reference to the derived table.
+
+  @details
+  This function actually creates the result table for given 'derived'
+  table/view, but it doesn't fill it.
+  'thd' and 'lex' parameters are not used  by this function.
+
+  @return FALSE ok.
+  @return TRUE if an error occur.
+*/
+
+bool mysql_derived_create(THD *thd, LEX *lex, TABLE_LIST *derived)
+{
+  TABLE *table= derived-&gt;table;
+  SELECT_LEX_UNIT *unit= derived-&gt;get_unit();
+  DBUG_ENTER("mysql_derived_create");
+
+  DBUG_ASSERT(unit);
+
+  /*
+   Don't create result table in following cases:
+   *) It's a mergeable view.
+   *) Some commands, like show table status, doesn't prepare views/derived
+      tables =&gt; no need to create result table also.
+   *) Table is already created.
+   *) Table is a constant one with all NULL values.
+  */
+  if (!derived-&gt;uses_materialization() || !table || table-&gt;is_created() ||
+      (derived-&gt;select_lex-&gt;join != NULL &amp;&amp;
+       (derived-&gt;select_lex-&gt;join-&gt;const_table_map &amp; table-&gt;map)))
+  {
+    /*
+      At this point, JT_CONST derived tables should be null rows. Otherwise they
+      would have been materialized already.
+    */
+    DBUG_ASSERT(table == NULL || table-&gt;reginfo.join_tab == NULL ||
+                table-&gt;reginfo.join_tab-&gt;type != JT_CONST ||
+                table-&gt;null_row == 1);
+    DBUG_RETURN(FALSE);
+  }
+  /* create tmp table */
+  select_union *result= (select_union*)unit-&gt;get_result();
+
+  if (instantiate_tmp_table(table, table-&gt;key_info,
+                            result-&gt;tmp_table_param.start_recinfo,
+                            &amp;result-&gt;tmp_table_param.recinfo,
+                            (unit-&gt;first_select()-&gt;options |
+                             thd-&gt;lex-&gt;select_lex.options |
+                             thd-&gt;variables.option_bits |
+                             TMP_TABLE_ALL_COLUMNS),
+                            thd-&gt;variables.big_tables, &amp;thd-&gt;opt_trace))
+    DBUG_RETURN(TRUE);
+
+  table-&gt;file-&gt;extra(HA_EXTRA_WRITE_CACHE);
+  table-&gt;file-&gt;extra(HA_EXTRA_IGNORE_DUP_KEY);
+
+  table-&gt;set_created();
+
+  DBUG_RETURN(FALSE);
+}
+
+
+/**
+  @brief
+  Materialize derived table
+
+  @param  thd	    Thread handle
+  @param  lex       LEX for this thread
+  @param  derived   TABLE_LIST for the upper SELECT
+
+  @details
+  Derived table is resolved with temporary table. It is created based on the
+  queries defined. After temporary table is materialized, if this is not
+  EXPLAIN, then the entire unit / node is deleted. unit is deleted if UNION is
+  used for derived table and node is deleted is it is a  simple SELECT.
+  If you use this function, make sure it's not called at prepare.
+  Due to evaluation of LIMIT clause it can not be used at prepared stage.
+
+  @return  FALSE  OK
+  @return  TRUE   Error
+*/
+
+bool mysql_derived_materialize(THD *thd, LEX *lex, TABLE_LIST *derived)
+{
+  SELECT_LEX_UNIT *unit= derived-&gt;get_unit();
+  bool res= FALSE;
+  DBUG_ENTER("mysql_derived_materialize");
+
+  DBUG_ASSERT(unit &amp;&amp; derived-&gt;table &amp;&amp; derived-&gt;table-&gt;is_created());
+
+  select_union *derived_result= derived-&gt;derived_result;
+
+  if (unit-&gt;is_union())
+  {
+    // execute union without clean up
+    res= unit-&gt;exec();
+  }
+  else
+  {
+    SELECT_LEX *first_select= unit-&gt;first_select();
+    JOIN *join= first_select-&gt;join;
+    SELECT_LEX *save_current_select= lex-&gt;current_select;
+    lex-&gt;current_select= first_select;
+
+    DBUG_ASSERT(join &amp;&amp; join-&gt;optimized);
+
+    unit-&gt;set_limit(first_select);
+    if (unit-&gt;select_limit_cnt == HA_POS_ERROR)
+      first_select-&gt;options&amp;= ~OPTION_FOUND_ROWS;
+
+    join-&gt;exec();
+    res= join-&gt;error;
+    lex-&gt;current_select= save_current_select;
+  }
+
+  if (!res)
+  {
+    /*
+      Here we entirely fix both TABLE_LIST and list of SELECT's as
+      there were no derived tables
+    */
+    if (derived_result-&gt;flush())
+      res= TRUE;
+  }
+
+  DBUG_RETURN(res);
+}
+
+
+/**
+   Cleans up the SELECT_LEX_UNIT for the derived table (if any).
+*/
+
+bool mysql_derived_cleanup(THD *thd, LEX *lex, TABLE_LIST *derived)
+{
+  DBUG_ENTER("mysql_derived_cleanup");
+  SELECT_LEX_UNIT *unit= derived-&gt;derived;
+  if (unit)
+    unit-&gt;cleanup();
+  DBUG_RETURN(false);
+}
+      </pre>
+    </body>
+</html>

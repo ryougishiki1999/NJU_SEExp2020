@@ -1,0 +1,488 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>ShellCommands.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "../../core/Logger.h"
+#include "../../core/OutputManager.h"
+#include "../../core/ResultCollector.h"
+#include "../../core/Statistics/StatisticsHelper.h"
+#include "Shell.h"
+#include &lt;iostream&gt;
+
+static int help_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    for (auto &amp;i : Shell::command_map)</span>
+    {
+<span style = "background-color:#dfd">        std::cout &lt;&lt; '\t' &lt;&lt; i.first &lt;&lt; '\t' &lt;&lt; i.second.first &lt;&lt; '\n';
+    }
+    return 0;
+}</span>
+static int quit_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    return 1;
+}</span>
+
+<span style = "background-color:#dfd">static const std::vector&lt;std::pair&lt;std::string, std::string&gt;&gt; info_commands = {</span>
+    {"help", "print help info"},
+    {"analyzer-opt", "print analyzer settings"},
+    {"output-opt", "print output settings"},
+    {"checker", "print checker settings"},
+    {"src", "print source files that will be analyzed"},
+<span style = "background-color:#dfd">    {"available-src", "print source files that can be analyzed"}};</span>
+static int info_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    if (argv.size() &lt; 1)</span>
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tNo command. Type 'info help' for command infomation.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    if (argv[0] == "help")</span>
+    {
+<span style = "background-color:#dfd">        for (const auto &amp;i : info_commands)</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; '\t' &lt;&lt; i.first &lt;&lt; '\t' &lt;&lt; i.second &lt;&lt; '\n';
+        }
+    }
+    else if (argv[0] == "analyzer-opt")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.dump(std::cout);
+    }
+    else if (argv[0] == "output-opt")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.dump(std::cout);
+    }
+    else if (argv[0] == "checker")</span>
+    {
+<span style = "background-color:#dfd">        ctx.instance.dump_checkers(std::cout);
+    }
+    else if (argv[0] == "src")</span>
+    {
+<span style = "background-color:#dfd">        auto srcs = ctx.instance.get_sources(ctx.sources, ctx.analyzer_options);
+        for (const auto &amp;i : srcs)</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; '\t' &lt;&lt; i &lt;&lt; '\n';
+        }
+    }
+    else if (argv[0] == "available-src")</span>
+    {
+<span style = "background-color:#dfd">        auto srcs = ctx.instance.get_available_sources(ctx.sources, ctx.analyzer_options);
+        for (const auto &amp;i : srcs)</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; '\t' &lt;&lt; i &lt;&lt; '\n';
+        }
+    }</span>
+    else
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tUnknown command. Type 'info help' for command infomation.\n";</span>
+    }
+<span style = "background-color:#dfd">    return 0;
+}
+static const std::vector&lt;std::pair&lt;std::string, std::string&gt;&gt; set_commands = {</span>
+    {"help", "print help info"},
+    {"debug-output-path", "set debug output path"},
+    {"compilation-database", "set compilation database path"},
+<span style = "background-color:#dfd">    {"output-format", "set output formats"}};</span>
+static int set_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    if (argv.size() &lt; 1)</span>
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tNo command. Type 'set help' for command infomation.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    if (argv[0] == "help")</span>
+    {
+<span style = "background-color:#fdd">        for (const auto &amp;i : set_commands)</span>
+        {
+<span style = "background-color:#fdd">            std::cout &lt;&lt; '\t' &lt;&lt; i.first &lt;&lt; '\t' &lt;&lt; i.second &lt;&lt; '\n';
+        }
+    }</span>
+<span style = "background-color:#dfd">    else if (argv[0] == "debug-output-path")</span>
+    {
+<span style = "background-color:#dfd">        if (argv.size() &lt; 2)</span>
+        {
+<span style = "background-color:#fdd">            std::cout &lt;&lt; "\tEmpty path.\n";
+            return 0;</span>
+        }
+<span style = "background-color:#dfd">        ctx.analyzer_options.debug_output_path = argv[1];
+    }
+    else if (argv[0] == "compilation-database")</span>
+    {
+<span style = "background-color:#dfd">        if (argv.size() &lt; 2)</span>
+        {
+<span style = "background-color:#fdd">            std::cout &lt;&lt; "\tEmpty path.\n";
+            return 0;</span>
+        }
+<span style = "background-color:#dfd">        ctx.analyzer_options.compilation_database_path = argv[1];
+    }
+    else if (argv[0] == "output-format")</span>
+    {
+<span style = "background-color:#dfd">        if (argv.size() &lt; 2)</span>
+        {
+<span style = "background-color:#fdd">            std::cout &lt;&lt; "\tEmpty formats.\n";
+            return 0;</span>
+        }
+<span style = "background-color:#dfd">        for (int i = 1; i &lt; argv.size(); ++i)</span>
+        {
+<span style = "background-color:#dfd">            ctx.output_options.add_output_format(argv[i]);
+        }
+    }</span>
+    else
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tUnknown command. Type 'set help' for command infomation.\n";</span>
+    }
+<span style = "background-color:#dfd">    return 0;
+}
+static const std::vector&lt;std::pair&lt;std::string, std::string&gt;&gt; enable_disable_commands = {</span>
+    {"help", "print help info"},
+    {"gmode", "enable/disable god mode"},
+    {"analyzer-stats", "enable/disable analyzer stats"},
+    {"debug", "enable/disable debug mode"},
+    {"debug-analysis-progress", "enable/disable analysis progress"},
+    {"debug-exploded-graph", "enable/disable exploded graph"},
+    {"debug-trim-exploded-graph", "enable/disable trimed exploded graph"},
+    {"output-time", "enable/disable time output"},
+    {"output-checker", "enable/disable checker output"},
+    {"output-description", "enable/disable description output"},
+<span style = "background-color:#dfd">    {"output-stats", "enable/disable stats output"}};</span>
+static int enable_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    if (argv.size() &lt; 1)</span>
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tNo command. Type 'enable help' for command infomation.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    if (argv[0] == "help")</span>
+    {
+<span style = "background-color:#dfd">        for (const auto &amp;i : enable_disable_commands)</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; '\t' &lt;&lt; i.first &lt;&lt; '\t' &lt;&lt; i.second &lt;&lt; '\n';
+        }
+    }
+    else if (argv[0] == "gmode")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.enable_god_mode = 1;
+    }
+    else if (argv[0] == "analyzer-stats")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.enable_stats = 1;
+    }
+    else if (argv[0] == "debug")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.enable_debug_mode = 1;
+    }
+    else if (argv[0] == "debug-analysis-progress")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.show_analysis_progress = 1;
+        ctx.analyzer_options.enable_debug_mode = 1;
+    }
+    else if (argv[0] == "debug-exploded-graph")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.enable_exploded_graph = 1;
+        ctx.analyzer_options.enable_debug_mode = 1;
+    }
+    else if (argv[0] == "debug-trim-exploded-graph")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.trim_exploded_graph = 1;
+        ctx.analyzer_options.enable_exploded_graph = 1;
+        ctx.analyzer_options.enable_debug_mode = 1;
+    }
+    else if (argv[0] == "output-time")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.output_time = 1;
+    }
+    else if (argv[0] == "output-checker")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.output_checker = 1;
+    }
+    else if (argv[0] == "output-description")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.output_description = 1;
+    }
+    else if (argv[0] == "output-stats")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.output_stats = 1;
+    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        if (!ctx.instance.change_checker_state(argv[0], true))</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; "\tUnknown command. Type 'enable help' for command infomation.\n";</span>
+        }
+    }
+<span style = "background-color:#dfd">    return 0;
+}</span>
+static int disable_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    if (argv.size() &lt; 1)</span>
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tNo command. Type 'disable help' for command infomation.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    if (argv[0] == "help")</span>
+    {
+<span style = "background-color:#dfd">        for (const auto &amp;i : enable_disable_commands)</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; '\t' &lt;&lt; i.first &lt;&lt; '\t' &lt;&lt; i.second &lt;&lt; '\n';
+        }
+    }
+    else if (argv[0] == "gmode")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.enable_god_mode = 0;
+    }
+    else if (argv[0] == "analyzer-stats")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.enable_stats = 0;
+    }
+    else if (argv[0] == "debug")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.enable_debug_mode = 0;
+    }
+    else if (argv[0] == "debug-analysis-progress")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.show_analysis_progress = 0;
+    }
+    else if (argv[0] == "debug-exploded-graph")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.enable_exploded_graph = 0;
+    }
+    else if (argv[0] == "debug-trim-exploded-graph")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.trim_exploded_graph = 0;
+    }
+    else if (argv[0] == "output-time")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.output_time = 0;
+    }
+    else if (argv[0] == "output-checker")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.output_checker = 0;
+    }
+    else if (argv[0] == "output-description")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.output_description = 0;
+    }
+    else if (argv[0] == "output-stats")</span>
+    {
+<span style = "background-color:#fdd">        ctx.output_options.output_stats = 0;
+    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        if (!ctx.instance.change_checker_state(argv[0], false))</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; "\tUnknown command. Type 'disable help' for command infomation.\n";</span>
+        }
+    }
+<span style = "background-color:#dfd">    return 0;
+}</span>
+static int analyze_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    if (argv.size() == 0)</span>
+    {
+<span style = "background-color:#dfd">        ctx.instance.run(ctx.sources, ctx.analyzer_options, ctx.output_options);
+    }
+    else if (argv.size() == 1)</span>
+    {
+<span style = "background-color:#dfd">        std::vector&lt;std::string&gt; src;
+        src.push_back(argv[0]);
+        ctx.instance.run(src, ctx.analyzer_options, ctx.output_options);
+    }</span>
+    else
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tToo many input files.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    return 0;
+}
+static const std::vector&lt;std::pair&lt;std::string, std::string&gt;&gt; reset_commands = {</span>
+    {"help", "print help info"},
+    {"analyzer-opt", "reset analyzer settings"},
+    {"output-opt", "reset output settings"},
+    {"checker", "reset checkers"},
+<span style = "background-color:#dfd">    {"src", "clear source list"}};</span>
+static int reset_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    if (argv.size() &lt; 1)</span>
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tNo command. Type 'reset help' for command infomation.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    if (argv[0] == "help")</span>
+    {
+<span style = "background-color:#dfd">        for (const auto &amp;i : reset_commands)</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; '\t' &lt;&lt; i.first &lt;&lt; '\t' &lt;&lt; i.second &lt;&lt; '\n';
+        }
+    }
+    else if (argv[0] == "analyzer-opt")</span>
+    {
+<span style = "background-color:#dfd">        ctx.analyzer_options.reset();
+    }
+    else if (argv[0] == "output-opt")</span>
+    {
+<span style = "background-color:#dfd">        ctx.output_options.reset();
+    }
+    else if (argv[0] == "checker")</span>
+    {
+<span style = "background-color:#dfd">        ctx.instance.reset_checkers();
+    }
+    else if (argv[0] == "src")</span>
+    {
+<span style = "background-color:#dfd">        ctx.sources.clear();
+    }</span>
+    else
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tUnknown command. Type 'reset help' for command infomation.\n";</span>
+    }
+<span style = "background-color:#dfd">    return 0;
+}</span>
+static int addsrc_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    if (argv.size() &lt; 1)</span>
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tNo input.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    ctx.sources.push_back(argv[0]);
+    return 0;
+}</span>
+static int delsrc_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    if (argv.size() &lt; 1)</span>
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tNo input.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    for (auto it = ctx.sources.begin(); it != ctx.sources.end(); ++it)</span>
+    {
+<span style = "background-color:#dfd">        if (*it == argv[0])</span>
+        {
+<span style = "background-color:#dfd">            ctx.sources.erase(it);
+            break;</span>
+<span style = "background-color:#fdd">        }</span>
+<span style = "background-color:#dfd">    }
+    return 0;
+}
+static const std::vector&lt;std::pair&lt;std::string, std::string&gt;&gt; show_commands = {</span>
+    {"help", "print help info"},
+    {"summary", "print analysis summary"},
+    {"all", "print all files' analysis result"},
+<span style = "background-color:#dfd">    {"&lt;filename&gt;", "print specified file's analysis result"}};</span>
+
+static void print_file_result(std::ostream &amp;os, ShellContext &amp;ctx, const FileStats &amp;file_stats)
+<span style = "background-color:#dfd">{
+    static std::string delim("---------------------------------------");
+    os &lt;&lt; '\n' &lt;&lt; file_stats._filename &lt;&lt; ": " &lt;&lt; file_stats.get_all_bug_num() &lt;&lt; " bug(s)";
+    if (ctx.analyzer_options.enable_stats)</span>
+    {
+<span style = "background-color:#fdd">        os &lt;&lt; " in " &lt;&lt; file_stats.get_analysis_time() &lt;&lt; " (s).\n";
+    }</span>
+    else
+<span style = "background-color:#dfd">        os &lt;&lt; ".\n";
+    os &lt;&lt; delim &lt;&lt; '\n';
+    for (auto &amp;i : file_stats.get_bug_stats_list())</span>
+    {
+<span style = "background-color:#dfd">        for (auto &amp;j : i.get_bug_desc_list())</span>
+        {
+<span style = "background-color:#dfd">            os &lt;&lt; "(" &lt;&lt; j._checker_name &lt;&lt; ") ";
+            os &lt;&lt; i._bug_type &lt;&lt; " at (" &lt;&lt; j._line_number &lt;&lt; ':' &lt;&lt; j._column_number &lt;&lt; ")";
+            os &lt;&lt; ' ' &lt;&lt; j._description;
+            os &lt;&lt; '\n';
+        }
+    }
+}</span>
+
+static void print_summary(std::ostream &amp;os, ShellContext &amp;ctx)
+<span style = "background-color:#dfd">{
+    auto stats_helper = StatsHelper::instance();
+    static std::string delim("---------------------------------------");
+    os &lt;&lt; '\n' &lt;&lt; delim &lt;&lt; "\nStats\n" &lt;&lt; delim &lt;&lt; '\n';
+    os &lt;&lt; "Analyzed " &lt;&lt; stats_helper-&gt;get_all_file_num() &lt;&lt; " file(s).\n";
+    os &lt;&lt; "Found " &lt;&lt; stats_helper-&gt;get_all_bug_num() &lt;&lt; " bug(s).\n";
+    for (auto &amp;i : stats_helper-&gt;get_all_bug_stats_list())</span>
+    {
+<span style = "background-color:#dfd">        os &lt;&lt; i.get_num() &lt;&lt; ' ' &lt;&lt; i._bug_type &lt;&lt; "\n";
+    }
+    if (ctx.analyzer_options.enable_stats)</span>
+    {
+<span style = "background-color:#fdd">        os &lt;&lt; "Total time: " &lt;&lt; stats_helper-&gt;get_all_analysis_time() &lt;&lt; "(s)\n";</span>
+    }
+<span style = "background-color:#dfd">    os &lt;&lt; delim &lt;&lt; '\n';
+    for (auto &amp;i : stats_helper-&gt;get_file_stats_list())</span>
+    {
+<span style = "background-color:#dfd">        os &lt;&lt; i._filename &lt;&lt; ": " &lt;&lt; i.get_all_bug_num() &lt;&lt; " bug(s)";
+        if (ctx.analyzer_options.enable_stats)</span>
+        {
+<span style = "background-color:#fdd">            os &lt;&lt; " in " &lt;&lt; i.get_analysis_time() &lt;&lt; " (s).\n";
+        }</span>
+        else
+<span style = "background-color:#dfd">            os &lt;&lt; ".\n";
+        for (auto &amp;j : i.get_bug_stats_list())</span>
+        {
+<span style = "background-color:#dfd">            os &lt;&lt; '\t' &lt;&lt; j.get_num() &lt;&lt; ' ' &lt;&lt; j._bug_type &lt;&lt; "(s)\n";
+        }
+        os &lt;&lt; '\n';
+    }
+}</span>
+static int show_callback(ShellContext &amp;ctx, const std::vector&lt;std::string&gt; &amp;argv)
+<span style = "background-color:#dfd">{
+    auto stats_helper = StatsHelper::instance();
+    if (argv.size() &lt; 1)</span>
+    {
+<span style = "background-color:#fdd">        std::cout &lt;&lt; "\tNo command. Type 'show help' for command infomation.\n";
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    if (argv[0] == "help")</span>
+    {
+<span style = "background-color:#dfd">        for (const auto &amp;i : show_commands)</span>
+        {
+<span style = "background-color:#dfd">            std::cout &lt;&lt; '\t' &lt;&lt; i.first &lt;&lt; '\t' &lt;&lt; i.second &lt;&lt; '\n';
+        }
+    }
+    else if (argv[0] == "summary")</span>
+    {
+<span style = "background-color:#dfd">        print_summary(std::cout, ctx);
+    }
+    else if (argv[0] == "all")</span>
+    {
+<span style = "background-color:#dfd">        for (auto &amp;i : stats_helper-&gt;get_file_stats_list())</span>
+        {
+<span style = "background-color:#dfd">            print_file_result(std::cout, ctx, i);
+        }
+        print_summary(std::cout, ctx);
+    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        for (auto &amp;i : stats_helper-&gt;get_file_stats_list())</span>
+        {
+<span style = "background-color:#dfd">            if (i._filename == argv[0])</span>
+            {
+<span style = "background-color:#fdd">                print_file_result(std::cout, ctx, i);
+                return 0;</span>
+            }
+<span style = "background-color:#dfd">        }
+        std::cout &lt;&lt; "\tUnknown command. Type 'show help' for command infomation.\n";</span>
+    }
+<span style = "background-color:#dfd">    return 0;
+}</span>
+
+<span style = "background-color:#dfd">const std::map&lt;std::string, std::pair&lt;std::string, Shell::CommandCallbackType&gt;&gt; Shell::command_map = {</span>
+    {"help", {"print help info", help_callback}},
+    {"quit", {"quit REPL", quit_callback}},
+    {"info", {"get current state infomation", info_callback}},
+    {"set", {"set current state", set_callback}},
+    {"enable", {"set current state", enable_callback}},
+    {"disable", {"set current state", disable_callback}},
+    {"analyze", {"run analysis", analyze_callback}},
+    {"reset", {"reset state", reset_callback}},
+    {"addsrc", {"add source file to analyze", addsrc_callback}},
+    {"delsrc", {"delete source file from source list", delsrc_callback}},
+<span style = "background-color:#dfd">    {"show", {"show the analysis result", show_callback}}};</span></pre>
+	</body>
+</html>

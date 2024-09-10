@@ -1,0 +1,1244 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/sql/udf_example.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+/*
+** example file of UDF (user definable functions) that are dynamicly loaded
+** into the standard mysqld core.
+**
+** The functions name, type and shared library is saved in the new system
+** table 'func'.  To be able to create new functions one must have write
+** privilege for the database 'mysql'.	If one starts MySQL with
+** --skip-grant-tables, then UDF initialization will also be skipped.
+**
+** Syntax for the new commands are:
+** create function &lt;function_name&gt; returns {string|real|integer}
+**		  soname &lt;name_of_shared_library&gt;
+** drop function &lt;function_name&gt;
+**
+** Each defined function may have a xxxx_init function and a xxxx_deinit
+** function.  The init function should alloc memory for the function
+** and tell the main function about the max length of the result
+** (for string functions), number of decimals (for double functions) and
+** if the result may be a null value.
+**
+** If a function sets the 'error' argument to 1 the function will not be
+** called anymore and mysqld will return NULL for all calls to this copy
+** of the function.
+**
+** All strings arguments to functions are given as string pointer + length
+** to allow handling of binary data.
+** Remember that all functions must be thread safe. This means that one is not
+** allowed to alloc any global or static variables that changes!
+** If one needs memory one should alloc this in the init function and free
+** this on the __deinit function.
+**
+** Note that the init and __deinit functions are only called once per
+** SQL statement while the value function may be called many times
+**
+** Function 'metaphon' returns a metaphon string of the string argument.
+** This is something like a soundex string, but it's more tuned for English.
+**
+** Function 'myfunc_double' returns summary of codes of all letters
+** of arguments divided by summary length of all its arguments.
+**
+** Function 'myfunc_int' returns summary length of all its arguments.
+**
+** Function 'sequence' returns an sequence starting from a certain number.
+**
+** Function 'myfunc_argument_name' returns name of argument.
+**
+** On the end is a couple of functions that converts hostnames to ip and
+** vice versa.
+**
+** A dynamicly loadable file should be compiled shared.
+** (something like: gcc -shared -o my_func.so myfunc.cc).
+** You can easily get all switches right by doing:
+** cd sql ; make udf_example.o
+** Take the compile line that make writes, remove the '-c' near the end of
+** the line and add -shared -o udf_example.so to the end of the compile line.
+** The resulting library (udf_example.so) should be copied to some dir
+** searched by ld. (/usr/lib ?)
+** If you are using gcc, then you should be able to create the udf_example.so
+** by simply doing 'make udf_example.so'.
+**
+** After the library is made one must notify mysqld about the new
+** functions with the commands:
+**
+** CREATE FUNCTION metaphon RETURNS STRING SONAME "udf_example.so";
+** CREATE FUNCTION myfunc_double RETURNS REAL SONAME "udf_example.so";
+** CREATE FUNCTION myfunc_int RETURNS INTEGER SONAME "udf_example.so";
+** CREATE FUNCTION sequence RETURNS INTEGER SONAME "udf_example.so";
+** CREATE FUNCTION lookup RETURNS STRING SONAME "udf_example.so";
+** CREATE FUNCTION reverse_lookup RETURNS STRING SONAME "udf_example.so";
+** CREATE AGGREGATE FUNCTION avgcost RETURNS REAL SONAME "udf_example.so";
+** CREATE FUNCTION myfunc_argument_name RETURNS STRING SONAME "udf_example.so";
+**
+** After this the functions will work exactly like native MySQL functions.
+** Functions should be created only once.
+**
+** The functions can be deleted by:
+**
+** DROP FUNCTION metaphon;
+** DROP FUNCTION myfunc_double;
+** DROP FUNCTION myfunc_int;
+** DROP FUNCTION lookup;
+** DROP FUNCTION reverse_lookup;
+** DROP FUNCTION avgcost;
+** DROP FUNCTION myfunc_argument_name;
+**
+** The CREATE FUNCTION and DROP FUNCTION update the func@mysql table. All
+** Active function will be reloaded on every restart of server
+** (if --skip-grant-tables is not given)
+**
+** If you ge problems with undefined symbols when loading the shared
+** library, you should verify that mysqld is compiled with the -rdynamic
+** option.
+**
+** If you can't get AGGREGATES to work, check that you have the column
+** 'type' in the mysql.func table.  If not, run 'mysql_upgrade'.
+**
+*/
+
+#include &lt;my_global.h&gt;
+#include &lt;my_sys.h&gt;
+
+#include &lt;new&gt;
+#include &lt;vector&gt;
+#include &lt;algorithm&gt;
+
+#if defined(MYSQL_SERVER)
+#include &lt;m_string.h&gt;		/* To get strmov() */
+#else
+/* when compiled as standalone */
+#include &lt;string.h&gt;
+#define strmov(a,b) stpcpy(a,b)
+#endif
+
+#include &lt;mysql.h&gt;
+#include &lt;ctype.h&gt;
+
+#ifdef _WIN32
+/* inet_aton needs winsock library */
+#pragma comment(lib, "ws2_32")
+#endif
+
+#ifdef HAVE_DLOPEN
+
+#if !defined(HAVE_GETHOSTBYADDR_R) || !defined(HAVE_SOLARIS_STYLE_GETHOST)
+static pthread_mutex_t LOCK_hostname;
+#endif
+
+/* These must be right or mysqld will not find the symbol! */
+
+C_MODE_START;
+my_bool metaphon_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+void metaphon_deinit(UDF_INIT *initid);
+char *metaphon(UDF_INIT *initid, UDF_ARGS *args, char *result,
+	       unsigned long *length, char *is_null, char *error);
+my_bool myfunc_double_init(UDF_INIT *, UDF_ARGS *args, char *message);
+double myfunc_double(UDF_INIT *initid, UDF_ARGS *args, char *is_null,
+		     char *error);
+my_bool myfunc_int_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+longlong myfunc_int(UDF_INIT *initid, UDF_ARGS *args, char *is_null,
+		    char *error);
+my_bool sequence_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+ void sequence_deinit(UDF_INIT *initid);
+longlong sequence(UDF_INIT *initid, UDF_ARGS *args, char *is_null,
+		   char *error);
+my_bool avgcost_init( UDF_INIT* initid, UDF_ARGS* args, char* message );
+void avgcost_deinit( UDF_INIT* initid );
+void avgcost_reset( UDF_INIT* initid, UDF_ARGS* args, char* is_null, char *error );
+void avgcost_clear( UDF_INIT* initid, char* is_null, char *error );
+void avgcost_add( UDF_INIT* initid, UDF_ARGS* args, char* is_null, char *error );
+double avgcost( UDF_INIT* initid, UDF_ARGS* args, char* is_null, char *error );
+my_bool is_const_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+char *is_const(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long
+               *length, char *is_null, char *error);
+C_MODE_END;
+
+/*************************************************************************
+** Example of init function
+** Arguments:
+** initid	Points to a structure that the init function should fill.
+**		This argument is given to all other functions.
+**	my_bool maybe_null	1 if function can return NULL
+**				Default value is 1 if any of the arguments
+**				is declared maybe_null.
+**	unsigned int decimals	Number of decimals.
+**				Default value is max decimals in any of the
+**				arguments.
+**	unsigned int max_length  Length of string result.
+**				The default value for integer functions is 21
+**				The default value for real functions is 13+
+**				default number of decimals.
+**				The default value for string functions is
+**				the longest string argument.
+**	char *ptr;		A pointer that the function can use.
+**
+** args		Points to a structure which contains:
+**	unsigned int arg_count		Number of arguments
+**	enum Item_result *arg_type	Types for each argument.
+**					Types are STRING_RESULT, REAL_RESULT
+**					and INT_RESULT.
+**	char **args			Pointer to constant arguments.
+**					Contains 0 for not constant argument.
+**	unsigned long *lengths;		max string length for each argument
+**	char *maybe_null		Information of which arguments
+**					may be NULL
+**
+** message	Error message that should be passed to the user on fail.
+**		The message buffer is MYSQL_ERRMSG_SIZE big, but one should
+**		try to keep the error message less than 80 bytes long!
+**
+** This function should return 1 if something goes wrong. In this case
+** message should contain something usefull!
+**************************************************************************/
+
+#define MAXMETAPH 8
+
+my_bool metaphon_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+  if (args-&gt;arg_count != 1 || args-&gt;arg_type[0] != STRING_RESULT)
+  {
+    strcpy(message,"Wrong arguments to metaphon;  Use the source");
+    return 1;
+  }
+  initid-&gt;max_length=MAXMETAPH;
+  return 0;
+}
+
+/****************************************************************************
+** Deinit function. This should free all resources allocated by
+** this function.
+** Arguments:
+** initid	Return value from xxxx_init
+****************************************************************************/
+
+
+void metaphon_deinit(UDF_INIT *initid MY_ATTRIBUTE((unused)))
+{
+}
+
+/***************************************************************************
+** UDF string function.
+** Arguments:
+** initid	Structure filled by xxx_init
+** args		The same structure as to xxx_init. This structure
+**		contains values for all parameters.
+**		Note that the functions MUST check and convert all
+**		to the type it wants!  Null values are represented by
+**		a NULL pointer
+** result	Possible buffer to save result. At least 255 byte long.
+** length	Pointer to length of the above buffer.	In this the function
+**		should save the result length
+** is_null	If the result is null, one should store 1 here.
+** error	If something goes fatally wrong one should store 1 here.
+**
+** This function should return a pointer to the result string.
+** Normally this is 'result' but may also be an alloced string.
+***************************************************************************/
+
+/* Character coding array */
+static char codes[26] =  {
+    1,16,4,16,9,2,4,16,9,2,0,2,2,2,1,4,0,2,4,4,1,0,0,0,8,0
+ /* A  B C  D E F G  H I J K L M N O P Q R S T U V W X Y Z*/
+    };
+
+/*--- Macros to access character coding array -------------*/
+
+#define ISVOWEL(x)  (codes[(x) - 'A'] &amp; 1)	/* AEIOU */
+
+    /* Following letters are not changed */
+#define NOCHANGE(x) (codes[(x) - 'A'] &amp; 2)	/* FJLMNR */
+
+    /* These form diphthongs when preceding H */
+#define AFFECTH(x) (codes[(x) - 'A'] &amp; 4)	/* CGPST */
+
+    /* These make C and G soft */
+#define MAKESOFT(x) (codes[(x) - 'A'] &amp; 8)	/* EIY */
+
+    /* These prevent GH from becoming F */
+#define NOGHTOF(x)  (codes[(x) - 'A'] &amp; 16)	/* BDH */
+
+
+char *metaphon(UDF_INIT *initid MY_ATTRIBUTE((unused)),
+               UDF_ARGS *args, char *result, unsigned long *length,
+               char *is_null, char *error MY_ATTRIBUTE((unused)))
+{
+  const char *word=args-&gt;args[0];
+  const char *w_end;
+  char *org_result;
+  char *n, *n_start, *n_end; /* pointers to string */
+  char *metaph_end;	     /* pointers to end of metaph */
+  char ntrans[32];	     /* word with uppercase letters */
+  int  KSflag;		     /* state flag for X to KS */
+
+  if (!word)					/* Null argument */
+  {
+    /* The length is expected to be zero when the argument is NULL. */
+    assert(args-&gt;lengths[0] == 0);
+    *is_null=1;
+    return 0;
+  }
+
+  w_end=word+args-&gt;lengths[0];
+  org_result=result;
+
+  /*--------------------------------------------------------
+   *  Copy word to internal buffer, dropping non-alphabetic
+   *  characters and converting to uppercase.
+   *-------------------------------------------------------*/
+
+  for (n = ntrans + 1, n_end = ntrans + sizeof(ntrans)-2;
+	word != w_end &amp;&amp; n &lt; n_end; word++ )
+    if ( isalpha ( *word ))
+      *n++ = toupper ( *word );
+
+  if ( n == ntrans + 1 )	/* return empty string if 0 bytes */
+  {
+    *length=0;
+    return result;
+  }
+  n_end = n;			/* set n_end to end of string */
+  ntrans[0] = 'Z';		/* ntrans[0] should be a neutral char */
+  n[0]=n[1]=0;			/* pad with nulls */
+  n = ntrans + 1;		/* assign pointer to start */
+
+  /*------------------------------------------------------------
+   *  check for all prefixes:
+   *		PN KN GN AE WR WH and X at start.
+   *----------------------------------------------------------*/
+
+  switch ( *n ) {
+  case 'P':
+  case 'K':
+  case 'G':
+    if ( n[1] == 'N')
+      *n++ = 0;
+    break;
+  case 'A':
+    if ( n[1] == 'E')
+      *n++ = 0;
+    break;
+  case 'W':
+    if ( n[1] == 'R' )
+      *n++ = 0;
+    else
+      if ( *(n + 1) == 'H')
+      {
+	n[1] = *n;
+	*n++ = 0;
+      }
+    break;
+  case 'X':
+    *n = 'S';
+    break;
+  }
+
+  /*------------------------------------------------------------
+   *  Now, loop step through string, stopping at end of string
+   *  or when the computed metaph is MAXMETAPH characters long
+   *----------------------------------------------------------*/
+
+  KSflag = 0; /* state flag for KS translation */
+
+  for (metaph_end = result + MAXMETAPH, n_start = n;
+	n &lt; n_end &amp;&amp; result &lt; metaph_end; n++ )
+  {
+
+    if ( KSflag )
+    {
+      KSflag = 0;
+      *result++ = *n;
+    }
+    else
+    {
+      /* drop duplicates except for CC */
+      if ( *( n - 1 ) == *n &amp;&amp; *n != 'C' )
+	continue;
+
+      /* check for F J L M N R or first letter vowel */
+      if ( NOCHANGE ( *n ) ||
+	   ( n == n_start &amp;&amp; ISVOWEL ( *n )))
+	*result++ = *n;
+      else
+	switch ( *n ) {
+	case 'B':	 /* check for -MB */
+	  if ( n &lt; n_end || *( n - 1 ) != 'M' )
+	    *result++ = *n;
+	  break;
+
+	case 'C': /* C = X ("sh" sound) in CH and CIA */
+	  /*   = S in CE CI and CY	      */
+	  /*	 dropped in SCI SCE SCY       */
+	  /* else K			      */
+	  if ( *( n - 1 ) != 'S' ||
+<span style = "background-color:#fdd">	       !MAKESOFT ( n[1]))        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+	  {
+	    if ( n[1] == 'I' &amp;&amp; n[2] == 'A' )
+	      *result++ = 'X';
+	    else
+<span style = "background-color:#fdd">	      if ( MAKESOFT ( n[1]))        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+		*result++ = 'S';
+	      else
+		if ( n[1] == 'H' )
+		  *result++ = (( n == n_start &amp;&amp;
+<span style = "background-color:#fdd">				 !ISVOWEL ( n[2])) ||        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+			       *( n - 1 ) == 'S' ) ?
+		    (char)'K' : (char)'X';
+		else
+		  *result++ = 'K';
+	  }
+	  break;
+
+	case 'D':  /* J before DGE, DGI, DGY, else T */
+	  *result++ =
+	    ( n[1] == 'G' &amp;&amp;
+<span style = "background-color:#fdd">	      MAKESOFT ( n[2])) ?        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+	    (char)'J' : (char)'T';
+	  break;
+
+	case 'G':   /* complicated, see table in text */
+<span style = "background-color:#fdd">	  if (( n[1] != 'H' || ISVOWEL ( n[2]))        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+	      &amp;&amp; (
+		  n[1] != 'N' ||
+		  (
+		   (n + 1) &lt; n_end  &amp;&amp;
+		   (
+		    n[2] != 'E' ||
+		    *( n + 3 ) != 'D'
+		    )
+		   )
+		  )
+	      &amp;&amp; (
+		  *( n - 1 ) != 'D' ||
+<span style = "background-color:#fdd">		  !MAKESOFT ( n[1])        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+		  )
+	      )
+	    *result++ =
+<span style = "background-color:#fdd">	      ( MAKESOFT ( *( n  + 1 )) &amp;&amp;        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+		n[2] != 'G' ) ?
+	      (char)'J' : (char)'K';
+	  else
+	    if ( n[1] == 'H'   &amp;&amp;
+<span style = "background-color:#fdd">		!NOGHTOF( *( n - 3 )) &amp;&amp;        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+<span style = "background-color:#fdd">		*( n - 4 ) != 'H')        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+	      *result++ = 'F';
+	  break;
+
+	case 'H':   /* H if before a vowel and not after */
+	  /* C, G, P, S, T */
+
+	  if ( !AFFECTH ( *( n - 1 )) &amp;&amp;
+	       ( !ISVOWEL ( *( n - 1 )) ||
+<span style = "background-color:#fdd">		 ISVOWEL ( n[1])))        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+	    *result++ = 'H';
+	  break;
+
+	case 'K':    /* K = K, except dropped after C */
+	  if ( *( n - 1 ) != 'C')
+	    *result++ = 'K';
+	  break;
+
+	case 'P':    /* PH = F, else P = P */
+	  *result++ = *( n +  1 ) == 'H'
+	    ? (char)'F' : (char)'P';
+	  break;
+	case 'Q':   /* Q = K (U after Q is already gone */
+	  *result++ = 'K';
+	  break;
+
+	case 'S':   /* SH, SIO, SIA = X ("sh" sound) */
+	  *result++ = ( n[1] == 'H' ||
+			( *(n  + 1) == 'I' &amp;&amp;
+			  ( n[2] == 'O' ||
+			    n[2] == 'A')))  ?
+	    (char)'X' : (char)'S';
+	  break;
+
+	case 'T':  /* TIO, TIA = X ("sh" sound) */
+	  /* TH = 0, ("th" sound ) */
+	  if ( *( n  + 1 ) == 'I' &amp;&amp; ( n[2] == 'O'
+				      || n[2] == 'A') )
+	    *result++ = 'X';
+	  else
+	    if ( n[1] == 'H' )
+	      *result++ = '0';
+	    else
+	      if ( *( n + 1) != 'C' || n[2] != 'H')
+		*result++ = 'T';
+	  break;
+
+	case 'V':     /* V = F */
+	  *result++ = 'F';
+	  break;
+
+	case 'W':     /* only exist if a vowel follows */
+	case 'Y':
+<span style = "background-color:#fdd">	  if ( ISVOWEL ( n[1]))        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+	    *result++ = *n;
+	  break;
+
+	case 'X':     /* X = KS, except at start */
+	  if ( n == n_start )
+	    *result++ = 'S';
+	  else
+	  {
+	    *result++ = 'K'; /* insert K, then S */
+	    KSflag = 1; /* this flag will cause S to be
+			   inserted on next pass thru loop */
+	  }
+	  break;
+
+	case 'Z':
+	  *result++ = 'S';
+	  break;
+	}
+    }
+  }
+  *length= (unsigned long) (result - org_result);
+  return org_result;
+}
+
+
+/***************************************************************************
+** UDF double function.
+** Arguments:
+** initid	Structure filled by xxx_init
+** args		The same structure as to xxx_init. This structure
+**		contains values for all parameters.
+**		Note that the functions MUST check and convert all
+**		to the type it wants!  Null values are represented by
+**		a NULL pointer
+** is_null	If the result is null, one should store 1 here.
+** error	If something goes fatally wrong one should store 1 here.
+**
+** This function should return the result.
+***************************************************************************/
+
+my_bool myfunc_double_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+  uint i;
+
+  if (!args-&gt;arg_count)
+  {
+    strcpy(message,"myfunc_double must have at least one argument");
+    return 1;
+  }
+  /*
+  ** As this function wants to have everything as strings, force all arguments
+  ** to strings.
+  */
+  for (i=0 ; i &lt; args-&gt;arg_count; i++)
+    args-&gt;arg_type[i]=STRING_RESULT;
+  initid-&gt;maybe_null=1;		/* The result may be null */
+  initid-&gt;decimals=2;		/* We want 2 decimals in the result */
+  initid-&gt;max_length=6;		/* 3 digits + . + 2 decimals */
+  return 0;
+}
+
+
+double myfunc_double(UDF_INIT *initid MY_ATTRIBUTE((unused)), UDF_ARGS *args,
+                     char *is_null, char *error MY_ATTRIBUTE((unused)))
+{
+  unsigned long val = 0;
+  unsigned long v = 0;
+  uint i, j;
+
+  for (i = 0; i &lt; args-&gt;arg_count; i++)
+  {
+    if (args-&gt;args[i] == NULL)
+      continue;
+    val += args-&gt;lengths[i];
+    for (j=args-&gt;lengths[i] ; j-- &gt; 0 ;)
+      v += args-&gt;args[i][j];
+  }
+  if (val)
+    return (double) v/ (double) val;
+  *is_null=1;
+  return 0.0;
+}
+
+
+/***************************************************************************
+** UDF long long function.
+** Arguments:
+** initid	Return value from xxxx_init
+** args		The same structure as to xxx_init. This structure
+**		contains values for all parameters.
+**		Note that the functions MUST check and convert all
+**		to the type it wants!  Null values are represented by
+**		a NULL pointer
+** is_null	If the result is null, one should store 1 here.
+** error	If something goes fatally wrong one should store 1 here.
+**
+** This function should return the result as a long long
+***************************************************************************/
+
+/* This function returns the sum of all arguments */
+
+longlong myfunc_int(UDF_INIT *initid MY_ATTRIBUTE((unused)), UDF_ARGS *args,
+                    char *is_null MY_ATTRIBUTE((unused)),
+                    char *error MY_ATTRIBUTE((unused)))
+{
+  longlong val = 0;
+  uint i;
+
+  for (i = 0; i &lt; args-&gt;arg_count; i++)
+  {
+    if (args-&gt;args[i] == NULL)
+      continue;
+    switch (args-&gt;arg_type[i]) {
+    case STRING_RESULT:			/* Add string lengths */
+      val += args-&gt;lengths[i];
+      break;
+    case INT_RESULT:			/* Add numbers */
+      val += *((longlong*) args-&gt;args[i]);
+      break;
+    case REAL_RESULT:			/* Add numers as longlong */
+      val += (longlong) *((double*) args-&gt;args[i]);
+      break;
+    default:
+      break;
+    }
+  }
+  return val;
+}
+
+/*
+  At least one of _init/_deinit is needed unless the server is started
+  with --allow_suspicious_udfs.
+*/
+my_bool myfunc_int_init(UDF_INIT *initid MY_ATTRIBUTE((unused)),
+                        UDF_ARGS *args MY_ATTRIBUTE((unused)),
+                        char *message MY_ATTRIBUTE((unused)))
+{
+  return 0;
+}
+
+/*
+  Simple example of how to get a sequences starting from the first argument
+  or 1 if no arguments have been given
+*/
+
+my_bool sequence_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+  if (args-&gt;arg_count &gt; 1)
+  {
+    strmov(message,"This function takes none or 1 argument");
+    return 1;
+  }
+  if (args-&gt;arg_count)
+    args-&gt;arg_type[0]= INT_RESULT;		/* Force argument to int */
+
+<span style = "background-color:#fdd">  if (!(initid-&gt;ptr=(char*) malloc(sizeof(longlong))))        Allocator sizeof operand mismatch:Result of 'malloc' is converted to a pointer of type 'char', which is incompatible with sizeof operand type 'longlong'</span>
+  {
+    strmov(message,"Couldn't allocate memory");
+    return 1;
+  }
+  memset(initid-&gt;ptr, 0, sizeof(longlong));
+  /* 
+    sequence() is a non-deterministic function : it has different value 
+    even if called with the same arguments.
+  */
+  initid-&gt;const_item=0;
+  return 0;
+}
+
+void sequence_deinit(UDF_INIT *initid)
+{
+  if (initid-&gt;ptr)
+    free(initid-&gt;ptr);
+}
+
+longlong sequence(UDF_INIT *initid MY_ATTRIBUTE((unused)), UDF_ARGS *args,
+                  char *is_null MY_ATTRIBUTE((unused)),
+                  char *error MY_ATTRIBUTE((unused)))
+{
+  ulonglong val=0;
+  if (args-&gt;arg_count)
+    val= *((longlong*) args-&gt;args[0]);
+  return ++*((longlong*) initid-&gt;ptr) + val;
+}
+
+
+/****************************************************************************
+** Some functions that handles IP and hostname conversions
+** The orignal function was from Zeev Suraski.
+**
+** CREATE FUNCTION lookup RETURNS STRING SONAME "udf_example.so";
+** CREATE FUNCTION reverse_lookup RETURNS STRING SONAME "udf_example.so";
+**
+****************************************************************************/
+
+#ifdef __WIN__
+#include &lt;winsock2.h&gt;
+#else
+#include &lt;sys/socket.h&gt;
+#include &lt;netinet/in.h&gt;
+#include &lt;arpa/inet.h&gt;
+#include &lt;netdb.h&gt;
+#endif
+
+C_MODE_START;
+my_bool lookup_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+void lookup_deinit(UDF_INIT *initid);
+char *lookup(UDF_INIT *initid, UDF_ARGS *args, char *result,
+	     unsigned long *length, char *null_value, char *error);
+my_bool reverse_lookup_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+void reverse_lookup_deinit(UDF_INIT *initid);
+char *reverse_lookup(UDF_INIT *initid, UDF_ARGS *args, char *result,
+		     unsigned long *length, char *null_value, char *error);
+C_MODE_END;
+
+
+/****************************************************************************
+** lookup IP for an hostname.
+**
+** This code assumes that gethostbyname_r exists and inet_ntoa() is thread
+** safe (As it is in Solaris)
+****************************************************************************/
+
+
+my_bool lookup_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+  if (args-&gt;arg_count != 1 || args-&gt;arg_type[0] != STRING_RESULT)
+  {
+    strmov(message,"Wrong arguments to lookup;  Use the source");
+    return 1;
+  }
+  initid-&gt;max_length=11;
+  initid-&gt;maybe_null=1;
+#if !defined(HAVE_GETHOSTBYADDR_R) || !defined(HAVE_SOLARIS_STYLE_GETHOST)
+  (void) pthread_mutex_init(&amp;LOCK_hostname,MY_MUTEX_INIT_SLOW);
+#endif
+  return 0;
+}
+
+void lookup_deinit(UDF_INIT *initid MY_ATTRIBUTE((unused)))
+{
+#if !defined(HAVE_GETHOSTBYADDR_R) || !defined(HAVE_SOLARIS_STYLE_GETHOST)
+  (void) pthread_mutex_destroy(&amp;LOCK_hostname);
+#endif
+}
+
+char *lookup(UDF_INIT *initid MY_ATTRIBUTE((unused)), UDF_ARGS *args,
+             char *result, unsigned long *res_length, char *null_value,
+             char *error MY_ATTRIBUTE((unused)))
+{
+  uint length;
+  char name_buff[256];
+  struct hostent *hostent;
+#if defined(HAVE_GETHOSTBYADDR_R) &amp;&amp; defined(HAVE_SOLARIS_STYLE_GETHOST)
+  int tmp_errno;
+  char hostname_buff[2048];
+  struct hostent tmp_hostent;
+#endif
+  struct in_addr in;
+
+  if (!args-&gt;args[0] || !(length=args-&gt;lengths[0]))
+  {
+    *null_value=1;
+    return 0;
+  }
+  if (length &gt;= sizeof(name_buff))
+    length=sizeof(name_buff)-1;
+  memcpy(name_buff,args-&gt;args[0],length);
+  name_buff[length]=0;
+#if defined(HAVE_GETHOSTBYADDR_R) &amp;&amp; defined(HAVE_SOLARIS_STYLE_GETHOST)
+  if (!(hostent=gethostbyname_r(name_buff,&amp;tmp_hostent,hostname_buff,
+				sizeof(hostname_buff), &amp;tmp_errno)))
+  {
+    *null_value=1;
+    return 0;
+  }
+#else
+  pthread_mutex_lock(&amp;LOCK_hostname);
+  if (!(hostent= gethostbyname((char*) name_buff)))
+  {
+    pthread_mutex_unlock(&amp;LOCK_hostname);
+    *null_value= 1;
+    return 0;
+  }
+  pthread_mutex_unlock(&amp;LOCK_hostname);
+#endif
+  memcpy(&amp;in, *hostent-&gt;h_addr_list, sizeof(in.s_addr));
+  *res_length= (ulong) (strmov(result, inet_ntoa(in)) - result);
+  return result;
+}
+
+
+/****************************************************************************
+** return hostname for an IP number.
+** The functions can take as arguments a string "xxx.xxx.xxx.xxx" or
+** four numbers.
+****************************************************************************/
+
+my_bool reverse_lookup_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+  if (args-&gt;arg_count == 1)
+    args-&gt;arg_type[0]= STRING_RESULT;
+  else if (args-&gt;arg_count == 4)
+    args-&gt;arg_type[0]=args-&gt;arg_type[1]=args-&gt;arg_type[2]=args-&gt;arg_type[3]=
+      INT_RESULT;
+  else
+  {
+    strmov(message,
+	   "Wrong number of arguments to reverse_lookup;  Use the source");
+    return 1;
+  }
+  initid-&gt;max_length=32;
+  initid-&gt;maybe_null=1;
+#if !defined(HAVE_GETHOSTBYADDR_R) || !defined(HAVE_SOLARIS_STYLE_GETHOST)
+  (void) pthread_mutex_init(&amp;LOCK_hostname,MY_MUTEX_INIT_SLOW);
+#endif
+  return 0;
+}
+
+void reverse_lookup_deinit(UDF_INIT *initid MY_ATTRIBUTE((unused)))
+{
+#if !defined(HAVE_GETHOSTBYADDR_R) || !defined(HAVE_SOLARIS_STYLE_GETHOST)
+  (void) pthread_mutex_destroy(&amp;LOCK_hostname);
+#endif
+}
+
+char *reverse_lookup(UDF_INIT *initid MY_ATTRIBUTE((unused)), UDF_ARGS *args,
+                     char *result, unsigned long *res_length,
+                     char *null_value, char *error MY_ATTRIBUTE((unused)))
+{
+#if defined(HAVE_GETHOSTBYADDR_R) &amp;&amp; defined(HAVE_SOLARIS_STYLE_GETHOST)
+  char name_buff[256];
+  struct hostent tmp_hostent;
+  int tmp_errno;
+#endif
+  struct hostent *hp;
+  unsigned long taddr;
+  uint length;
+
+  if (args-&gt;arg_count == 4)
+  {
+    if (!args-&gt;args[0] || !args-&gt;args[1] ||!args-&gt;args[2] ||!args-&gt;args[3])
+    {
+      *null_value=1;
+      return 0;
+    }
+    sprintf(result,"%d.%d.%d.%d",
+	    (int) *((longlong*) args-&gt;args[0]),
+	    (int) *((longlong*) args-&gt;args[1]),
+	    (int) *((longlong*) args-&gt;args[2]),
+	    (int) *((longlong*) args-&gt;args[3]));
+  }
+  else
+  {					/* string argument */
+    if (!args-&gt;args[0])			/* Return NULL for NULL values */
+    {
+      *null_value=1;
+      return 0;
+    }
+    length=args-&gt;lengths[0];
+    if (length &gt;= (uint) *res_length-1)
+      length=(uint) *res_length;
+    memcpy(result,args-&gt;args[0],length);
+    result[length]=0;
+  }
+
+  taddr = inet_addr(result);
+  if (taddr == (unsigned long) -1L)
+  {
+    *null_value=1;
+    return 0;
+  }
+#if defined(HAVE_GETHOSTBYADDR_R) &amp;&amp; defined(HAVE_SOLARIS_STYLE_GETHOST)
+  if (!(hp=gethostbyaddr_r((char*) &amp;taddr,sizeof(taddr), AF_INET,
+			   &amp;tmp_hostent, name_buff,sizeof(name_buff),
+			   &amp;tmp_errno)))
+  {
+    *null_value=1;
+    return 0;
+  }
+#else
+  pthread_mutex_lock(&amp;LOCK_hostname);
+  if (!(hp= gethostbyaddr((char*) &amp;taddr, sizeof(taddr), AF_INET)))
+  {
+    pthread_mutex_unlock(&amp;LOCK_hostname);
+    *null_value= 1;
+    return 0;
+  }
+  pthread_mutex_unlock(&amp;LOCK_hostname);
+#endif
+  *res_length=(ulong) (strmov(result,hp-&gt;h_name) - result);
+  return result;
+}
+
+/*
+** Syntax for the new aggregate commands are:
+** create aggregate function &lt;function_name&gt; returns {string|real|integer}
+**		  soname &lt;name_of_shared_library&gt;
+**
+** Syntax for avgcost: avgcost( t.quantity, t.price )
+**	with t.quantity=integer, t.price=double
+** (this example is provided by Andreas F. Bobak &lt;bobak@relog.ch&gt;)
+*/
+
+
+struct avgcost_data
+{
+  ulonglong	count;
+  longlong	totalquantity;
+  double	totalprice;
+};
+
+
+/*
+** Average Cost Aggregate Function.
+*/
+my_bool
+avgcost_init( UDF_INIT* initid, UDF_ARGS* args, char* message )
+{
+  struct avgcost_data*	data;
+
+  if (args-&gt;arg_count != 2)
+  {
+    strcpy(
+	   message,
+	   "wrong number of arguments: AVGCOST() requires two arguments"
+	   );
+    return 1;
+  }
+
+  if ((args-&gt;arg_type[0] != INT_RESULT) || (args-&gt;arg_type[1] != REAL_RESULT) )
+  {
+    strcpy(
+	   message,
+	   "wrong argument type: AVGCOST() requires an INT and a REAL"
+	   );
+    return 1;
+  }
+
+  /*
+  **	force arguments to double.
+  */
+  /*args-&gt;arg_type[0]	= REAL_RESULT;
+    args-&gt;arg_type[1]	= REAL_RESULT;*/
+
+  initid-&gt;maybe_null	= 0;		/* The result may be null */
+  initid-&gt;decimals	= 4;		/* We want 4 decimals in the result */
+  initid-&gt;max_length	= 20;		/* 6 digits + . + 10 decimals */
+
+  if (!(data = new (std::nothrow) avgcost_data))
+  {
+    strmov(message,"Couldn't allocate memory");
+    return 1;
+  }
+  data-&gt;totalquantity	= 0;
+  data-&gt;totalprice	= 0.0;
+
+  initid-&gt;ptr = (char*)data;
+
+  return 0;
+}
+
+void
+avgcost_deinit( UDF_INIT* initid )
+{
+  void *void_ptr= initid-&gt;ptr;
+  avgcost_data *data= static_cast&lt;avgcost_data*&gt;(void_ptr);
+  delete data;
+}
+
+
+/* This is only for MySQL 4.0 compability */
+void
+avgcost_reset(UDF_INIT* initid, UDF_ARGS* args, char* is_null, char* message)
+{
+  avgcost_clear(initid, is_null, message);
+  avgcost_add(initid, args, is_null, message);
+}
+
+/* This is needed to get things to work in MySQL 4.1.1 and above */
+
+void
+avgcost_clear(UDF_INIT* initid, char* is_null MY_ATTRIBUTE((unused)),
+              char* message MY_ATTRIBUTE((unused)))
+{
+  struct avgcost_data* data = (struct avgcost_data*)initid-&gt;ptr;
+  data-&gt;totalprice=	0.0;
+  data-&gt;totalquantity=	0;
+  data-&gt;count=		0;
+}
+
+
+void
+avgcost_add(UDF_INIT* initid, UDF_ARGS* args,
+            char* is_null MY_ATTRIBUTE((unused)),
+            char* message MY_ATTRIBUTE((unused)))
+{
+  if (args-&gt;args[0] &amp;&amp; args-&gt;args[1])
+  {
+    struct avgcost_data* data	= (struct avgcost_data*)initid-&gt;ptr;
+    longlong quantity		= *((longlong*)args-&gt;args[0]);
+    longlong newquantity	= data-&gt;totalquantity + quantity;
+    double price		= *((double*)args-&gt;args[1]);
+
+    data-&gt;count++;
+
+    if (   ((data-&gt;totalquantity &gt;= 0) &amp;&amp; (quantity &lt; 0))
+	   || ((data-&gt;totalquantity &lt;  0) &amp;&amp; (quantity &gt; 0)) )
+    {
+      /*
+      **	passing from + to - or from - to +
+      */
+      if (   ((quantity &lt; 0) &amp;&amp; (newquantity &lt; 0))
+	     || ((quantity &gt; 0) &amp;&amp; (newquantity &gt; 0)) )
+      {
+	data-&gt;totalprice	= price * (double)newquantity;
+      }
+      /*
+      **	sub q if totalq &gt; 0
+      **	add q if totalq &lt; 0
+      */
+      else
+      {
+	price		  = data-&gt;totalprice / (double)data-&gt;totalquantity;
+	data-&gt;totalprice  = price * (double)newquantity;
+      }
+      data-&gt;totalquantity = newquantity;
+    }
+    else
+    {
+      data-&gt;totalquantity	+= quantity;
+      data-&gt;totalprice		+= price * (double)quantity;
+    }
+
+    if (data-&gt;totalquantity == 0)
+      data-&gt;totalprice = 0.0;
+  }
+}
+
+
+double
+avgcost( UDF_INIT* initid, UDF_ARGS* args MY_ATTRIBUTE((unused)),
+         char* is_null, char* error MY_ATTRIBUTE((unused)))
+{
+  struct avgcost_data* data = (struct avgcost_data*)initid-&gt;ptr;
+  if (!data-&gt;count || !data-&gt;totalquantity)
+  {
+    *is_null = 1;
+    return 0.0;
+  }
+
+  *is_null = 0;
+  return data-&gt;totalprice/(double)data-&gt;totalquantity;
+}
+
+my_bool myfunc_argument_name_init(UDF_INIT *initid, UDF_ARGS *args,
+				  char *message);
+char *myfunc_argument_name(UDF_INIT *initid, UDF_ARGS *args, char *result,
+			   unsigned long *length, char *null_value,
+			   char *error);
+
+my_bool myfunc_argument_name_init(UDF_INIT *initid, UDF_ARGS *args,
+				  char *message)
+{
+  if (args-&gt;arg_count != 1)
+  {
+    strmov(message,"myfunc_argument_name_init accepts only one argument");
+    return 1;
+  }
+  initid-&gt;max_length= args-&gt;attribute_lengths[0];
+  initid-&gt;maybe_null= 1;
+  initid-&gt;const_item= 1;
+  return 0;
+}
+
+char *myfunc_argument_name(UDF_INIT *initid MY_ATTRIBUTE((unused)),
+                           UDF_ARGS *args, char *result,
+                           unsigned long *length, char *null_value,
+                           char *error MY_ATTRIBUTE((unused)))
+{
+  if (!args-&gt;attributes[0])
+  {
+    *null_value= 1;
+    return 0;
+  }
+  (*length)--; /* space for ending \0 (for debugging purposes) */
+  if (*length &gt; args-&gt;attribute_lengths[0])
+    *length= args-&gt;attribute_lengths[0];
+  memcpy(result, args-&gt;attributes[0], *length);
+  result[*length]= 0;
+  return result;
+}
+
+
+
+my_bool is_const_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+  if (args-&gt;arg_count != 1)
+  {
+    strmov(message, "IS_CONST accepts only one argument");
+    return 1;
+  }
+  initid-&gt;ptr= (char*)((args-&gt;args[0] != NULL) ? 1UL : 0);
+  return 0;
+}
+
+char * is_const(UDF_INIT *initid, UDF_ARGS *args MY_ATTRIBUTE((unused)),
+                char *result, unsigned long *length,
+                char *is_null, char *error MY_ATTRIBUTE((unused)))
+{
+  if (initid-&gt;ptr != 0) {
+    sprintf(result, "const");
+  } else {
+    sprintf(result, "not const");
+  }
+  *is_null= 0;
+  *length= (uint) strlen(result);
+  return result;
+}
+
+
+
+extern "C"
+my_bool check_const_len_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+  if (args-&gt;arg_count != 1)
+  {
+    strmov(message, "CHECK_CONST_LEN accepts only one argument");
+    return 1;
+  }
+  if (args-&gt;args[0] == 0)
+  {
+    initid-&gt;ptr= (char*)"Not constant";
+  }
+  else if(strlen(args-&gt;args[0]) == args-&gt;lengths[0])
+  {
+    initid-&gt;ptr= (char*)"Correct length";
+  }
+  else
+  {
+    initid-&gt;ptr= (char*)"Wrong length";
+  }
+  initid-&gt;max_length = 100;
+  return 0;
+}
+
+extern "C"
+char * check_const_len(UDF_INIT *initid, UDF_ARGS *args MY_ATTRIBUTE((unused)),
+                char *result, unsigned long *length,
+                char *is_null, char *error MY_ATTRIBUTE((unused)))
+{
+  strmov(result, initid-&gt;ptr);
+  *length= (uint) strlen(result);
+  *is_null= 0;
+  return result;
+}
+
+
+C_MODE_START;
+my_bool  my_median_init  (UDF_INIT *initid, UDF_ARGS *args, char *message);
+void     my_median_deinit(UDF_INIT* initid);
+void     my_median_add   (UDF_INIT* initid, UDF_ARGS* args,
+                          char* is_null, char *error);
+void     my_median_clear (UDF_INIT* initid, UDF_ARGS* args,
+                          char* is_null, char *error);
+longlong my_median       (UDF_INIT* initid, UDF_ARGS* args,
+                          char* is_null, char *error);
+C_MODE_END;
+
+struct My_median_data
+{
+  std::vector&lt;longlong&gt; vec;
+};
+
+
+my_bool  my_median_init  (UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+  My_median_data *data= new (std::nothrow) My_median_data;
+  if (!data)
+  {
+    strmov(message,"Could not allocate memory");
+    return true;
+  }
+  initid-&gt;ptr= static_cast&lt;char*&gt;(static_cast&lt;void*&gt;(data));
+  return false;
+}
+
+void my_median_deinit(UDF_INIT* initid)
+{
+  My_median_data *data=
+    static_cast&lt;My_median_data*&gt;(static_cast&lt;void*&gt;(initid-&gt;ptr));
+  delete data;
+}
+
+void my_median_add(UDF_INIT* initid, UDF_ARGS* args,
+                   char* is_null MY_ATTRIBUTE((unused)),
+                   char* message MY_ATTRIBUTE((unused)))
+{
+  My_median_data *data=
+    static_cast&lt;My_median_data*&gt;(static_cast&lt;void*&gt;(initid-&gt;ptr));
+  if (args-&gt;args[0])
+  {
+    void *arg0= args-&gt;args[0];
+    longlong number= *(static_cast&lt;longlong*&gt;(arg0));
+    data-&gt;vec.push_back(number);
+  }
+}
+
+void my_median_clear(UDF_INIT* initid, UDF_ARGS* args,
+                     char* is_null MY_ATTRIBUTE((unused)),
+                     char* message MY_ATTRIBUTE((unused)))
+{
+  My_median_data *data=
+    static_cast&lt;My_median_data*&gt;(static_cast&lt;void*&gt;(initid-&gt;ptr));
+  data-&gt;vec.clear();
+}
+
+longlong my_median(UDF_INIT* initid, UDF_ARGS* args,
+                   char* is_null,
+                   char* message MY_ATTRIBUTE((unused)))
+{
+  My_median_data *data=
+    static_cast&lt;My_median_data*&gt;(static_cast&lt;void*&gt;(initid-&gt;ptr));
+  if (data-&gt;vec.size() == 0)
+  {
+    *is_null= 1;
+    return 0;
+  }
+  const size_t ix= data-&gt;vec.size() / 2;
+  std::nth_element(data-&gt;vec.begin(), data-&gt;vec.begin() + ix, data-&gt;vec.end());
+  return data-&gt;vec[ix];
+}
+
+#endif /* HAVE_DLOPEN */
+      </pre>
+    </body>
+</html>

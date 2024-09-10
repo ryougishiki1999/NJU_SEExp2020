@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/heap/hp_update.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000-2002, 2004-2008 MySQL AB
+   Use is subject to license terms
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA */
+
+/* Update current record in heap-database */
+
+#include "heapdef.h"
+
+int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
+{
+  HP_KEYDEF *keydef, *end, *p_lastinx;
+  uchar *pos;
+  my_bool auto_key_changed= 0;
+  HP_SHARE *share= info-&gt;s;
+  DBUG_ENTER("heap_update");
+
+  test_active(info);
+  pos=info-&gt;current_ptr;
+
+  if (info-&gt;opt_flag &amp; READ_CHECK_USED &amp;&amp; hp_rectest(info,old))
+    DBUG_RETURN(my_errno);				/* Record changed */
+  if (--(share-&gt;records) &lt; share-&gt;blength &gt;&gt; 1) share-&gt;blength&gt;&gt;= 1;
+  share-&gt;changed=1;
+
+  p_lastinx= share-&gt;keydef + info-&gt;lastinx;
+  for (keydef= share-&gt;keydef, end= keydef + share-&gt;keys; keydef &lt; end; keydef++)
+  {
+    if (hp_rec_key_cmp(keydef, old, heap_new, 0))
+    {
+      if ((*keydef-&gt;delete_key)(info, keydef, old, pos, keydef == p_lastinx) ||
+          (*keydef-&gt;write_key)(info, keydef, heap_new, pos))
+        goto err;
+      if (share-&gt;auto_key == (uint) (keydef - share-&gt;keydef + 1))
+        auto_key_changed= 1;
+    }
+  }
+
+  memcpy(pos,heap_new,(size_t) share-&gt;reclength);
+  if (++(share-&gt;records) == share-&gt;blength) share-&gt;blength+= share-&gt;blength;
+
+#if !defined(DBUG_OFF) &amp;&amp; defined(EXTRA_HEAP_DEBUG)
+  DBUG_EXECUTE("check_heap",heap_check_heap(info, 0););
+#endif
+  if (auto_key_changed)
+    heap_update_auto_increment(info, heap_new);
+  DBUG_RETURN(0);
+
+ err:
+  if (my_errno == HA_ERR_FOUND_DUPP_KEY)
+  {
+    info-&gt;errkey = (int) (keydef - share-&gt;keydef);
+    if (keydef-&gt;algorithm == HA_KEY_ALG_BTREE)
+    {
+      /* we don't need to delete non-inserted key from rb-tree */
+      if ((*keydef-&gt;write_key)(info, keydef, old, pos))
+      {
+        if (++(share-&gt;records) == share-&gt;blength)
+	  share-&gt;blength+= share-&gt;blength;
+        DBUG_RETURN(my_errno);
+      }
+      keydef--;
+    }
+    while (keydef &gt;= share-&gt;keydef)
+    {
+      if (hp_rec_key_cmp(keydef, old, heap_new, 0))
+      {
+	if ((*keydef-&gt;delete_key)(info, keydef, heap_new, pos, 0) ||
+	    (*keydef-&gt;write_key)(info, keydef, old, pos))
+	  break;
+      }
+      keydef--;
+    }
+  }
+  if (++(share-&gt;records) == share-&gt;blength)
+    share-&gt;blength+= share-&gt;blength;
+  DBUG_RETURN(my_errno);
+} /* heap_update */
+      </pre>
+    </body>
+</html>

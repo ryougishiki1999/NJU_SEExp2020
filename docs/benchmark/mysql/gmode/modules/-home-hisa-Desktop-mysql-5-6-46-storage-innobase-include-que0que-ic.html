@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/include/que0que.ic</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 1996, 2010, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/**************************************************//**
+@file include/que0que.ic
+Query graph
+
+Created 5/27/1996 Heikki Tuuri
+*******************************************************/
+
+#include "usr0sess.h"
+
+/***********************************************************************//**
+Gets the trx of a query thread. */
+UNIV_INLINE
+trx_t*
+thr_get_trx(
+/*========*/
+	que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	ut_ad(thr);
+
+	return(thr-&gt;graph-&gt;trx);
+}
+
+/*******************************************************************//**
+Determines if this thread is rolling back an incomplete transaction
+in crash recovery.
+@return TRUE if thr is rolling back an incomplete transaction in crash
+recovery */
+UNIV_INLINE
+ibool
+thr_is_recv(
+/*========*/
+	const que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	return(trx_is_recv(thr-&gt;graph-&gt;trx));
+}
+
+/***********************************************************************//**
+Gets the first thr in a fork. */
+UNIV_INLINE
+que_thr_t*
+que_fork_get_first_thr(
+/*===================*/
+	que_fork_t*	fork)	/*!&lt; in: query fork */
+{
+	return(UT_LIST_GET_FIRST(fork-&gt;thrs));
+}
+
+/***********************************************************************//**
+Gets the child node of the first thr in a fork. */
+UNIV_INLINE
+que_node_t*
+que_fork_get_child(
+/*===============*/
+	que_fork_t*	fork)	/*!&lt; in: query fork */
+{
+	que_thr_t*	thr;
+
+	thr = UT_LIST_GET_FIRST(fork-&gt;thrs);
+
+	return(thr-&gt;child);
+}
+
+/***********************************************************************//**
+Gets the type of a graph node. */
+UNIV_INLINE
+ulint
+que_node_get_type(
+/*==============*/
+	que_node_t*	node)	/*!&lt; in: graph node */
+{
+	ut_ad(node);
+
+<span style = "background-color:#fdd">	return(((que_common_t*) node)-&gt;type);        Dereference of null pointer:Access to field 'type' results in a dereference of a null pointer (loaded from variable 'node')</span>
+}
+
+/***********************************************************************//**
+Gets pointer to the value dfield of a graph node. */
+UNIV_INLINE
+dfield_t*
+que_node_get_val(
+/*=============*/
+	que_node_t*	node)	/*!&lt; in: graph node */
+{
+	ut_ad(node);
+
+	return(&amp;(((que_common_t*) node)-&gt;val));
+}
+
+/***********************************************************************//**
+Gets the value buffer size of a graph node.
+@return	val buffer size, not defined if val.data == NULL in node */
+UNIV_INLINE
+ulint
+que_node_get_val_buf_size(
+/*======================*/
+	que_node_t*	node)	/*!&lt; in: graph node */
+{
+	ut_ad(node);
+
+	return(((que_common_t*) node)-&gt;val_buf_size);
+}
+
+/***********************************************************************//**
+Sets the value buffer size of a graph node. */
+UNIV_INLINE
+void
+que_node_set_val_buf_size(
+/*======================*/
+	que_node_t*	node,	/*!&lt; in: graph node */
+	ulint		size)	/*!&lt; in: size */
+{
+	ut_ad(node);
+
+	((que_common_t*) node)-&gt;val_buf_size = size;
+}
+
+/***********************************************************************//**
+Sets the parent of a graph node. */
+UNIV_INLINE
+void
+que_node_set_parent(
+/*================*/
+	que_node_t*	node,	/*!&lt; in: graph node */
+	que_node_t*	parent)	/*!&lt; in: parent */
+{
+	ut_ad(node);
+
+	((que_common_t*) node)-&gt;parent = parent;
+}
+
+/***********************************************************************//**
+Gets pointer to the value data type field of a graph node. */
+UNIV_INLINE
+dtype_t*
+que_node_get_data_type(
+/*===================*/
+	que_node_t*	node)	/*!&lt; in: graph node */
+{
+	ut_ad(node);
+
+	return(dfield_get_type(&amp;((que_common_t*) node)-&gt;val));
+}
+
+/*********************************************************************//**
+Catenates a query graph node to a list of them, possible empty list.
+@return	one-way list of nodes */
+UNIV_INLINE
+que_node_t*
+que_node_list_add_last(
+/*===================*/
+	que_node_t*	node_list,	/*!&lt; in: node list, or NULL */
+	que_node_t*	node)		/*!&lt; in: node */
+{
+	que_common_t*	cnode;
+	que_common_t*	cnode2;
+
+	cnode = (que_common_t*) node;
+
+	cnode-&gt;brother = NULL;
+
+	if (node_list == NULL) {
+
+		return(node);
+	}
+
+	cnode2 = (que_common_t*) node_list;
+
+	while (cnode2-&gt;brother != NULL) {
+		cnode2 = (que_common_t*) cnode2-&gt;brother;
+	}
+
+	cnode2-&gt;brother = node;
+
+	return(node_list);
+}
+
+/*************************************************************************
+Removes a query graph node from the list.*/
+UNIV_INLINE
+que_node_t*
+que_node_list_get_last(
+/*===================*/
+					/* out: last node in list.*/
+	que_node_t*	node_list)	/* in: node list */
+{
+	que_common_t*	node;
+
+	ut_a(node_list != NULL);
+
+	node = (que_common_t*) node_list;
+
+	/* We need the last element */
+	while (node-&gt;brother != NULL) {
+		node = (que_common_t*) node-&gt;brother;
+	}
+
+	return(node);
+}
+/*********************************************************************//**
+Gets the next list node in a list of query graph nodes.
+@return	next node in a list of nodes */
+UNIV_INLINE
+que_node_t*
+que_node_get_next(
+/*==============*/
+	que_node_t*	node)	/*!&lt; in: node in a list */
+{
+<span style = "background-color:#fdd">	return(((que_common_t*) node)-&gt;brother);        Dereference of null pointer:Access to field 'brother' results in a dereference of a null pointer (loaded from variable 'node')</span>
+}
+
+/*********************************************************************//**
+Gets a query graph node list length.
+@return	length, for NULL list 0 */
+UNIV_INLINE
+ulint
+que_node_list_get_len(
+/*==================*/
+	que_node_t*	node_list)	/*!&lt; in: node list, or NULL */
+{
+	const que_common_t*	cnode;
+	ulint			len;
+
+	cnode = (const que_common_t*) node_list;
+	len = 0;
+
+	while (cnode != NULL) {
+		len++;
+		cnode = (const que_common_t*) cnode-&gt;brother;
+	}
+
+	return(len);
+}
+
+/*********************************************************************//**
+Gets the parent node of a query graph node.
+@return	parent node or NULL */
+UNIV_INLINE
+que_node_t*
+que_node_get_parent(
+/*================*/
+	que_node_t*	node)	/*!&lt; in: node */
+{
+	return(((que_common_t*) node)-&gt;parent);
+}
+
+/**********************************************************************//**
+Checks if graph, trx, or session is in a state where the query thread should
+be stopped.
+@return TRUE if should be stopped; NOTE that if the peek is made
+without reserving the trx mutex, then another peek with the mutex
+reserved is necessary before deciding the actual stopping */
+UNIV_INLINE
+ibool
+que_thr_peek_stop(
+/*==============*/
+	que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	trx_t*	trx;
+	que_t*	graph;
+
+	graph = thr-&gt;graph;
+	trx = graph-&gt;trx;
+
+	if (graph-&gt;state != QUE_FORK_ACTIVE
+	    || trx-&gt;lock.que_state == TRX_QUE_LOCK_WAIT
+	    || (trx-&gt;lock.que_state != TRX_QUE_ROLLING_BACK
+		&amp;&amp; trx-&gt;lock.que_state != TRX_QUE_RUNNING)) {
+
+		return(TRUE);
+	}
+
+	return(FALSE);
+}
+
+/***********************************************************************//**
+Returns TRUE if the query graph is for a SELECT statement.
+@return	TRUE if a select */
+UNIV_INLINE
+ibool
+que_graph_is_select(
+/*================*/
+	que_t*		graph)		/*!&lt; in: graph */
+{
+	if (graph-&gt;fork_type == QUE_FORK_SELECT_SCROLL
+	    || graph-&gt;fork_type == QUE_FORK_SELECT_NON_SCROLL) {
+
+		return(TRUE);
+	}
+
+	return(FALSE);
+}
+      </pre>
+    </body>
+</html>

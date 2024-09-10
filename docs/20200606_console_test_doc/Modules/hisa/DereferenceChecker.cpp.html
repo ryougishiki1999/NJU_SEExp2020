@@ -1,0 +1,234 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>DereferenceChecker.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "DereferenceChecker.h"
+
+// get dereference expr from param stmt
+const clang::Expr *DereferenceChecker::get_dereference_expr(const clang::Stmt *stmt, bool is_bind)
+<span style = "background-color:#dfd">{
+    const clang::Expr *ret_expr = nullptr;</span>
+    // get the original expr that syntactocally cause the load
+<span style = "background-color:#dfd">    const clang::Expr *expr = clang::dyn_cast&lt;clang::Expr&gt;(stmt);
+    if (expr)</span>
+    {
+<span style = "background-color:#dfd">        ret_expr = expr-&gt;IgnoreParenLValueCasts();</span>
+    }
+    // if bind expr(var = init),get init expr
+<span style = "background-color:#dfd">    if (is_bind)</span>
+    {
+        const clang::VarDecl *var;
+        const clang::Expr *init;
+<span style = "background-color:#dfd">        std::tie(var, init) = clang::ento::parseAssignment(stmt);
+        if (var &amp;&amp; init)</span>
+        {
+<span style = "background-color:#dfd">            ret_expr = init;</span>
+        }
+    }
+<span style = "background-color:#dfd">    return ret_expr;
+}</span>
+
+// add source for dereference expr
+void DereferenceChecker::add_deref_source(clang::raw_ostream &amp;os, clang::SmallVectorImpl&lt;clang::SourceRange&gt; &amp;ranges,
+                                          const clang::Expr *expr, const clang::ento::ProgramState *state,
+                                          const clang::LocationContext *lctx, bool loaded_from)
+<span style = "background-color:#dfd">{</span>
+    //wipe out parentheses and l value casts
+<span style = "background-color:#dfd">    expr = expr-&gt;IgnoreParenLValueCasts();
+    switch (expr-&gt;getStmtClass())</span>
+    {
+        //when the class of error statement is a declation reference
+        //expression, add the source infomation of the error variable
+    case clang::Stmt::DeclRefExprClass: {
+<span style = "background-color:#dfd">        const clang::DeclRefExpr *decl_ref_expr = </span>
+            clang::cast&lt;clang::DeclRefExpr&gt;(expr);
+<span style = "background-color:#dfd">        if (const clang::VarDecl *var_decl = 
+            clang::dyn_cast&lt;clang::VarDecl&gt;(decl_ref_expr-&gt;getDecl()))</span>
+        {
+<span style = "background-color:#dfd">            os &lt;&lt; " (" &lt;&lt; (loaded_from ? "loaded from" : "from") </span>
+                &lt;&lt; " variable '" &lt;&lt; var_decl-&gt;getName() &lt;&lt; "')";
+<span style = "background-color:#dfd">            ranges.push_back(decl_ref_expr-&gt;getSourceRange());</span>
+        }
+<span style = "background-color:#dfd">        break;</span>
+    }
+        // when the class of error statement is a member expression, add 
+        // the source infomation of the error field
+    case clang::Stmt::MemberExprClass: {
+<span style = "background-color:#dfd">        const clang::MemberExpr *member_expr = clang::cast&lt;clang::MemberExpr&gt;(expr);
+        os &lt;&lt; " (" &lt;&lt; (loaded_from ? "loaded from" : "via") </span>
+            &lt;&lt; " field '" &lt;&lt; member_expr-&gt;getMemberNameInfo() &lt;&lt; "')";
+<span style = "background-color:#dfd">        clang::SourceLocation l = member_expr-&gt;getMemberLoc();
+        ranges.push_back(clang::SourceRange(l, l));</span>
+        break;
+    }
+    default:
+        break;
+    }
+<span style = "background-color:#dfd">}</span>
+
+//return true when expr is a decl ref expr to a reference var
+bool DereferenceChecker::is_decl_ref_expr_to_reference(const clang::Expr *expr)
+<span style = "background-color:#dfd">{
+    if (const auto *decl_ref_expr = clang::dyn_cast&lt;clang::DeclRefExpr&gt;(expr))</span>
+    {
+        //get the declaration of the expr
+<span style = "background-color:#dfd">        const clang::ValueDecl *decl = decl_ref_expr-&gt;getDecl();</span>
+        //get the type of the declaration
+<span style = "background-color:#dfd">        const clang::QualType type = decl-&gt;getType();</span>
+        //if the type if reference type, return true
+<span style = "background-color:#dfd">        return type-&gt;isReferenceType();</span>
+<span style = "background-color:#fdd">    }</span>
+    else
+    {
+<span style = "background-color:#fdd">        return false;</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+// report direct null dereferenced
+void DereferenceChecker::report_direct_dereference(clang::ento::ProgramStateRef state, const clang::Stmt *stmt,
+                                                   clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{</span>
+    // init direct
+<span style = "background-color:#dfd">    if (!direct)
+        direct.reset(new clang::ento::BugType(this, "Null-Pointer-Dereferenced", clang::ento::categories::MemoryError));</span>
+    // generate an error node
+<span style = "background-color:#dfd">    clang::ento::ExplodedNode *node = ctx.generateErrorNode(state);
+    if (!node)</span>
+<span style = "background-color:#fdd">        return;</span>
+    //add some infomation for report
+<span style = "background-color:#dfd">    clang::SmallString&lt;100&gt; buf;
+    llvm::raw_svector_ostream os(buf);
+    clang::SmallVector&lt;clang::SourceRange, 2&gt; ranges;
+    switch (stmt-&gt;getStmtClass())</span>
+    {
+        // when the class of the error statement is array subscript expression
+        // add the array access information for error description
+    case clang::Stmt::ArraySubscriptExprClass: {
+<span style = "background-color:#dfd">        os &lt;&lt; "Array access";
+        const clang::ArraySubscriptExpr *array_sub_expr = clang::cast&lt;clang::ArraySubscriptExpr&gt;(stmt);
+        add_deref_source(os, ranges, array_sub_expr-&gt;getBase()-&gt;IgnoreParenCasts(), state.get(),</span>
+                         node-&gt;getLocationContext());
+<span style = "background-color:#dfd">        os &lt;&lt; " results in a null pointer dereference";
+        break;</span>
+    }
+        // when the class of the error statement is unary operator expression
+        // add information for error description
+    case clang::Stmt::UnaryOperatorClass: {
+<span style = "background-color:#dfd">        os &lt;&lt; "Dereference of null pointer";
+        const clang::UnaryOperator *unary_operator = clang::cast&lt;clang::UnaryOperator&gt;(stmt);
+        add_deref_source(os, ranges, unary_operator-&gt;getSubExpr()-&gt;IgnoreParens(), state.get(),</span>
+                         node-&gt;getLocationContext(), true);
+<span style = "background-color:#dfd">        break;</span>
+    }
+        // when the class of the error statement is member expression
+        // add the field access information for error description
+    case clang::Stmt::MemberExprClass: {
+<span style = "background-color:#dfd">        const clang::MemberExpr *member_expr = clang::cast&lt;clang::MemberExpr&gt;(stmt);
+        if (member_expr-&gt;isArrow() || is_decl_ref_expr_to_reference(member_expr-&gt;getBase()))</span>
+        {
+<span style = "background-color:#dfd">            os &lt;&lt; "Access to field '" &lt;&lt; member_expr-&gt;getMemberNameInfo()</span>
+               &lt;&lt; "' results in a dereference of a null pointer";
+<span style = "background-color:#dfd">            add_deref_source(os, ranges, member_expr-&gt;getBase()-&gt;IgnoreParenCasts(), state.get(),</span>
+                             node-&gt;getLocationContext(), true);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    // generate report
+<span style = "background-color:#dfd">    auto report = std::make_unique&lt;clang::ento::PathSensitiveBugReport&gt;(</span>
+        *direct, buf.empty() ? "Dereference of null pointer" : clang::StringRef(buf), node);
+<span style = "background-color:#dfd">    clang::ento::bugreporter::trackExpressionValue(node, clang::ento::bugreporter::getDerefExpr(stmt), *report);</span>
+    //add ranges for error report
+    for (clang::SmallVectorImpl&lt;clang::SourceRange&gt;::iterator 
+<span style = "background-color:#dfd">        i = ranges.begin(), e = ranges.end(); i != e; i++)</span>
+    {
+<span style = "background-color:#dfd">        report-&gt;addRange(*i);
+    }
+    ctx.emitReport(std::move(report));
+}</span>
+// trigger when a memory location's value is access(load or store)
+void DereferenceChecker::checkLocation(clang::ento::SVal location, bool is_load, const clang::Stmt *stmt,
+                                       clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{</span>
+    // if the pointer is undefined
+<span style = "background-color:#dfd">    if (location.isUndef())
+        return;
+    clang::ento::DefinedOrUnknownSVal loc = location.castAs&lt;clang::ento::DefinedOrUnknownSVal&gt;();
+    if (!loc.getAs&lt;clang::ento::Loc&gt;())</span>
+<span style = "background-color:#fdd">        return;</span>
+    // get program state
+<span style = "background-color:#dfd">    clang::ento::ProgramStateRef state = ctx.getState();
+    clang::ento::ProgramStateRef not_null_state, null_state;</span>
+    // judge the value of location can be null or nonnull or both
+<span style = "background-color:#dfd">    std::tie(not_null_state, null_state) = state-&gt;assume(loc);
+    if (null_state)</span>
+    {
+        // explicit NULL case
+<span style = "background-color:#dfd">        if (!not_null_state)</span>
+        {
+<span style = "background-color:#dfd">            const clang::Expr *expr = get_dereference_expr(stmt);
+            report_direct_dereference(null_state, expr, ctx);
+            return;</span>
+        }
+        // the value of v is unknown(either null or nonnull),there maybe
+        // an implicit null dereference. if report it, it results in a high
+        // false alarm rate and blocks detection of other errors
+
+    }
+    // reach here means the pointer is not null
+<span style = "background-color:#dfd">    ctx.addTransition(not_null_state);
+}</span>
+
+// when binding to a reference, check if the value is known to be null
+void DereferenceChecker::checkBind(clang::ento::SVal l, clang::ento::SVal v, const clang::Stmt *stmt,
+                                   clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{</span>
+    // if the value is undefined
+<span style = "background-color:#dfd">    if (v.isUndef())
+        return;
+    const clang::ento::MemRegion *region = l.getAsRegion();
+    const clang::ento::TypedValueRegion *typed_value_region =</span>
+        clang::dyn_cast_or_null&lt;clang::ento::TypedValueRegion&gt;(region);
+<span style = "background-color:#dfd">    if (!typed_value_region)</span>
+<span style = "background-color:#fdd">        return;</span>
+    // check if l is a reference type
+<span style = "background-color:#dfd">    if (!typed_value_region-&gt;getValueType()-&gt;isReferenceType())
+        return;</span>
+    // get program state
+<span style = "background-color:#dfd">    clang::ento::ProgramStateRef state = ctx.getState();
+    clang::ento::ProgramStateRef not_null_state, null_state;</span>
+    // judge the value of location can be null or nonnull or both
+<span style = "background-color:#dfd">    std::tie(not_null_state, null_state) = state-&gt;assume(v.castAs&lt;clang::ento::DefinedOrUnknownSVal&gt;());
+    if (null_state)</span>
+    {
+        // explicit NULL case
+<span style = "background-color:#dfd">        if (!not_null_state)</span>
+        {
+<span style = "background-color:#dfd">            const clang::Expr *expr = get_dereference_expr(stmt, true);
+            report_direct_dereference(null_state, expr, ctx);
+            return;</span>
+        }
+        // the value of v is unknown(either null or nonnull),there maybe
+        // an implicit null dereference. if report it, it results in a high
+        // false alarm rate and blocks detection of other errors
+    }
+    //report the error when the l is used.like this:
+    //int &amp;b=*a;
+    //if(a!=NULL) return;
+    //int c=b; error!
+    //to achieve this effect, do not transite the program state.
+<span style = "background-color:#dfd">    ctx.addTransition(state, this);
+}</span>
+
+<span style = "background-color:#dfd">CSA_GENERATE_REGISTER_FUNCTION_DEF(DereferenceChecker)</span></pre>
+	</body>
+</html>

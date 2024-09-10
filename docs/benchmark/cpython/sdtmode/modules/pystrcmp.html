@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Python/pystrcmp.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Cross platform case insensitive string compare functions
+ */
+
+#include "Python.h"
+
+int
+PyOS_mystrnicmp(const char *s1, const char *s2, Py_ssize_t size)
+{
+    if (size == 0)
+        return 0;
+    while ((--size &gt; 0) &amp;&amp;
+           (tolower((unsigned)*s1) == tolower((unsigned)*s2))) {
+        if (!*s1++ || !*s2++)
+            break;
+    }
+    return tolower((unsigned)*s1) - tolower((unsigned)*s2);
+}
+
+int
+PyOS_mystricmp(const char *s1, const char *s2)
+{
+    while (*s1 &amp;&amp; (tolower((unsigned)*s1++) == tolower((unsigned)*s2++))) {
+        ;
+    }
+    return (tolower((unsigned)*s1) - tolower((unsigned)*s2));
+}
+      </pre>
+    </body>
+</html>

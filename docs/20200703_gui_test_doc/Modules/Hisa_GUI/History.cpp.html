@@ -1,0 +1,110 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>History.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#include &lt;iostream&gt;
+using namespace std;
+#include "History.h"
+#include&lt;fstream&gt;
+
+/*****************************************************************************
+This is source coode of History module.
+History is called by HistoryDialog to provide history records and CURD of history.txt fils.
+This file contains the initialization of all the members of History
+and the implementation of all of its functions
+******************************************************************************/
+
+//load history from file
+void  History::load_history() 
+<span style = "background-color:#dfd">{
+	ifstream fin;
+	fin.open(file_name,ios::in);
+	if (!fin) </span>
+	{
+		// if file does not exist,create a nenw file
+<span style = "background-color:#dfd">		fin.close();
+		ofstream fout(file_name);
+		fout.close();
+		fin.open(file_name,ios::in);
+	}
+	while (!fin.eof())</span>
+	{
+<span style = "background-color:#dfd">		item temp;
+		fin &gt;&gt; temp.in_addr &gt;&gt; temp.out_addr &gt;&gt;temp.time&gt;&gt; temp.is_godmode;
+		history_list.push_back(temp);
+	}
+	history_list.pop_back();
+	fin.close();
+    is_loaded=true;
+}</span>
+
+void History::clear_history()
+<span style = "background-color:#dfd">{
+    if(!is_loaded)return ;
+	history_list.clear();
+	ofstream fout(file_name);
+	fout.close();
+}</span>
+
+void History::add_history(item temp)
+<span style = "background-color:#dfd">{
+	ofstream fout(file_name,ios::app);
+	fout &lt;&lt; temp.in_addr&lt;&lt;" " &lt;&lt; temp.out_addr &lt;&lt;" "</span>
+		&lt;&lt;temp.time&lt;&lt;" "&lt;&lt;temp.is_godmode&lt;&lt;endl;
+<span style = "background-color:#dfd">	fout.close();
+}</span>
+
+//just delete in the history list,not update file content
+//the write_history function is always called after a series of this operation
+bool History::delete_his_by_index(unsigned int i)
+<span style = "background-color:#dfd">{
+    if(!is_loaded)return false;
+    if (i &gt;=history_list.size())return false;
+	history_list.erase(history_list.begin() + i);
+    write_history();
+	return true;
+}</span>
+
+//I advise you to use this function 
+//only after a series of call of delete_by_index
+void History::write_history()
+<span style = "background-color:#dfd">{
+     if(!is_loaded)return ;
+	ofstream fout(file_name);
+    for (unsigned int i = 0;i &lt; history_list.size();i++) </span>
+	{
+<span style = "background-color:#dfd">		fout &lt;&lt; history_list[i].in_addr&lt;&lt;" " &lt;&lt; history_list[i].out_addr&lt;&lt;" " </span>
+			&lt;&lt;history_list[i].time&lt;&lt;" "&lt;&lt; history_list[i].is_godmode &lt;&lt; endl;
+<span style = "background-color:#dfd">	}
+	fout.close();
+}</span>
+
+
+int History::size()
+<span style = "background-color:#dfd">{
+     if(!is_loaded)return 0;
+    return this-&gt;history_list.size();
+}</span>
+
+bool History::empty()
+<span style = "background-color:#dfd">{
+    if(!is_loaded)return true;
+    return this-&gt;history_list.empty();
+}</span>
+item History::get(int i)
+<span style = "background-color:#dfd">{
+    item temp;
+    if(!is_loaded)return temp;
+    return this-&gt;history_list[i];
+}</span>
+
+</pre>
+	</body>
+</html>

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/myisam/mi_statrec.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2011, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+	/* Functions to handle fixed-length-records */
+
+#include "myisamdef.h"
+
+
+int _mi_write_static_record(MI_INFO *info, const uchar *record)
+{
+  uchar temp[8];				/* max pointer length */
+  if (info-&gt;s-&gt;state.dellink != HA_OFFSET_ERROR &amp;&amp;
+      !info-&gt;append_insert_at_end)
+  {
+    my_off_t filepos=info-&gt;s-&gt;state.dellink;
+    info-&gt;rec_cache.seek_not_done=1;		/* We have done a seek */
+    if (info-&gt;s-&gt;file_read(info, &amp;temp[0],info-&gt;s-&gt;base.rec_reflength,
+		info-&gt;s-&gt;state.dellink+1,
+		 MYF(MY_NABP)))
+      goto err;
+    info-&gt;s-&gt;state.dellink= _mi_rec_pos(info-&gt;s,temp);
+    info-&gt;state-&gt;del--;
+    info-&gt;state-&gt;empty-=info-&gt;s-&gt;base.pack_reclength;
+    if (info-&gt;s-&gt;file_write(info, record, info-&gt;s-&gt;base.reclength,
+		  filepos,
+		  MYF(MY_NABP)))
+      goto err;
+  }
+  else
+  {
+    if (info-&gt;state-&gt;data_file_length &gt; info-&gt;s-&gt;base.max_data_file_length-
+	info-&gt;s-&gt;base.pack_reclength)
+    {
+      my_errno=HA_ERR_RECORD_FILE_FULL;
+      return(2);
+    }
+    if (info-&gt;opt_flag &amp; WRITE_CACHE_USED)
+    {				/* Cash in use */
+      if (my_b_write(&amp;info-&gt;rec_cache, record,
+		     info-&gt;s-&gt;base.reclength))
+	goto err;
+      if (info-&gt;s-&gt;base.pack_reclength != info-&gt;s-&gt;base.reclength)
+      {
+	uint length=info-&gt;s-&gt;base.pack_reclength - info-&gt;s-&gt;base.reclength;
+	memset(temp, 0, length);
+	if (my_b_write(&amp;info-&gt;rec_cache, temp,length))
+	  goto err;
+      }
+    }
+    else
+    {
+      info-&gt;rec_cache.seek_not_done=1;		/* We have done a seek */
+      if (info-&gt;s-&gt;file_write(info, record, info-&gt;s-&gt;base.reclength,
+		    info-&gt;state-&gt;data_file_length,
+		    info-&gt;s-&gt;write_flag))
+        goto err;
+      if (info-&gt;s-&gt;base.pack_reclength != info-&gt;s-&gt;base.reclength)
+      {
+	uint length=info-&gt;s-&gt;base.pack_reclength - info-&gt;s-&gt;base.reclength;
+	memset(temp, 0, length);
+	if (info-&gt;s-&gt;file_write(info, temp,length,
+		      info-&gt;state-&gt;data_file_length+
+		      info-&gt;s-&gt;base.reclength,
+		      info-&gt;s-&gt;write_flag))
+    goto err;
+      }
+    }
+    info-&gt;state-&gt;data_file_length+=info-&gt;s-&gt;base.pack_reclength;
+    info-&gt;s-&gt;state.split++;
+  }
+  return 0;
+ err:
+  return 1;
+}
+
+int _mi_update_static_record(MI_INFO *info, my_off_t pos, const uchar *record)
+{
+  info-&gt;rec_cache.seek_not_done=1;		/* We have done a seek */
+  return (info-&gt;s-&gt;file_write(info,
+                              record, info-&gt;s-&gt;base.reclength,
+                              pos,
+                              MYF(MY_NABP)) != 0);
+}
+
+
+int _mi_delete_static_record(MI_INFO *info)
+{
+  uchar temp[9];				/* 1+sizeof(uint32) */
+
+  info-&gt;state-&gt;del++;
+  info-&gt;state-&gt;empty+=info-&gt;s-&gt;base.pack_reclength;
+  temp[0]= '\0';			/* Mark that record is deleted */
+  _mi_dpointer(info,temp+1,info-&gt;s-&gt;state.dellink);
+  info-&gt;s-&gt;state.dellink = info-&gt;lastpos;
+  info-&gt;rec_cache.seek_not_done=1;
+  return (info-&gt;s-&gt;file_write(info,(uchar*) temp, 1+info-&gt;s-&gt;rec_reflength,
+		    info-&gt;lastpos, MYF(MY_NABP)) != 0);
+}
+
+
+int _mi_cmp_static_record(register MI_INFO *info, register const uchar *old)
+{
+  DBUG_ENTER("_mi_cmp_static_record");
+
+  if (info-&gt;opt_flag &amp; WRITE_CACHE_USED)
+  {
+    if (flush_io_cache(&amp;info-&gt;rec_cache))
+    {
+      DBUG_RETURN(-1);
+    }
+    info-&gt;rec_cache.seek_not_done=1;		/* We have done a seek */
+  }
+
+  if ((info-&gt;opt_flag &amp; READ_CHECK_USED))
+  {						/* If check isn't disabled  */
+    info-&gt;rec_cache.seek_not_done=1;		/* We have done a seek */
+    if (info-&gt;s-&gt;file_read(info, info-&gt;rec_buff, info-&gt;s-&gt;base.reclength,
+		 info-&gt;lastpos,
+		 MYF(MY_NABP)))
+      DBUG_RETURN(-1);
+    if (memcmp(info-&gt;rec_buff, old,
+	       (uint) info-&gt;s-&gt;base.reclength))
+    {
+      DBUG_DUMP("read",old,info-&gt;s-&gt;base.reclength);
+      DBUG_DUMP("disk",info-&gt;rec_buff,info-&gt;s-&gt;base.reclength);
+      my_errno=HA_ERR_RECORD_CHANGED;		/* Record have changed */
+      DBUG_RETURN(1);
+    }
+  }
+  DBUG_RETURN(0);
+}
+
+
+int _mi_cmp_static_unique(MI_INFO *info, MI_UNIQUEDEF *def,
+			  const uchar *record, my_off_t pos)
+{
+  DBUG_ENTER("_mi_cmp_static_unique");
+
+  info-&gt;rec_cache.seek_not_done=1;		/* We have done a seek */
+  if (info-&gt;s-&gt;file_read(info, info-&gt;rec_buff, info-&gt;s-&gt;base.reclength,
+	       pos, MYF(MY_NABP)))
+    DBUG_RETURN(-1);
+  DBUG_RETURN(mi_unique_comp(def, record, info-&gt;rec_buff,
+			     def-&gt;null_are_equal));
+}
+
+
+	/* Read a fixed-length-record */
+	/* Returns 0 if Ok. */
+	/*	   1 if record is deleted */
+	/*	  MY_FILE_ERROR on read-error or locking-error */
+
+int _mi_read_static_record(register MI_INFO *info, register my_off_t pos,
+			   register uchar *record)
+{
+  int error;
+
+  if (pos != HA_OFFSET_ERROR)
+  {
+    if (info-&gt;opt_flag &amp; WRITE_CACHE_USED &amp;&amp;
+	info-&gt;rec_cache.pos_in_file &lt;= pos &amp;&amp;
+	flush_io_cache(&amp;info-&gt;rec_cache))
+      return(-1);
+    info-&gt;rec_cache.seek_not_done=1;		/* We have done a seek */
+
+    error=info-&gt;s-&gt;file_read(info, record, info-&gt;s-&gt;base.reclength,
+		   pos,MYF(MY_NABP)) != 0;
+    fast_mi_writeinfo(info);
+    if (! error)
+    {
+      if (!*record)
+      {
+	my_errno=HA_ERR_RECORD_DELETED;
+	return(1);				/* Record is deleted */
+      }
+      info-&gt;update|= HA_STATE_AKTIV;		/* Record is read */
+      return(0);
+    }
+    return(-1);					/* Error on read */
+  }
+  fast_mi_writeinfo(info);			/* No such record */
+  return(-1);
+}
+
+
+
+int _mi_read_rnd_static_record(MI_INFO *info, uchar *buf,
+			       register my_off_t filepos,
+			       my_bool skip_deleted_blocks)
+{
+  int locked,error,cache_read;
+  uint cache_length;
+  MYISAM_SHARE *share=info-&gt;s;
+  DBUG_ENTER("_mi_read_rnd_static_record");
+
+  cache_read=0;
+  cache_length=0;
+  if (info-&gt;opt_flag &amp; WRITE_CACHE_USED &amp;&amp;
+      (info-&gt;rec_cache.pos_in_file &lt;= filepos || skip_deleted_blocks) &amp;&amp;
+      flush_io_cache(&amp;info-&gt;rec_cache))
+    DBUG_RETURN(my_errno);
+  if (info-&gt;opt_flag &amp; READ_CACHE_USED)
+  {						/* Cache in use */
+    if (filepos == my_b_tell(&amp;info-&gt;rec_cache) &amp;&amp;
+	(skip_deleted_blocks || !filepos))
+    {
+      cache_read=1;				/* Read record using cache */
+      cache_length=(uint) (info-&gt;rec_cache.read_end - info-&gt;rec_cache.read_pos);
+    }
+    else
+      info-&gt;rec_cache.seek_not_done=1;		/* Filepos is changed */
+  }
+  locked=0;
+  if (info-&gt;lock_type == F_UNLCK)
+  {
+    if (filepos &gt;= info-&gt;state-&gt;data_file_length)
+    {						/* Test if new records */
+      if (_mi_readinfo(info,F_RDLCK,0))
+	DBUG_RETURN(my_errno);
+      locked=1;
+    }
+    else
+    {						/* We don't nead new info */
+#ifndef UNSAFE_LOCKING
+      if ((! cache_read || share-&gt;base.reclength &gt; cache_length) &amp;&amp;
+	  share-&gt;tot_locks == 0)
+      {						/* record not in cache */
+	if (my_lock(share-&gt;kfile,F_RDLCK,0L,F_TO_EOF,
+		    MYF(MY_SEEK_NOT_DONE) | info-&gt;lock_wait))
+	  DBUG_RETURN(my_errno);
+	locked=1;
+      }
+#else
+      info-&gt;tmp_lock_type=F_RDLCK;
+#endif
+    }
+  }
+  if (filepos &gt;= info-&gt;state-&gt;data_file_length)
+  {
+    DBUG_PRINT("test",("filepos: %ld (%ld)  records: %ld  del: %ld",
+		       (long) filepos/share-&gt;base.reclength, (long) filepos,
+		       (long) info-&gt;state-&gt;records, (long) info-&gt;state-&gt;del));
+    fast_mi_writeinfo(info);
+    DBUG_RETURN(my_errno=HA_ERR_END_OF_FILE);
+  }
+  info-&gt;lastpos= filepos;
+  info-&gt;nextpos= filepos+share-&gt;base.pack_reclength;
+
+  if (! cache_read)			/* No cacheing */
+  {
+    if ((error=_mi_read_static_record(info,filepos,buf)))
+    {
+      if (error &gt; 0)
+	error=my_errno=HA_ERR_RECORD_DELETED;
+      else
+	error=my_errno;
+    }
+    DBUG_RETURN(error);
+  }
+
+  /*
+    Read record with caching. If my_b_read() returns TRUE, less than the
+    requested bytes have been read. In this case rec_cache.error is
+    either -1 for a read error, or contains the number of bytes copied
+    into the buffer.
+  */
+  error=my_b_read(&amp;info-&gt;rec_cache,(uchar*) buf,share-&gt;base.reclength);
+  if (info-&gt;s-&gt;base.pack_reclength != info-&gt;s-&gt;base.reclength &amp;&amp; !error)
+  {
+    char tmp[8];				/* Skill fill bytes */
+    error=my_b_read(&amp;info-&gt;rec_cache,(uchar*) tmp,
+		    info-&gt;s-&gt;base.pack_reclength - info-&gt;s-&gt;base.reclength);
+  }
+  if (locked)
+    (void) _mi_writeinfo(info,0);		/* Unlock keyfile */
+  if (!error)
+  {
+    if (!buf[0])
+    {						/* Record is removed */
+      DBUG_RETURN(my_errno=HA_ERR_RECORD_DELETED);
+    }
+						/* Found and may be updated */
+    info-&gt;update|= HA_STATE_AKTIV | HA_STATE_KEY_CHANGED;
+    DBUG_RETURN(0);
+  }
+  /* error is TRUE. my_errno should be set if rec_cache.error == -1 */
+  if (info-&gt;rec_cache.error != -1 || my_errno == 0)
+  {
+    /*
+      If we could not get a full record, we either have a broken record,
+      or are at end of file.
+    */
+    if (info-&gt;rec_cache.error == 0)
+      my_errno= HA_ERR_END_OF_FILE;
+    else
+      my_errno= HA_ERR_WRONG_IN_RECORD;
+  }
+  DBUG_RETURN(my_errno);			/* Something wrong (EOF?) */
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,190 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>UninitializedObjectChecker.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "UninitializedObjectChecker.h"
+#include "UninitObjCheckerUtil.h"
+#include &lt;clang/Analysis/PathDiagnostic.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/BugReporter/BugReporter.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/ExplodedGraph.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h&gt;
+
+using namespace clang;
+using namespace clang::ento;
+
+/// We'll mark fields (and pointee of fields) that are confirmed to be
+/// uninitialized as already analyzed.
+<span style = "background-color:#dfd">REGISTER_SET_WITH_PROGRAMSTATE(AnalyzedRegions, const MemRegion *)</span>
+
+//===----------------------------------------------------------------------------
+//                      Class UninitObjChecker Method Def
+//===----------------------------------------------------------------------------
+void UninitObjChecker::checkEndFunction(const ReturnStmt *RS, CheckerContext &amp;Context) const
+<span style = "background-color:#dfd">{</span>
+
+<span style = "background-color:#dfd">    const auto *ctor_decl = dyn_cast_or_null&lt;CXXConstructorDecl&gt;(Context.getLocationContext()-&gt;getDecl());</span>
+
+<span style = "background-color:#dfd">    if (!ctor_decl)</span>
+    {
+<span style = "background-color:#dfd">        return;</span>
+    }
+
+<span style = "background-color:#dfd">    if (!ctor_decl-&gt;isUserProvided())</span>
+    {
+<span style = "background-color:#dfd">        return;</span>
+    }
+
+<span style = "background-color:#dfd">    if (ctor_decl-&gt;getParent()-&gt;isUnion())</span>
+<span style = "background-color:#fdd">        return;</span>
+
+    // Avoids multiple reports
+<span style = "background-color:#dfd">    if (will_obj_analyzed_later(ctor_decl, Context))</span>
+    {
+<span style = "background-color:#dfd">        return;</span>
+    }
+
+<span style = "background-color:#dfd">    const TypedValueRegion *region = get_constructed_region(ctor_decl, Context);</span>
+
+<span style = "background-color:#dfd">    if (!region)</span>
+    {
+<span style = "background-color:#dfd">        return;</span>
+    }
+
+    // core steps of UninitObjChecker
+<span style = "background-color:#dfd">    FindUninitializedFields find(Context.getState(), region);</span>
+
+<span style = "background-color:#dfd">    std::pair&lt;ProgramStateRef, const UninitFieldMap &amp;&gt; uninit_info = find.get_results();</span>
+
+<span style = "background-color:#dfd">    ProgramStateRef updated_state = uninit_info.first;
+    const UninitFieldMap &amp;uninit_fieldmap = uninit_info.second;</span>
+
+<span style = "background-color:#dfd">    if (uninit_fieldmap.empty())</span>
+    {
+<span style = "background-color:#dfd">        Context.addTransition(updated_state);
+        return;</span>
+    }
+
+<span style = "background-color:#dfd">    ExplodedNode *node = Context.generateNonFatalErrorNode(updated_state);
+    if (!node)</span>
+    {
+<span style = "background-color:#fdd">        return;</span>
+    }
+
+<span style = "background-color:#dfd">    PathDiagnosticLocation loc_used_for_uniqueing;
+    const Stmt *call_site = Context.getStackFrame()-&gt;getCallSite();
+    if (call_site)</span>
+    {
+<span style = "background-color:#dfd">        loc_used_for_uniqueing =</span>
+            PathDiagnosticLocation::createBegin(call_site, Context.getSourceManager(), node-&gt;getLocationContext());
+    }
+
+    // For Plist consumers that don't support notes just yet, we'll convert notes
+    // to warnings.
+
+    // TODO: checker options... about ShouldConvertNoteToWarnings
+<span style = "background-color:#dfd">    for (const auto &amp;pair : uninit_fieldmap)</span>
+    {
+<span style = "background-color:#dfd">        auto report = std::make_unique&lt;PathSensitiveBugReport&gt;(</span>
+            *_bt_uninit_field, pair.second, node, loc_used_for_uniqueing, node-&gt;getLocationContext()-&gt;getDecl());
+<span style = "background-color:#dfd">        Context.emitReport(std::move(report));
+    }</span>
+
+<span style = "background-color:#dfd">    llvm::SmallString&lt;100&gt; warning_buf;
+    llvm::raw_svector_ostream warning_os(warning_buf);</span>
+
+<span style = "background-color:#dfd">    warning_os &lt;&lt; "Uninits Num:" &lt;&lt; uninit_fieldmap.size() &lt;&lt; " ; Uninitailized field"</span>
+               &lt;&lt; ((uninit_fieldmap.size() == 1) ? " " : "s ") &lt;&lt; "at the end of the constructor call";
+
+<span style = "background-color:#dfd">    auto report = std::make_unique&lt;PathSensitiveBugReport&gt;(</span>
+        *_bt_uninit_field, warning_os.str(), node, loc_used_for_uniqueing, node-&gt;getLocationContext()-&gt;getDecl());
+
+<span style = "background-color:#dfd">    for (const auto &amp;pair : uninit_fieldmap)</span>
+    {
+<span style = "background-color:#dfd">        report-&gt;addNote(pair.second, PathDiagnosticLocation::create(pair.first-&gt;getDecl(), Context.getSourceManager()));
+    }
+    Context.emitReport(std::move(report));
+}</span>
+
+void UninitObjChecker::checkDeadSymbols(SymbolReaper &amp;SR, CheckerContext &amp;C) const
+<span style = "background-color:#dfd">{
+    ProgramStateRef state = C.getState();
+    for (const MemRegion *r : state-&gt;get&lt;AnalyzedRegions&gt;())</span>
+    {
+<span style = "background-color:#fdd">        if (!SR.isLiveRegion(r))</span>
+        {
+<span style = "background-color:#fdd">            state = state-&gt;remove&lt;AnalyzedRegions&gt;(r);
+        }</span>
+<span style = "background-color:#dfd">    }
+}</span>
+
+//===----------------------------------------------------------------------------
+//                      Utility Functions Def
+//===----------------------------------------------------------------------------
+
+const clang::ento::TypedValueRegion *get_constructed_region(const CXXConstructorDecl *ctor_decl,
+                                                            CheckerContext &amp;context)
+<span style = "background-color:#dfd">{</span>
+
+<span style = "background-color:#dfd">    Loc this_loc = context.getSValBuilder().getCXXThis(ctor_decl, context.getStackFrame());</span>
+
+<span style = "background-color:#dfd">    SVal object_v = context.getState()-&gt;getSVal(this_loc);</span>
+
+<span style = "background-color:#dfd">    auto *r = object_v.getAsRegion()-&gt;getAs&lt;TypedValueRegion&gt;();</span>
+
+<span style = "background-color:#dfd">    if (r &amp;&amp; !r-&gt;getValueType()-&gt;getAsCXXRecordDecl())</span>
+    {
+<span style = "background-color:#fdd">        return nullptr;</span>
+    }
+
+<span style = "background-color:#dfd">    return r;
+}</span>
+
+bool will_obj_analyzed_later(const CXXConstructorDecl *ctor, CheckerContext &amp;context)
+<span style = "background-color:#dfd">{</span>
+
+<span style = "background-color:#dfd">    const TypedValueRegion *cur_region = get_constructed_region(ctor, context);</span>
+
+<span style = "background-color:#dfd">    if (!cur_region)</span>
+    {
+<span style = "background-color:#dfd">        return false;</span>
+    }
+
+<span style = "background-color:#dfd">    const LocationContext *lc = context.getLocationContext();</span>
+
+<span style = "background-color:#dfd">    while ((lc = lc-&gt;getParent()))</span>
+    {
+
+<span style = "background-color:#dfd">        const auto *other_ctor = dyn_cast&lt;CXXConstructorDecl&gt;(lc-&gt;getDecl());</span>
+
+<span style = "background-color:#dfd">        if (!other_ctor)</span>
+        {
+<span style = "background-color:#dfd">            continue;</span>
+        }
+
+<span style = "background-color:#dfd">        const TypedValueRegion *other_region = get_constructed_region(other_ctor, context);</span>
+
+<span style = "background-color:#dfd">        if (!other_region)</span>
+        {
+<span style = "background-color:#dfd">            continue;</span>
+        }
+
+        // If the CurrRegion is a subregion of OtherRegion, it will be analyzed
+        // during the analysis of OtherRegion.
+<span style = "background-color:#dfd">        if (cur_region-&gt;isSubRegionOf(other_region))</span>
+        {
+<span style = "background-color:#dfd">            return true;</span>
+        }
+<span style = "background-color:#fdd">    }</span>
+<span style = "background-color:#dfd">    return false;
+}</span>
+
+<span style = "background-color:#dfd">CSA_GENERATE_REGISTER_FUNCTION_DEF(UninitObjChecker)</span></pre>
+	</body>
+</html>

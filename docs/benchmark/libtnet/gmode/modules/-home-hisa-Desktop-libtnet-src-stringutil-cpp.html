@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/stringutil.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "stringutil.h"
+
+#include &lt;stdint.h&gt;
+#include &lt;algorithm&gt;
+#include &lt;functional&gt;
+
+extern "C"
+{
+#include "polarssl/base64.h"
+#include "polarssl/md5.h"
+#include "polarssl/sha1.h"    
+}
+
+using namespace std;
+
+namespace tnet
+{
+
+    vector&lt;string&gt; StringUtil::split(const string&amp; src, const string&amp; delim, size_t maxParts)
+    {
+        if(maxParts == 0)
+        {
+            maxParts = size_t(-1);    
+        }
+        size_t lastPos = 0;
+        size_t pos = 0;
+        size_t size = src.size();
+
+        vector&lt;string&gt; tokens;
+
+        while(pos &lt; size)
+        {
+            pos = lastPos;
+            while(pos &lt; size &amp;&amp; delim.find_first_of(src[pos]) == string::npos)
+            {
+                ++pos;    
+            }    
+
+            if(pos - lastPos &gt; 0)
+            {
+                if(tokens.size() == maxParts - 1)
+                {
+                    tokens.push_back(src.substr(lastPos));    
+                    break;
+                }
+                else
+                {
+                    tokens.push_back(src.substr(lastPos, pos - lastPos));    
+                }
+            }
+
+            lastPos = pos + 1;
+        }
+
+        return tokens;
+    }
+   
+    uint32_t StringUtil::hash(const string&amp; str)
+    {
+        //use elf hash
+        uint32_t h = 0; 
+        uint32_t x = 0;
+        uint32_t i = 0;
+        uint32_t len = (uint32_t)str.size();
+        for(i = 0; i &lt; len; ++i)
+        {
+            h = (h &lt;&lt; 4) + str[i];
+            if((x = h &amp; 0xF0000000L) != 0)
+            {
+                h ^= (x &gt;&gt; 24);    
+                h &amp;= ~x;
+            }    
+        } 
+
+        return (h &amp; 0x7FFFFFFF);
+    }
+   
+    string StringUtil::lower(const string&amp; src)
+    {
+        string dest(src);
+        
+        transform(dest.begin(), dest.end(), dest.begin(), ::tolower);
+        return dest;    
+    }
+
+    string StringUtil::upper(const string&amp; src)
+    {
+        string dest(src);
+        
+        transform(dest.begin(), dest.end(), dest.begin(), ::toupper);
+        return dest;    
+    }
+
+    string StringUtil::lstrip(const string&amp; src)
+    {
+        string s(src);
+        s.erase(s.begin(), find_if(s.begin(), s.end(), not1(ptr_fun&lt;int, int&gt;(isspace))));
+        return s;
+    } 
+
+    string StringUtil::rstrip(const string&amp; src)
+    {
+        string s(src);
+        s.erase(find_if(s.rbegin(), s.rend(), not1(ptr_fun&lt;int, int&gt;(isspace))).base(), s.end());
+        return s;    
+    }
+    
+    string StringUtil::strip(const string&amp; src)
+    {
+        return lstrip(rstrip(src));    
+    }
+    string StringUtil::hex(const uint8_t* src, size_t srcLen)
+    {
+        size_t destLen = 2 * srcLen;    
+        string dest(destLen, '\0');
+
+        static uint8_t h[] = "0123456789abcdef";
+
+        for(size_t i = 0; i &lt; srcLen; i++)
+        {
+            dest[i] = h[src[i] &gt;&gt; 4];
+            dest[i + 1] = h[src[i + 1] &amp; 0xf];                
+        }
+
+        return dest;
+    }
+   
+    string StringUtil::hex(const string&amp; src)
+    {
+        return hex((const uint8_t*)src.data(), src.size());     
+    }
+    
+    string StringUtil::base64Encode(const string&amp; src)
+    {
+        size_t destLen = src.size() * 4 / 3 + 4;
+        string str(destLen, '\0');
+
+        uint8_t* dest = (uint8_t*)&amp;str[0];
+        
+        if(base64_encode(dest, &amp;destLen, (uint8_t*)src.data(), src.size()) != 0)
+        {
+            return "";    
+        }
+
+        str.resize(destLen);
+
+        return str;
+    }
+    
+    string StringUtil::base64Decode(const string&amp; src)
+    {
+        size_t destLen = src.size() * 3 / 4 + 4;
+        string str(destLen, '\0');
+
+        uint8_t* dest = (uint8_t*)&amp;str[0];
+        
+        if(base64_decode(dest, &amp;destLen, (uint8_t*)src.data(), src.size()) != 0)
+        {
+            return "";    
+        }
+
+        str.resize(destLen);
+
+        return str;
+    }
+   
+    string StringUtil::md5Bin(const string&amp; src)
+    {
+        uint8_t output[16];
+        md5((const uint8_t*)src.data(), src.size(), output);
+        
+        return string((char*)output, 16);
+    }
+    
+    string StringUtil::md5Hex(const string&amp; src)
+    {
+        uint8_t output[16];
+        md5((const uint8_t*)src.data(), src.size(), output);
+        
+        return hex(output, 16);         
+    } 
+
+    string StringUtil::sha1Bin(const string&amp; src)
+    {
+        uint8_t output[20];
+        sha1((const uint8_t*)src.data(), src.size(), output);    
+        return string((char*)output, 20);
+    }
+
+    string StringUtil::sha1Hex(const string&amp; src)
+    {
+        uint8_t output[20];
+        sha1((const uint8_t*)src.data(), src.size(), output);    
+        return hex(output, 20);
+    }
+}
+      </pre>
+    </body>
+</html>

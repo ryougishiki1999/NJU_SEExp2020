@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Python/wordcode_helpers.h</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* This file contains code shared by the compiler and the peephole
+   optimizer.
+ */
+
+#ifdef WORDS_BIGENDIAN
+#  define PACKOPARG(opcode, oparg) ((_Py_CODEUNIT)(((opcode) &lt;&lt; 8) | (oparg)))
+#else
+#  define PACKOPARG(opcode, oparg) ((_Py_CODEUNIT)(((oparg) &lt;&lt; 8) | (opcode)))
+#endif
+
+/* Minimum number of code units necessary to encode instruction with
+   EXTENDED_ARGs */
+static int
+instrsize(unsigned int oparg)
+{
+    return oparg &lt;= 0xff ? 1 :
+        oparg &lt;= 0xffff ? 2 :
+        oparg &lt;= 0xffffff ? 3 :
+        4;
+}
+
+/* Spits out op/oparg pair using ilen bytes. codestr should be pointed at the
+   desired location of the first EXTENDED_ARG */
+static void
+write_op_arg(_Py_CODEUNIT *codestr, unsigned char opcode,
+    unsigned int oparg, int ilen)
+{
+    switch (ilen) {
+        case 4:
+            *codestr++ = PACKOPARG(EXTENDED_ARG, (oparg &gt;&gt; 24) &amp; 0xff);
+            /* fall through */
+        case 3:
+<span style = "background-color:#fdd">            *codestr++ = PACKOPARG(EXTENDED_ARG, (oparg &gt;&gt; 16) &amp; 0xff);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+            /* fall through */
+        case 2:
+<span style = "background-color:#fdd">            *codestr++ = PACKOPARG(EXTENDED_ARG, (oparg &gt;&gt; 8) &amp; 0xff);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+            /* fall through */
+        case 1:
+<span style = "background-color:#fdd">            *codestr++ = PACKOPARG(opcode, oparg &amp; 0xff);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+            break;
+        default:
+            Py_UNREACHABLE();
+    }
+}
+      </pre>
+    </body>
+</html>

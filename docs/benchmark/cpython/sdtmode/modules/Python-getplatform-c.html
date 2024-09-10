@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Python/getplatform.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+
+#include "Python.h"
+
+#ifndef PLATFORM
+#define PLATFORM "unknown"
+#endif
+
+const char *
+Py_GetPlatform(void)
+{
+    return PLATFORM;
+}
+      </pre>
+    </body>
+</html>

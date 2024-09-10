@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/http/httpresponse.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "httpresponse.h"
+
+#include &lt;string.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;time.h&gt;
+
+#include "httputil.h"
+
+using namespace std;
+
+namespace tnet
+{
+
+    HttpResponse::HttpResponse()
+        : statusCode(200)
+    {
+    }
+
+    HttpResponse::HttpResponse(int code, const Headers_t&amp; headers, const string&amp; body)
+        : statusCode(code)
+        , body(body)
+        , headers(headers)
+    {
+        
+    }
+
+    HttpResponse::~HttpResponse()
+    {
+        
+    }
+
+    string HttpResponse::dump()
+    {
+        string str;
+        
+        char buf[1024];
+        int n = snprintf(buf, sizeof(buf), "HTTP/1.1 %d %s\r\n", statusCode, HttpUtil::codeReason(statusCode).c_str());    
+
+        str.append(buf, n);
+    
+        n = snprintf(buf, sizeof(buf), "%d", int(body.size()));
+        static const string ContentLength = "Content-Length";
+        headers.insert(make_pair(ContentLength, string(buf, n)));
+
+        auto it = headers.cbegin();
+        while(it != headers.cend())
+        {
+            n = snprintf(buf, sizeof(buf), "%s: %s\r\n", it-&gt;first.c_str(), it-&gt;second.c_str());
+            str.append(buf, n);
+            ++it;    
+        }
+
+        str.append("\r\n");
+        str.append(body);
+
+        return str;
+    }     
+
+    void HttpResponse::setContentType(const std::string&amp; contentType)
+    {
+        static const string ContentTypeKey = "Content-Type";
+        headers.insert(make_pair(ContentTypeKey, contentType));    
+    }
+
+    void HttpResponse::setKeepAlive(bool on)
+    {
+        static const string ConnectionKey = "Connection";
+        if(on)
+        {
+            static const string KeepAliveValue = "Keep-Alive";
+            headers.insert(make_pair(ConnectionKey, KeepAliveValue));    
+        }    
+        else
+        {
+            static const string CloseValue = "close";
+            headers.insert(make_pair(ConnectionKey, CloseValue));    
+        }
+    }
+    
+    void HttpResponse::enableDate()
+    {
+        time_t now = time(NULL);
+        struct tm t; 
+        gmtime_r(&amp;now, &amp;t);
+        char buf[128];
+        int n = strftime(buf, sizeof buf, "%a, %d %b %Y %H:%M:%S %Z", &amp;t);
+        static const string DateKey = "Date";
+        headers.insert(make_pair(DateKey, string(buf, n)));
+    }
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,2907 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Modules/_testbuffer.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* C Extension module to test all aspects of PEP-3118.
+   Written by Stefan Krah. */
+
+
+#define PY_SSIZE_T_CLEAN
+
+#include "Python.h"
+
+
+/* struct module */
+static PyObject *structmodule = NULL;
+static PyObject *Struct = NULL;
+static PyObject *calcsize = NULL;
+
+/* cache simple format string */
+static const char *simple_fmt = "B";
+static PyObject *simple_format = NULL;
+#define SIMPLE_FORMAT(fmt) (fmt == NULL || strcmp(fmt, "B") == 0)
+#define FIX_FORMAT(fmt) (fmt == NULL ? "B" : fmt)
+
+
+/**************************************************************************/
+/*                             NDArray Object                             */
+/**************************************************************************/
+
+static PyTypeObject NDArray_Type;
+#define NDArray_Check(v) (Py_TYPE(v) == &amp;NDArray_Type)
+
+#define CHECK_LIST_OR_TUPLE(v) \
+    if (!PyList_Check(v) &amp;&amp; !PyTuple_Check(v)) { \
+        PyErr_SetString(PyExc_TypeError,         \
+            #v " must be a list or a tuple");    \
+        return NULL;                             \
+    }                                            \
+
+#define PyMem_XFree(v) \
+    do { if (v) PyMem_Free(v); } while (0)
+
+/* Maximum number of dimensions. */
+#define ND_MAX_NDIM (2 * PyBUF_MAX_NDIM)
+
+/* Check for the presence of suboffsets in the first dimension. */
+#define HAVE_PTR(suboffsets) (suboffsets &amp;&amp; suboffsets[0] &gt;= 0)
+/* Adjust ptr if suboffsets are present. */
+#define ADJUST_PTR(ptr, suboffsets) \
+    (HAVE_PTR(suboffsets) ? *((char**)ptr) + suboffsets[0] : ptr)
+
+/* Default: NumPy style (strides), read-only, no var-export, C-style layout */
+#define ND_DEFAULT          0x000
+/* User configurable flags for the ndarray */
+#define ND_VAREXPORT        0x001   /* change layout while buffers are exported */
+/* User configurable flags for each base buffer */
+#define ND_WRITABLE         0x002   /* mark base buffer as writable */
+#define ND_FORTRAN          0x004   /* Fortran contiguous layout */
+#define ND_SCALAR           0x008   /* scalar: ndim = 0 */
+#define ND_PIL              0x010   /* convert to PIL-style array (suboffsets) */
+#define ND_REDIRECT         0x020   /* redirect buffer requests */
+#define ND_GETBUF_FAIL      0x040   /* trigger getbuffer failure */
+#define ND_GETBUF_UNDEFINED 0x080   /* undefined view.obj */
+/* Internal flags for the base buffer */
+#define ND_C                0x100   /* C contiguous layout (default) */
+#define ND_OWN_ARRAYS       0x200   /* consumer owns arrays */
+
+/* ndarray properties */
+#define ND_IS_CONSUMER(nd) \
+    (((NDArrayObject *)nd)-&gt;head == &amp;((NDArrayObject *)nd)-&gt;staticbuf)
+
+/* ndbuf-&gt;flags properties */
+#define ND_C_CONTIGUOUS(flags) (!!(flags&amp;(ND_SCALAR|ND_C)))
+#define ND_FORTRAN_CONTIGUOUS(flags) (!!(flags&amp;(ND_SCALAR|ND_FORTRAN)))
+#define ND_ANY_CONTIGUOUS(flags) (!!(flags&amp;(ND_SCALAR|ND_C|ND_FORTRAN)))
+
+/* getbuffer() requests */
+#define REQ_INDIRECT(flags) ((flags&amp;PyBUF_INDIRECT) == PyBUF_INDIRECT)
+#define REQ_C_CONTIGUOUS(flags) ((flags&amp;PyBUF_C_CONTIGUOUS) == PyBUF_C_CONTIGUOUS)
+#define REQ_F_CONTIGUOUS(flags) ((flags&amp;PyBUF_F_CONTIGUOUS) == PyBUF_F_CONTIGUOUS)
+#define REQ_ANY_CONTIGUOUS(flags) ((flags&amp;PyBUF_ANY_CONTIGUOUS) == PyBUF_ANY_CONTIGUOUS)
+#define REQ_STRIDES(flags) ((flags&amp;PyBUF_STRIDES) == PyBUF_STRIDES)
+#define REQ_SHAPE(flags) ((flags&amp;PyBUF_ND) == PyBUF_ND)
+#define REQ_WRITABLE(flags) (flags&amp;PyBUF_WRITABLE)
+#define REQ_FORMAT(flags) (flags&amp;PyBUF_FORMAT)
+
+
+/* Single node of a list of base buffers. The list is needed to implement
+   changes in memory layout while exported buffers are active. */
+static PyTypeObject NDArray_Type;
+
+struct ndbuf;
+typedef struct ndbuf {
+    struct ndbuf *next;
+    struct ndbuf *prev;
+    Py_ssize_t len;     /* length of data */
+    Py_ssize_t offset;  /* start of the array relative to data */
+    char *data;         /* raw data */
+    int flags;          /* capabilities of the base buffer */
+    Py_ssize_t exports; /* number of exports */
+    Py_buffer base;     /* base buffer */
+} ndbuf_t;
+
+typedef struct {
+    PyObject_HEAD
+    int flags;          /* ndarray flags */
+    ndbuf_t staticbuf;  /* static buffer for re-exporting mode */
+    ndbuf_t *head;      /* currently active base buffer */
+} NDArrayObject;
+
+
+static ndbuf_t *
+ndbuf_new(Py_ssize_t nitems, Py_ssize_t itemsize, Py_ssize_t offset, int flags)
+{
+    ndbuf_t *ndbuf;
+    Py_buffer *base;
+    Py_ssize_t len;
+
+    len = nitems * itemsize;
+    if (offset % itemsize) {
+        PyErr_SetString(PyExc_ValueError,
+            "offset must be a multiple of itemsize");
+        return NULL;
+    }
+    if (offset &lt; 0 || offset+itemsize &gt; len) {
+        PyErr_SetString(PyExc_ValueError, "offset out of bounds");
+        return NULL;
+    }
+
+    ndbuf = PyMem_Malloc(sizeof *ndbuf);
+    if (ndbuf == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    ndbuf-&gt;next = NULL;
+    ndbuf-&gt;prev = NULL;
+    ndbuf-&gt;len = len;
+    ndbuf-&gt;offset= offset;
+
+    ndbuf-&gt;data = PyMem_Malloc(len);
+    if (ndbuf-&gt;data == NULL) {
+        PyErr_NoMemory();
+        PyMem_Free(ndbuf);
+        return NULL;
+    }
+
+    ndbuf-&gt;flags = flags;
+    ndbuf-&gt;exports = 0;
+
+    base = &amp;ndbuf-&gt;base;
+    base-&gt;obj = NULL;
+    base-&gt;buf = ndbuf-&gt;data;
+    base-&gt;len = len;
+    base-&gt;itemsize = 1;
+    base-&gt;readonly = 0;
+    base-&gt;format = NULL;
+    base-&gt;ndim = 1;
+    base-&gt;shape = NULL;
+    base-&gt;strides = NULL;
+    base-&gt;suboffsets = NULL;
+    base-&gt;internal = ndbuf;
+
+    return ndbuf;
+}
+
+static void
+ndbuf_free(ndbuf_t *ndbuf)
+{
+    Py_buffer *base = &amp;ndbuf-&gt;base;
+
+    PyMem_XFree(ndbuf-&gt;data);
+    PyMem_XFree(base-&gt;format);
+    PyMem_XFree(base-&gt;shape);
+    PyMem_XFree(base-&gt;strides);
+    PyMem_XFree(base-&gt;suboffsets);
+
+    PyMem_Free(ndbuf);
+}
+
+static void
+ndbuf_push(NDArrayObject *nd, ndbuf_t *elt)
+{
+    elt-&gt;next = nd-&gt;head;
+    if (nd-&gt;head) nd-&gt;head-&gt;prev = elt;
+    nd-&gt;head = elt;
+    elt-&gt;prev = NULL;
+}
+
+static void
+ndbuf_delete(NDArrayObject *nd, ndbuf_t *elt)
+{
+    if (elt-&gt;prev)
+        elt-&gt;prev-&gt;next = elt-&gt;next;
+    else
+        nd-&gt;head = elt-&gt;next;
+
+    if (elt-&gt;next)
+        elt-&gt;next-&gt;prev = elt-&gt;prev;
+
+    ndbuf_free(elt);
+}
+
+static void
+ndbuf_pop(NDArrayObject *nd)
+{
+    ndbuf_delete(nd, nd-&gt;head);
+}
+
+
+static PyObject *
+ndarray_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    NDArrayObject *nd;
+
+    nd = PyObject_New(NDArrayObject, &amp;NDArray_Type);
+    if (nd == NULL)
+        return NULL;
+
+    nd-&gt;flags = 0;
+    nd-&gt;head = NULL;
+    return (PyObject *)nd;
+}
+
+static void
+ndarray_dealloc(NDArrayObject *self)
+{
+    if (self-&gt;head) {
+        if (ND_IS_CONSUMER(self)) {
+            Py_buffer *base = &amp;self-&gt;head-&gt;base;
+            if (self-&gt;head-&gt;flags &amp; ND_OWN_ARRAYS) {
+                PyMem_XFree(base-&gt;shape);
+                PyMem_XFree(base-&gt;strides);
+                PyMem_XFree(base-&gt;suboffsets);
+            }
+            PyBuffer_Release(base);
+        }
+        else {
+            while (self-&gt;head)
+                ndbuf_pop(self);
+        }
+    }
+    PyObject_Del(self);
+}
+
+static int
+ndarray_init_staticbuf(PyObject *exporter, NDArrayObject *nd, int flags)
+{
+    Py_buffer *base = &amp;nd-&gt;staticbuf.base;
+
+    if (PyObject_GetBuffer(exporter, base, flags) &lt; 0)
+        return -1;
+
+    nd-&gt;head = &amp;nd-&gt;staticbuf;
+
+    nd-&gt;head-&gt;next = NULL;
+    nd-&gt;head-&gt;prev = NULL;
+    nd-&gt;head-&gt;len = -1;
+    nd-&gt;head-&gt;offset = -1;
+    nd-&gt;head-&gt;data = NULL;
+
+    nd-&gt;head-&gt;flags = base-&gt;readonly ? 0 : ND_WRITABLE;
+    nd-&gt;head-&gt;exports = 0;
+
+    return 0;
+}
+
+static void
+init_flags(ndbuf_t *ndbuf)
+{
+    if (ndbuf-&gt;base.ndim == 0)
+        ndbuf-&gt;flags |= ND_SCALAR;
+    if (ndbuf-&gt;base.suboffsets)
+        ndbuf-&gt;flags |= ND_PIL;
+    if (PyBuffer_IsContiguous(&amp;ndbuf-&gt;base, 'C'))
+        ndbuf-&gt;flags |= ND_C;
+    if (PyBuffer_IsContiguous(&amp;ndbuf-&gt;base, 'F'))
+        ndbuf-&gt;flags |= ND_FORTRAN;
+}
+
+
+/****************************************************************************/
+/*                          Buffer/List conversions                         */
+/****************************************************************************/
+
+static Py_ssize_t *strides_from_shape(const ndbuf_t *, int flags);
+
+/* Get number of members in a struct: see issue #12740 */
+typedef struct {
+    PyObject_HEAD
+    Py_ssize_t s_size;
+    Py_ssize_t s_len;
+} PyPartialStructObject;
+
+static Py_ssize_t
+get_nmemb(PyObject *s)
+{
+    return ((PyPartialStructObject *)s)-&gt;s_len;
+}
+
+/* Pack all items into the buffer of 'obj'. The 'format' parameter must be
+   in struct module syntax. For standard C types, a single item is an integer.
+   For compound types, a single item is a tuple of integers. */
+static int
+pack_from_list(PyObject *obj, PyObject *items, PyObject *format,
+               Py_ssize_t itemsize)
+{
+    PyObject *structobj, *pack_into;
+    PyObject *args, *offset;
+    PyObject *item, *tmp;
+    Py_ssize_t nitems; /* number of items */
+    Py_ssize_t nmemb;  /* number of members in a single item */
+    Py_ssize_t i, j;
+    int ret = 0;
+
+    assert(PyObject_CheckBuffer(obj));
+    assert(PyList_Check(items) || PyTuple_Check(items));
+
+    structobj = PyObject_CallFunctionObjArgs(Struct, format, NULL);
+    if (structobj == NULL)
+        return -1;
+
+    nitems = PySequence_Fast_GET_SIZE(items);
+    nmemb = get_nmemb(structobj);
+    assert(nmemb &gt;= 1);
+
+    pack_into = PyObject_GetAttrString(structobj, "pack_into");
+    if (pack_into == NULL) {
+        Py_DECREF(structobj);
+        return -1;
+    }
+
+    /* nmemb &gt;= 1 */
+    args = PyTuple_New(2 + nmemb);
+    if (args == NULL) {
+        Py_DECREF(pack_into);
+        Py_DECREF(structobj);
+        return -1;
+    }
+
+    offset = NULL;
+    for (i = 0; i &lt; nitems; i++) {
+        /* Loop invariant: args[j] are borrowed references or NULL. */
+        PyTuple_SET_ITEM(args, 0, obj);
+        for (j = 1; j &lt; 2+nmemb; j++)
+<span style = "background-color:#fdd">            PyTuple_SET_ITEM(args, j, NULL);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+
+        Py_XDECREF(offset);
+        offset = PyLong_FromSsize_t(i*itemsize);
+        if (offset == NULL) {
+            ret = -1;
+            break;
+        }
+<span style = "background-color:#fdd">        PyTuple_SET_ITEM(args, 1, offset);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+
+        item = PySequence_Fast_GET_ITEM(items, i);
+        if ((PyBytes_Check(item) || PyLong_Check(item) ||
+             PyFloat_Check(item)) &amp;&amp; nmemb == 1) {
+            PyTuple_SET_ITEM(args, 2, item);
+        }
+        else if ((PyList_Check(item) || PyTuple_Check(item)) &amp;&amp;
+                 PySequence_Length(item) == nmemb) {
+            for (j = 0; j &lt; nmemb; j++) {
+                tmp = PySequence_Fast_GET_ITEM(item, j);
+                PyTuple_SET_ITEM(args, 2+j, tmp);
+            }
+        }
+        else {
+            PyErr_SetString(PyExc_ValueError,
+                "mismatch between initializer element and format string");
+            ret = -1;
+            break;
+        }
+
+        tmp = PyObject_CallObject(pack_into, args);
+        if (tmp == NULL) {
+            ret = -1;
+            break;
+        }
+        Py_DECREF(tmp);
+    }
+
+    Py_INCREF(obj); /* args[0] */
+    /* args[1]: offset is either NULL or should be dealloc'd */
+    for (i = 2; i &lt; 2+nmemb; i++) {
+<span style = "background-color:#fdd">        tmp = PyTuple_GET_ITEM(args, i);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+        Py_XINCREF(tmp);
+    }
+    Py_DECREF(args);
+
+    Py_DECREF(pack_into);
+    Py_DECREF(structobj);
+    return ret;
+
+}
+
+/* Pack single element */
+static int
+pack_single(char *ptr, PyObject *item, const char *fmt, Py_ssize_t itemsize)
+{
+    PyObject *structobj = NULL, *pack_into = NULL, *args = NULL;
+    PyObject *format = NULL, *mview = NULL, *zero = NULL;
+    Py_ssize_t i, nmemb;
+    int ret = -1;
+    PyObject *x;
+
+    if (fmt == NULL) fmt = "B";
+
+    format = PyUnicode_FromString(fmt);
+    if (format == NULL)
+        goto out;
+
+    structobj = PyObject_CallFunctionObjArgs(Struct, format, NULL);
+    if (structobj == NULL)
+        goto out;
+
+    nmemb = get_nmemb(structobj);
+    assert(nmemb &gt;= 1);
+
+    mview = PyMemoryView_FromMemory(ptr, itemsize, PyBUF_WRITE);
+    if (mview == NULL)
+        goto out;
+
+    zero = PyLong_FromLong(0);
+    if (zero == NULL)
+        goto out;
+
+    pack_into = PyObject_GetAttrString(structobj, "pack_into");
+    if (pack_into == NULL)
+        goto out;
+
+    args = PyTuple_New(2+nmemb);
+    if (args == NULL)
+        goto out;
+
+    PyTuple_SET_ITEM(args, 0, mview);
+<span style = "background-color:#fdd">    PyTuple_SET_ITEM(args, 1, zero);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+
+    if ((PyBytes_Check(item) || PyLong_Check(item) ||
+         PyFloat_Check(item)) &amp;&amp; nmemb == 1) {
+         PyTuple_SET_ITEM(args, 2, item);
+    }
+    else if ((PyList_Check(item) || PyTuple_Check(item)) &amp;&amp;
+             PySequence_Length(item) == nmemb) {
+        for (i = 0; i &lt; nmemb; i++) {
+            x = PySequence_Fast_GET_ITEM(item, i);
+            PyTuple_SET_ITEM(args, 2+i, x);
+        }
+    }
+    else {
+        PyErr_SetString(PyExc_ValueError,
+            "mismatch between initializer element and format string");
+        goto args_out;
+    }
+
+    x = PyObject_CallObject(pack_into, args);
+    if (x != NULL) {
+        Py_DECREF(x);
+        ret = 0;
+    }
+
+
+args_out:
+    for (i = 0; i &lt; 2+nmemb; i++)
+        Py_XINCREF(PyTuple_GET_ITEM(args, i));
+    Py_XDECREF(args);
+out:
+    Py_XDECREF(pack_into);
+    Py_XDECREF(zero);
+    Py_XDECREF(mview);
+    Py_XDECREF(structobj);
+    Py_XDECREF(format);
+    return ret;
+}
+
+static void
+copy_rec(const Py_ssize_t *shape, Py_ssize_t ndim, Py_ssize_t itemsize,
+         char *dptr, const Py_ssize_t *dstrides, const Py_ssize_t *dsuboffsets,
+         char *sptr, const Py_ssize_t *sstrides, const Py_ssize_t *ssuboffsets,
+         char *mem)
+{
+    Py_ssize_t i;
+
+    assert(ndim &gt;= 1);
+
+    if (ndim == 1) {
+        if (!HAVE_PTR(dsuboffsets) &amp;&amp; !HAVE_PTR(ssuboffsets) &amp;&amp;
+            dstrides[0] == itemsize &amp;&amp; sstrides[0] == itemsize) {
+            memmove(dptr, sptr, shape[0] * itemsize);
+        }
+        else {
+            char *p;
+            assert(mem != NULL);
+            for (i=0, p=mem; i&lt;shape[0]; p+=itemsize, sptr+=sstrides[0], i++) {
+                char *xsptr = ADJUST_PTR(sptr, ssuboffsets);
+<span style = "background-color:#fdd">                memcpy(p, xsptr, itemsize);        Argument with 'nonnull' attribute passed null:Null pointer passed to 1st parameter expecting 'nonnull'</span>
+            }
+            for (i=0, p=mem; i&lt;shape[0]; p+=itemsize, dptr+=dstrides[0], i++) {
+                char *xdptr = ADJUST_PTR(dptr, dsuboffsets);
+                memcpy(xdptr, p, itemsize);
+            }
+        }
+        return;
+    }
+
+    for (i = 0; i &lt; shape[0]; dptr+=dstrides[0], sptr+=sstrides[0], i++) {
+        char *xdptr = ADJUST_PTR(dptr, dsuboffsets);
+        char *xsptr = ADJUST_PTR(sptr, ssuboffsets);
+
+        copy_rec(shape+1, ndim-1, itemsize,
+                 xdptr, dstrides+1, dsuboffsets ? dsuboffsets+1 : NULL,
+                 xsptr, sstrides+1, ssuboffsets ? ssuboffsets+1 : NULL,
+                 mem);
+    }
+}
+
+static int
+cmp_structure(Py_buffer *dest, Py_buffer *src)
+{
+    Py_ssize_t i;
+
+    if (strcmp(FIX_FORMAT(dest-&gt;format), FIX_FORMAT(src-&gt;format)) != 0 ||
+        dest-&gt;itemsize != src-&gt;itemsize ||
+        dest-&gt;ndim != src-&gt;ndim)
+        return -1;
+
+    for (i = 0; i &lt; dest-&gt;ndim; i++) {
+        if (dest-&gt;shape[i] != src-&gt;shape[i])
+            return -1;
+        if (dest-&gt;shape[i] == 0)
+            break;
+    }
+
+    return 0;
+}
+
+/* Copy src to dest. Both buffers must have the same format, itemsize,
+   ndim and shape. Copying is atomic, the function never fails with
+   a partial copy. */
+static int
+copy_buffer(Py_buffer *dest, Py_buffer *src)
+{
+    char *mem = NULL;
+
+    assert(dest-&gt;ndim &gt; 0);
+
+    if (cmp_structure(dest, src) &lt; 0) {
+        PyErr_SetString(PyExc_ValueError,
+            "ndarray assignment: lvalue and rvalue have different structures");
+        return -1;
+    }
+
+    if ((dest-&gt;suboffsets &amp;&amp; dest-&gt;suboffsets[dest-&gt;ndim-1] &gt;= 0) ||
+        (src-&gt;suboffsets &amp;&amp; src-&gt;suboffsets[src-&gt;ndim-1] &gt;= 0) ||
+        dest-&gt;strides[dest-&gt;ndim-1] != dest-&gt;itemsize ||
+        src-&gt;strides[src-&gt;ndim-1] != src-&gt;itemsize) {
+        mem = PyMem_Malloc(dest-&gt;shape[dest-&gt;ndim-1] * dest-&gt;itemsize);
+        if (mem == NULL) {
+            PyErr_NoMemory();
+            return -1;
+        }
+    }
+
+    copy_rec(dest-&gt;shape, dest-&gt;ndim, dest-&gt;itemsize,
+             dest-&gt;buf, dest-&gt;strides, dest-&gt;suboffsets,
+             src-&gt;buf, src-&gt;strides, src-&gt;suboffsets,
+             mem);
+
+    PyMem_XFree(mem);
+    return 0;
+}
+
+
+/* Unpack single element */
+static PyObject *
+unpack_single(char *ptr, const char *fmt, Py_ssize_t itemsize)
+{
+    PyObject *x, *unpack_from, *mview;
+
+    if (fmt == NULL) {
+        fmt = "B";
+        itemsize = 1;
+    }
+
+    unpack_from = PyObject_GetAttrString(structmodule, "unpack_from");
+    if (unpack_from == NULL)
+        return NULL;
+
+    mview = PyMemoryView_FromMemory(ptr, itemsize, PyBUF_READ);
+    if (mview == NULL) {
+        Py_DECREF(unpack_from);
+        return NULL;
+    }
+
+    x = PyObject_CallFunction(unpack_from, "sO", fmt, mview);
+    Py_DECREF(unpack_from);
+    Py_DECREF(mview);
+    if (x == NULL)
+        return NULL;
+
+    if (PyTuple_GET_SIZE(x) == 1) {
+        PyObject *tmp = PyTuple_GET_ITEM(x, 0);
+        Py_INCREF(tmp);
+        Py_DECREF(x);
+        return tmp;
+    }
+
+    return x;
+}
+
+/* Unpack a multi-dimensional matrix into a nested list. Return a scalar
+   for ndim = 0. */
+static PyObject *
+unpack_rec(PyObject *unpack_from, char *ptr, PyObject *mview, char *item,
+           const Py_ssize_t *shape, const Py_ssize_t *strides,
+           const Py_ssize_t *suboffsets, Py_ssize_t ndim, Py_ssize_t itemsize)
+{
+    PyObject *lst, *x;
+    Py_ssize_t i;
+
+    assert(ndim &gt;= 0);
+    assert(shape != NULL);
+    assert(strides != NULL);
+
+    if (ndim == 0) {
+        memcpy(item, ptr, itemsize);
+        x = PyObject_CallFunctionObjArgs(unpack_from, mview, NULL);
+        if (x == NULL)
+            return NULL;
+        if (PyTuple_GET_SIZE(x) == 1) {
+            PyObject *tmp = PyTuple_GET_ITEM(x, 0);
+            Py_INCREF(tmp);
+            Py_DECREF(x);
+            return tmp;
+        }
+        return x;
+    }
+
+<span style = "background-color:#fdd">    lst = PyList_New(shape[0]);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+    if (lst == NULL)
+        return NULL;
+
+    for (i = 0; i &lt; shape[0]; ptr+=strides[0], i++) {
+        char *nextptr = ADJUST_PTR(ptr, suboffsets);
+
+        x = unpack_rec(unpack_from, nextptr, mview, item,
+                       shape+1, strides+1, suboffsets ? suboffsets+1 : NULL,
+                       ndim-1, itemsize);
+        if (x == NULL) {
+            Py_DECREF(lst);
+            return NULL;
+        }
+
+        PyList_SET_ITEM(lst, i, x);
+    }
+
+    return lst;
+}
+
+
+static PyObject *
+ndarray_as_list(NDArrayObject *nd)
+{
+    PyObject *structobj = NULL, *unpack_from = NULL;
+    PyObject *lst = NULL, *mview = NULL;
+    Py_buffer *base = &amp;nd-&gt;head-&gt;base;
+    Py_ssize_t *shape = base-&gt;shape;
+    Py_ssize_t *strides = base-&gt;strides;
+    Py_ssize_t simple_shape[1];
+    Py_ssize_t simple_strides[1];
+    char *item = NULL;
+    PyObject *format;
+    char *fmt = base-&gt;format;
+
+    base = &amp;nd-&gt;head-&gt;base;
+
+    if (fmt == NULL) {
+        PyErr_SetString(PyExc_ValueError,
+            "ndarray: tolist() does not support format=NULL, use "
+            "tobytes()");
+        return NULL;
+    }
+    if (shape == NULL) {
+        assert(ND_C_CONTIGUOUS(nd-&gt;head-&gt;flags));
+        assert(base-&gt;strides == NULL);
+        assert(base-&gt;ndim &lt;= 1);
+        shape = simple_shape;
+        shape[0] = base-&gt;len;
+        strides = simple_strides;
+        strides[0] = base-&gt;itemsize;
+    }
+    else if (strides == NULL) {
+        assert(ND_C_CONTIGUOUS(nd-&gt;head-&gt;flags));
+        strides = strides_from_shape(nd-&gt;head, 0);
+        if (strides == NULL)
+            return NULL;
+    }
+
+    format = PyUnicode_FromString(fmt);
+    if (format == NULL)
+        goto out;
+
+    structobj = PyObject_CallFunctionObjArgs(Struct, format, NULL);
+    Py_DECREF(format);
+    if (structobj == NULL)
+        goto out;
+
+    unpack_from = PyObject_GetAttrString(structobj, "unpack_from");
+    if (unpack_from == NULL)
+        goto out;
+
+    item = PyMem_Malloc(base-&gt;itemsize);
+    if (item == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+
+    mview = PyMemoryView_FromMemory(item, base-&gt;itemsize, PyBUF_WRITE);
+    if (mview == NULL)
+        goto out;
+
+    lst = unpack_rec(unpack_from, base-&gt;buf, mview, item,
+                     shape, strides, base-&gt;suboffsets,
+                     base-&gt;ndim, base-&gt;itemsize);
+
+out:
+    Py_XDECREF(mview);
+    PyMem_XFree(item);
+    Py_XDECREF(unpack_from);
+    Py_XDECREF(structobj);
+    if (strides != base-&gt;strides &amp;&amp; strides != simple_strides)
+        PyMem_XFree(strides);
+
+    return lst;
+}
+
+
+/****************************************************************************/
+/*                            Initialize ndbuf                              */
+/****************************************************************************/
+
+/*
+   State of a new ndbuf during initialization. 'OK' means that initialization
+   is complete. 'PTR' means that a pointer has been initialized, but the
+   state of the memory is still undefined and ndbuf-&gt;offset is disregarded.
+
+  +-----------------+-----------+-------------+----------------+
+  |                 | ndbuf_new | init_simple | init_structure |
+  +-----------------+-----------+-------------+----------------+
+  | next            | OK (NULL) |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | prev            | OK (NULL) |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | len             |    OK     |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | offset          |    OK     |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | data            |    PTR    |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | flags           |    user   |    user     |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | exports         |   OK (0)  |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.obj        | OK (NULL) |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.buf        |    PTR    |     PTR     |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.len        | len(data) |  len(data)  |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.itemsize   |     1     |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.readonly   |     0     |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.format     |    NULL   |     OK      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.ndim       |     1     |      1      |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.shape      |    NULL   |    NULL     |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.strides    |    NULL   |    NULL     |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.suboffsets |    NULL   |    NULL     |       OK       |
+  +-----------------+-----------+-------------+----------------+
+  | base.internal   |    OK     |    OK       |       OK       |
+  +-----------------+-----------+-------------+----------------+
+
+*/
+
+static Py_ssize_t
+get_itemsize(PyObject *format)
+{
+    PyObject *tmp;
+    Py_ssize_t itemsize;
+
+    tmp = PyObject_CallFunctionObjArgs(calcsize, format, NULL);
+    if (tmp == NULL)
+        return -1;
+    itemsize = PyLong_AsSsize_t(tmp);
+    Py_DECREF(tmp);
+
+    return itemsize;
+}
+
+static char *
+get_format(PyObject *format)
+{
+    PyObject *tmp;
+    char *fmt;
+
+    tmp = PyUnicode_AsASCIIString(format);
+    if (tmp == NULL)
+        return NULL;
+    fmt = PyMem_Malloc(PyBytes_GET_SIZE(tmp)+1);
+    if (fmt == NULL) {
+        PyErr_NoMemory();
+        Py_DECREF(tmp);
+        return NULL;
+    }
+    strcpy(fmt, PyBytes_AS_STRING(tmp));
+    Py_DECREF(tmp);
+
+    return fmt;
+}
+
+static int
+init_simple(ndbuf_t *ndbuf, PyObject *items, PyObject *format,
+            Py_ssize_t itemsize)
+{
+    PyObject *mview;
+    Py_buffer *base = &amp;ndbuf-&gt;base;
+    int ret;
+
+    mview = PyMemoryView_FromBuffer(base);
+    if (mview == NULL)
+        return -1;
+
+    ret = pack_from_list(mview, items, format, itemsize);
+    Py_DECREF(mview);
+    if (ret &lt; 0)
+        return -1;
+
+    base-&gt;readonly = !(ndbuf-&gt;flags &amp; ND_WRITABLE);
+    base-&gt;itemsize = itemsize;
+    base-&gt;format = get_format(format);
+    if (base-&gt;format == NULL)
+        return -1;
+
+    return 0;
+}
+
+static Py_ssize_t *
+seq_as_ssize_array(PyObject *seq, Py_ssize_t len, int is_shape)
+{
+    Py_ssize_t *dest;
+    Py_ssize_t x, i;
+
+    /* ndim = len &lt;= ND_MAX_NDIM, so PyMem_New() is actually not needed. */
+    dest = PyMem_New(Py_ssize_t, len);
+    if (dest == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    for (i = 0; i &lt; len; i++) {
+<span style = "background-color:#fdd">        PyObject *tmp = PySequence_Fast_GET_ITEM(seq, i);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+        if (!PyLong_Check(tmp)) {
+            PyErr_Format(PyExc_ValueError,
+                "elements of %s must be integers",
+                is_shape ? "shape" : "strides");
+            PyMem_Free(dest);
+            return NULL;
+        }
+        x = PyLong_AsSsize_t(tmp);
+        if (PyErr_Occurred()) {
+            PyMem_Free(dest);
+            return NULL;
+        }
+        if (is_shape &amp;&amp; x &lt; 0) {
+            PyErr_Format(PyExc_ValueError,
+                "elements of shape must be integers &gt;= 0");
+            PyMem_Free(dest);
+            return NULL;
+        }
+        dest[i] = x;
+    }
+
+    return dest;
+}
+
+static Py_ssize_t *
+strides_from_shape(const ndbuf_t *ndbuf, int flags)
+{
+    const Py_buffer *base = &amp;ndbuf-&gt;base;
+    Py_ssize_t *s, i;
+
+    s = PyMem_Malloc(base-&gt;ndim * (sizeof *s));
+    if (s == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    if (flags &amp; ND_FORTRAN) {
+        s[0] = base-&gt;itemsize;
+        for (i = 1; i &lt; base-&gt;ndim; i++)
+            s[i] = s[i-1] * base-&gt;shape[i-1];
+    }
+    else {
+        s[base-&gt;ndim-1] = base-&gt;itemsize;
+        for (i = base-&gt;ndim-2; i &gt;= 0; i--)
+            s[i] = s[i+1] * base-&gt;shape[i+1];
+    }
+
+    return s;
+}
+
+/* Bounds check:
+
+     len := complete length of allocated memory
+     offset := start of the array
+
+     A single array element is indexed by:
+
+       i = indices[0] * strides[0] + indices[1] * strides[1] + ...
+
+     imin is reached when all indices[n] combined with positive strides are 0
+     and all indices combined with negative strides are shape[n]-1, which is
+     the maximum index for the nth dimension.
+
+     imax is reached when all indices[n] combined with negative strides are 0
+     and all indices combined with positive strides are shape[n]-1.
+*/
+static int
+verify_structure(Py_ssize_t len, Py_ssize_t itemsize, Py_ssize_t offset,
+                 const Py_ssize_t *shape, const Py_ssize_t *strides,
+                 Py_ssize_t ndim)
+{
+    Py_ssize_t imin, imax;
+    Py_ssize_t n;
+
+    assert(ndim &gt;= 0);
+
+    if (ndim == 0 &amp;&amp; (offset &lt; 0 || offset+itemsize &gt; len))
+        goto invalid_combination;
+
+    for (n = 0; n &lt; ndim; n++)
+        if (strides[n] % itemsize) {
+            PyErr_SetString(PyExc_ValueError,
+            "strides must be a multiple of itemsize");
+            return -1;
+        }
+
+    for (n = 0; n &lt; ndim; n++)
+        if (shape[n] == 0)
+            return 0;
+
+    imin = imax = 0;
+    for (n = 0; n &lt; ndim; n++)
+        if (strides[n] &lt;= 0)
+            imin += (shape[n]-1) * strides[n];
+        else
+            imax += (shape[n]-1) * strides[n];
+
+    if (imin + offset &lt; 0 || imax + offset + itemsize &gt; len)
+        goto invalid_combination;
+
+    return 0;
+
+
+invalid_combination:
+    PyErr_SetString(PyExc_ValueError,
+        "invalid combination of buffer, shape and strides");
+    return -1;
+}
+
+/*
+   Convert a NumPy-style array to an array using suboffsets to stride in
+   the first dimension. Requirements: ndim &gt; 0.
+
+   Contiguous example
+   ==================
+
+     Input:
+     ------
+       shape      = {2, 2, 3};
+       strides    = {6, 3, 1};
+       suboffsets = NULL;
+       data       = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+       buf        = &amp;data[0]
+
+     Output:
+     -------
+       shape      = {2, 2, 3};
+       strides    = {sizeof(char *), 3, 1};
+       suboffsets = {0, -1, -1};
+       data       = {p1, p2, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+                     |   |   ^                 ^
+                     `---'---'                 |
+                         |                     |
+                         `---------------------'
+       buf        = &amp;data[0]
+
+     So, in the example the input resembles the three-dimensional array
+     char v[2][2][3], while the output resembles an array of two pointers
+     to two-dimensional arrays: char (*v[2])[2][3].
+
+
+   Non-contiguous example:
+   =======================
+
+     Input (with offset and negative strides):
+     -----------------------------------------
+       shape      = {2, 2, 3};
+       strides    = {-6, 3, -1};
+       offset     = 8
+       suboffsets = NULL;
+       data       = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+
+     Output:
+     -------
+       shape      = {2, 2, 3};
+       strides    = {-sizeof(char *), 3, -1};
+       suboffsets = {2, -1, -1};
+       newdata    = {p1, p2, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+                     |   |   ^     ^           ^     ^
+                     `---'---'     |           |     `- p2+suboffsets[0]
+                         |         `-----------|--- p1+suboffsets[0]
+                         `---------------------'
+       buf        = &amp;newdata[1]  # striding backwards over the pointers.
+
+     suboffsets[0] is the same as the offset that one would specify if
+     the two {2, 3} subarrays were created directly, hence the name.
+*/
+static int
+init_suboffsets(ndbuf_t *ndbuf)
+{
+    Py_buffer *base = &amp;ndbuf-&gt;base;
+    Py_ssize_t start, step;
+    Py_ssize_t imin, suboffset0;
+    Py_ssize_t addsize;
+    Py_ssize_t n;
+    char *data;
+
+    assert(base-&gt;ndim &gt; 0);
+    assert(base-&gt;suboffsets == NULL);
+
+    /* Allocate new data with additional space for shape[0] pointers. */
+    addsize = base-&gt;shape[0] * (sizeof (char *));
+
+    /* Align array start to a multiple of 8. */
+    addsize = 8 * ((addsize + 7) / 8);
+
+    data = PyMem_Malloc(ndbuf-&gt;len + addsize);
+    if (data == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    memcpy(data + addsize, ndbuf-&gt;data, ndbuf-&gt;len);
+
+    PyMem_Free(ndbuf-&gt;data);
+    ndbuf-&gt;data = data;
+    ndbuf-&gt;len += addsize;
+    base-&gt;buf = ndbuf-&gt;data;
+
+    /* imin: minimum index of the input array relative to ndbuf-&gt;offset.
+       suboffset0: offset for each sub-array of the output. This is the
+                   same as calculating -imin' for a sub-array of ndim-1. */
+    imin = suboffset0 = 0;
+    for (n = 0; n &lt; base-&gt;ndim; n++) {
+        if (base-&gt;shape[n] == 0)
+            break;
+        if (base-&gt;strides[n] &lt;= 0) {
+            Py_ssize_t x = (base-&gt;shape[n]-1) * base-&gt;strides[n];
+            imin += x;
+            suboffset0 += (n &gt;= 1) ? -x : 0;
+        }
+    }
+
+    /* Initialize the array of pointers to the sub-arrays. */
+    start = addsize + ndbuf-&gt;offset + imin;
+    step = base-&gt;strides[0] &lt; 0 ? -base-&gt;strides[0] : base-&gt;strides[0];
+
+    for (n = 0; n &lt; base-&gt;shape[0]; n++)
+        ((char **)base-&gt;buf)[n] = (char *)base-&gt;buf + start + n*step;
+
+    /* Initialize suboffsets. */
+    base-&gt;suboffsets = PyMem_Malloc(base-&gt;ndim * (sizeof *base-&gt;suboffsets));
+    if (base-&gt;suboffsets == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
+    base-&gt;suboffsets[0] = suboffset0;
+    for (n = 1; n &lt; base-&gt;ndim; n++)
+        base-&gt;suboffsets[n] = -1;
+
+    /* Adjust strides for the first (zeroth) dimension. */
+    if (base-&gt;strides[0] &gt;= 0) {
+        base-&gt;strides[0] = sizeof(char *);
+    }
+    else {
+        /* Striding backwards. */
+        base-&gt;strides[0] = -(Py_ssize_t)sizeof(char *);
+        if (base-&gt;shape[0] &gt; 0)
+            base-&gt;buf = (char *)base-&gt;buf + (base-&gt;shape[0]-1) * sizeof(char *);
+    }
+
+    ndbuf-&gt;flags &amp;= ~(ND_C|ND_FORTRAN);
+    ndbuf-&gt;offset = 0;
+    return 0;
+}
+
+static void
+init_len(Py_buffer *base)
+{
+    Py_ssize_t i;
+
+    base-&gt;len = 1;
+    for (i = 0; i &lt; base-&gt;ndim; i++)
+        base-&gt;len *= base-&gt;shape[i];
+    base-&gt;len *= base-&gt;itemsize;
+}
+
+static int
+init_structure(ndbuf_t *ndbuf, PyObject *shape, PyObject *strides,
+               Py_ssize_t ndim)
+{
+    Py_buffer *base = &amp;ndbuf-&gt;base;
+
+    base-&gt;ndim = (int)ndim;
+    if (ndim == 0) {
+        if (ndbuf-&gt;flags &amp; ND_PIL) {
+            PyErr_SetString(PyExc_TypeError,
+                "ndim = 0 cannot be used in conjunction with ND_PIL");
+            return -1;
+        }
+        ndbuf-&gt;flags |= (ND_SCALAR|ND_C|ND_FORTRAN);
+        return 0;
+    }
+
+    /* shape */
+    base-&gt;shape = seq_as_ssize_array(shape, ndim, 1);
+    if (base-&gt;shape == NULL)
+        return -1;
+
+    /* strides */
+    if (strides) {
+        base-&gt;strides = seq_as_ssize_array(strides, ndim, 0);
+    }
+    else {
+        base-&gt;strides = strides_from_shape(ndbuf, ndbuf-&gt;flags);
+    }
+    if (base-&gt;strides == NULL)
+        return -1;
+    if (verify_structure(base-&gt;len, base-&gt;itemsize, ndbuf-&gt;offset,
+                         base-&gt;shape, base-&gt;strides, ndim) &lt; 0)
+        return -1;
+
+    /* buf */
+    base-&gt;buf = ndbuf-&gt;data + ndbuf-&gt;offset;
+
+    /* len */
+    init_len(base);
+
+    /* ndbuf-&gt;flags */
+    if (PyBuffer_IsContiguous(base, 'C'))
+        ndbuf-&gt;flags |= ND_C;
+    if (PyBuffer_IsContiguous(base, 'F'))
+        ndbuf-&gt;flags |= ND_FORTRAN;
+
+
+    /* convert numpy array to suboffset representation */
+    if (ndbuf-&gt;flags &amp; ND_PIL) {
+        /* modifies base-&gt;buf, base-&gt;strides and base-&gt;suboffsets **/
+        return init_suboffsets(ndbuf);
+    }
+
+    return 0;
+}
+
+static ndbuf_t *
+init_ndbuf(PyObject *items, PyObject *shape, PyObject *strides,
+           Py_ssize_t offset, PyObject *format, int flags)
+{
+    ndbuf_t *ndbuf;
+    Py_ssize_t ndim;
+    Py_ssize_t nitems;
+    Py_ssize_t itemsize;
+
+    /* ndim = len(shape) */
+    CHECK_LIST_OR_TUPLE(shape)
+    ndim = PySequence_Fast_GET_SIZE(shape);
+    if (ndim &gt; ND_MAX_NDIM) {
+        PyErr_Format(PyExc_ValueError,
+            "ndim must not exceed %d", ND_MAX_NDIM);
+        return NULL;
+    }
+
+    /* len(strides) = len(shape) */
+    if (strides) {
+        CHECK_LIST_OR_TUPLE(strides)
+        if (PySequence_Fast_GET_SIZE(strides) == 0)
+            strides = NULL;
+        else if (flags &amp; ND_FORTRAN) {
+            PyErr_SetString(PyExc_TypeError,
+                "ND_FORTRAN cannot be used together with strides");
+            return NULL;
+        }
+        else if (PySequence_Fast_GET_SIZE(strides) != ndim) {
+            PyErr_SetString(PyExc_ValueError,
+                "len(shape) != len(strides)");
+            return NULL;
+        }
+    }
+
+    /* itemsize */
+    itemsize = get_itemsize(format);
+    if (itemsize &lt;= 0) {
+        if (itemsize == 0) {
+            PyErr_SetString(PyExc_ValueError,
+                "itemsize must not be zero");
+        }
+        return NULL;
+    }
+
+    /* convert scalar to list */
+    if (ndim == 0) {
+        items = Py_BuildValue("(O)", items);
+        if (items == NULL)
+            return NULL;
+    }
+    else {
+        CHECK_LIST_OR_TUPLE(items)
+        Py_INCREF(items);
+    }
+
+    /* number of items */
+    nitems = PySequence_Fast_GET_SIZE(items);
+    if (nitems == 0) {
+        PyErr_SetString(PyExc_ValueError,
+            "initializer list or tuple must not be empty");
+        Py_DECREF(items);
+        return NULL;
+    }
+
+    ndbuf = ndbuf_new(nitems, itemsize, offset, flags);
+    if (ndbuf == NULL) {
+        Py_DECREF(items);
+        return NULL;
+    }
+
+
+    if (init_simple(ndbuf, items, format, itemsize) &lt; 0)
+        goto error;
+    if (init_structure(ndbuf, shape, strides, ndim) &lt; 0)
+        goto error;
+
+    Py_DECREF(items);
+    return ndbuf;
+
+error:
+    Py_DECREF(items);
+    ndbuf_free(ndbuf);
+    return NULL;
+}
+
+/* initialize and push a new base onto the linked list */
+static int
+ndarray_push_base(NDArrayObject *nd, PyObject *items,
+                  PyObject *shape, PyObject *strides,
+                  Py_ssize_t offset, PyObject *format, int flags)
+{
+    ndbuf_t *ndbuf;
+
+    ndbuf = init_ndbuf(items, shape, strides, offset, format, flags);
+    if (ndbuf == NULL)
+        return -1;
+
+    ndbuf_push(nd, ndbuf);
+    return 0;
+}
+
+#define PyBUF_UNUSED 0x10000
+static int
+ndarray_init(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    NDArrayObject *nd = (NDArrayObject *)self;
+    static char *kwlist[] = {
+        "obj", "shape", "strides", "offset", "format", "flags", "getbuf", NULL
+    };
+    PyObject *v = NULL;  /* initializer: scalar, list, tuple or base object */
+    PyObject *shape = NULL;   /* size of each dimension */
+    PyObject *strides = NULL; /* number of bytes to the next elt in each dim */
+    Py_ssize_t offset = 0;            /* buffer offset */
+    PyObject *format = simple_format; /* struct module specifier: "B" */
+    int flags = ND_DEFAULT;           /* base buffer and ndarray flags */
+
+    int getbuf = PyBUF_UNUSED; /* re-exporter: getbuffer request flags */
+
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|OOnOii", kwlist,
+            &amp;v, &amp;shape, &amp;strides, &amp;offset, &amp;format, &amp;flags, &amp;getbuf))
+        return -1;
+
+    /* NDArrayObject is re-exporter */
+    if (PyObject_CheckBuffer(v) &amp;&amp; shape == NULL) {
+        if (strides || offset || format != simple_format ||
+            !(flags == ND_DEFAULT || flags == ND_REDIRECT)) {
+            PyErr_SetString(PyExc_TypeError,
+               "construction from exporter object only takes 'obj', 'getbuf' "
+               "and 'flags' arguments");
+            return -1;
+        }
+
+        getbuf = (getbuf == PyBUF_UNUSED) ? PyBUF_FULL_RO : getbuf;
+
+        if (ndarray_init_staticbuf(v, nd, getbuf) &lt; 0)
+            return -1;
+
+        init_flags(nd-&gt;head);
+        nd-&gt;head-&gt;flags |= flags;
+
+        return 0;
+    }
+
+    /* NDArrayObject is the original base object. */
+    if (getbuf != PyBUF_UNUSED) {
+        PyErr_SetString(PyExc_TypeError,
+            "getbuf argument only valid for construction from exporter "
+            "object");
+        return -1;
+    }
+    if (shape == NULL) {
+        PyErr_SetString(PyExc_TypeError,
+            "shape is a required argument when constructing from "
+            "list, tuple or scalar");
+        return -1;
+    }
+
+    if (flags &amp; ND_VAREXPORT) {
+        nd-&gt;flags |= ND_VAREXPORT;
+        flags &amp;= ~ND_VAREXPORT;
+    }
+
+    /* Initialize and push the first base buffer onto the linked list. */
+    return ndarray_push_base(nd, v, shape, strides, offset, format, flags);
+}
+
+/* Push an additional base onto the linked list. */
+static PyObject *
+ndarray_push(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    NDArrayObject *nd = (NDArrayObject *)self;
+    static char *kwlist[] = {
+        "items", "shape", "strides", "offset", "format", "flags", NULL
+    };
+    PyObject *items = NULL;   /* initializer: scalar, list or tuple */
+    PyObject *shape = NULL;   /* size of each dimension */
+    PyObject *strides = NULL; /* number of bytes to the next elt in each dim */
+    PyObject *format = simple_format;  /* struct module specifier: "B" */
+    Py_ssize_t offset = 0;             /* buffer offset */
+    int flags = ND_DEFAULT;            /* base buffer flags */
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO|OnOi", kwlist,
+            &amp;items, &amp;shape, &amp;strides, &amp;offset, &amp;format, &amp;flags))
+        return NULL;
+
+    if (flags &amp; ND_VAREXPORT) {
+        PyErr_SetString(PyExc_ValueError,
+            "ND_VAREXPORT flag can only be used during object creation");
+        return NULL;
+    }
+    if (ND_IS_CONSUMER(nd)) {
+        PyErr_SetString(PyExc_BufferError,
+            "structure of re-exporting object is immutable");
+        return NULL;
+    }
+    if (!(nd-&gt;flags&amp;ND_VAREXPORT) &amp;&amp; nd-&gt;head-&gt;exports &gt; 0) {
+        PyErr_Format(PyExc_BufferError,
+            "cannot change structure: %zd exported buffer%s",
+            nd-&gt;head-&gt;exports, nd-&gt;head-&gt;exports==1 ? "" : "s");
+        return NULL;
+    }
+
+    if (ndarray_push_base(nd, items, shape, strides,
+                          offset, format, flags) &lt; 0)
+        return NULL;
+    Py_RETURN_NONE;
+}
+
+/* Pop a base from the linked list (if possible). */
+static PyObject *
+ndarray_pop(PyObject *self, PyObject *dummy)
+{
+    NDArrayObject *nd = (NDArrayObject *)self;
+    if (ND_IS_CONSUMER(nd)) {
+        PyErr_SetString(PyExc_BufferError,
+            "structure of re-exporting object is immutable");
+        return NULL;
+    }
+    if (nd-&gt;head-&gt;exports &gt; 0) {
+        PyErr_Format(PyExc_BufferError,
+            "cannot change structure: %zd exported buffer%s",
+            nd-&gt;head-&gt;exports, nd-&gt;head-&gt;exports==1 ? "" : "s");
+        return NULL;
+    }
+    if (nd-&gt;head-&gt;next == NULL) {
+        PyErr_SetString(PyExc_BufferError,
+            "list only has a single base");
+        return NULL;
+    }
+
+    ndbuf_pop(nd);
+    Py_RETURN_NONE;
+}
+
+/**************************************************************************/
+/*                               getbuffer                                */
+/**************************************************************************/
+
+static int
+ndarray_getbuf(NDArrayObject *self, Py_buffer *view, int flags)
+{
+    ndbuf_t *ndbuf = self-&gt;head;
+    Py_buffer *base = &amp;ndbuf-&gt;base;
+    int baseflags = ndbuf-&gt;flags;
+
+    /* redirect mode */
+    if (base-&gt;obj != NULL &amp;&amp; (baseflags&amp;ND_REDIRECT)) {
+        return PyObject_GetBuffer(base-&gt;obj, view, flags);
+    }
+
+    /* start with complete information */
+    *view = *base;
+    view-&gt;obj = NULL;
+
+    /* reconstruct format */
+    if (view-&gt;format == NULL)
+        view-&gt;format = "B";
+
+    if (base-&gt;ndim != 0 &amp;&amp;
+        ((REQ_SHAPE(flags) &amp;&amp; base-&gt;shape == NULL) ||
+         (REQ_STRIDES(flags) &amp;&amp; base-&gt;strides == NULL))) {
+        /* The ndarray is a re-exporter that has been created without full
+           information for testing purposes. In this particular case the
+           ndarray is not a PEP-3118 compliant buffer provider. */
+        PyErr_SetString(PyExc_BufferError,
+            "re-exporter does not provide format, shape or strides");
+        return -1;
+    }
+
+    if (baseflags &amp; ND_GETBUF_FAIL) {
+        PyErr_SetString(PyExc_BufferError,
+            "ND_GETBUF_FAIL: forced test exception");
+        if (baseflags &amp; ND_GETBUF_UNDEFINED)
+            view-&gt;obj = (PyObject *)0x1; /* wrong but permitted in &lt;= 3.2 */
+        return -1;
+    }
+
+    if (REQ_WRITABLE(flags) &amp;&amp; base-&gt;readonly) {
+        PyErr_SetString(PyExc_BufferError,
+            "ndarray is not writable");
+        return -1;
+    }
+    if (!REQ_FORMAT(flags)) {
+        /* NULL indicates that the buffer's data type has been cast to 'B'.
+           view-&gt;itemsize is the _previous_ itemsize. If shape is present,
+           the equality product(shape) * itemsize = len still holds at this
+           point. The equality calcsize(format) = itemsize does _not_ hold
+           from here on! */
+        view-&gt;format = NULL;
+    }
+
+    if (REQ_C_CONTIGUOUS(flags) &amp;&amp; !ND_C_CONTIGUOUS(baseflags)) {
+        PyErr_SetString(PyExc_BufferError,
+            "ndarray is not C-contiguous");
+        return -1;
+    }
+    if (REQ_F_CONTIGUOUS(flags) &amp;&amp; !ND_FORTRAN_CONTIGUOUS(baseflags)) {
+        PyErr_SetString(PyExc_BufferError,
+            "ndarray is not Fortran contiguous");
+        return -1;
+    }
+    if (REQ_ANY_CONTIGUOUS(flags) &amp;&amp; !ND_ANY_CONTIGUOUS(baseflags)) {
+        PyErr_SetString(PyExc_BufferError,
+            "ndarray is not contiguous");
+        return -1;
+    }
+    if (!REQ_INDIRECT(flags) &amp;&amp; (baseflags &amp; ND_PIL)) {
+        PyErr_SetString(PyExc_BufferError,
+            "ndarray cannot be represented without suboffsets");
+        return -1;
+    }
+    if (!REQ_STRIDES(flags)) {
+        if (!ND_C_CONTIGUOUS(baseflags)) {
+            PyErr_SetString(PyExc_BufferError,
+                "ndarray is not C-contiguous");
+            return -1;
+        }
+        view-&gt;strides = NULL;
+    }
+    if (!REQ_SHAPE(flags)) {
+        /* PyBUF_SIMPLE or PyBUF_WRITABLE: at this point buf is C-contiguous,
+           so base-&gt;buf = ndbuf-&gt;data. */
+        if (view-&gt;format != NULL) {
+            /* PyBUF_SIMPLE|PyBUF_FORMAT and PyBUF_WRITABLE|PyBUF_FORMAT do
+               not make sense. */
+            PyErr_Format(PyExc_BufferError,
+                "ndarray: cannot cast to unsigned bytes if the format flag "
+                "is present");
+            return -1;
+        }
+        /* product(shape) * itemsize = len and calcsize(format) = itemsize
+           do _not_ hold from here on! */
+        view-&gt;ndim = 1;
+        view-&gt;shape = NULL;
+    }
+
+    /* Ascertain that the new buffer has the same contiguity as the exporter */
+    if (ND_C_CONTIGUOUS(baseflags) != PyBuffer_IsContiguous(view, 'C') ||
+        /* skip cast to 1-d */
+        (view-&gt;format != NULL &amp;&amp; view-&gt;shape != NULL &amp;&amp;
+         ND_FORTRAN_CONTIGUOUS(baseflags) != PyBuffer_IsContiguous(view, 'F')) ||
+        /* cast to 1-d */
+        (view-&gt;format == NULL &amp;&amp; view-&gt;shape == NULL &amp;&amp;
+         !PyBuffer_IsContiguous(view, 'F'))) {
+        PyErr_SetString(PyExc_BufferError,
+            "ndarray: contiguity mismatch in getbuf()");
+            return -1;
+    }
+
+    view-&gt;obj = (PyObject *)self;
+    Py_INCREF(view-&gt;obj);
+    self-&gt;head-&gt;exports++;
+
+    return 0;
+}
+
+static void
+ndarray_releasebuf(NDArrayObject *self, Py_buffer *view)
+{
+    if (!ND_IS_CONSUMER(self)) {
+        ndbuf_t *ndbuf = view-&gt;internal;
+        if (--ndbuf-&gt;exports == 0 &amp;&amp; ndbuf != self-&gt;head)
+            ndbuf_delete(self, ndbuf);
+    }
+}
+
+static PyBufferProcs ndarray_as_buffer = {
+    (getbufferproc)ndarray_getbuf,        /* bf_getbuffer */
+    (releasebufferproc)ndarray_releasebuf /* bf_releasebuffer */
+};
+
+
+/**************************************************************************/
+/*                           indexing/slicing                             */
+/**************************************************************************/
+
+static char *
+ptr_from_index(Py_buffer *base, Py_ssize_t index)
+{
+    char *ptr;
+    Py_ssize_t nitems; /* items in the first dimension */
+
+    if (base-&gt;shape)
+        nitems = base-&gt;shape[0];
+    else {
+        assert(base-&gt;ndim == 1 &amp;&amp; SIMPLE_FORMAT(base-&gt;format));
+        nitems = base-&gt;len;
+    }
+
+    if (index &lt; 0) {
+        index += nitems;
+    }
+    if (index &lt; 0 || index &gt;= nitems) {
+        PyErr_SetString(PyExc_IndexError, "index out of bounds");
+        return NULL;
+    }
+
+    ptr = (char *)base-&gt;buf;
+
+    if (base-&gt;strides == NULL)
+         ptr += base-&gt;itemsize * index;
+    else
+         ptr += base-&gt;strides[0] * index;
+
+    ptr = ADJUST_PTR(ptr, base-&gt;suboffsets);
+
+    return ptr;
+}
+
+static PyObject *
+ndarray_item(NDArrayObject *self, Py_ssize_t index)
+{
+    ndbuf_t *ndbuf = self-&gt;head;
+    Py_buffer *base = &amp;ndbuf-&gt;base;
+    char *ptr;
+
+    if (base-&gt;ndim == 0) {
+        PyErr_SetString(PyExc_TypeError, "invalid indexing of scalar");
+        return NULL;
+    }
+
+    ptr = ptr_from_index(base, index);
+    if (ptr == NULL)
+        return NULL;
+
+    if (base-&gt;ndim == 1) {
+        return unpack_single(ptr, base-&gt;format, base-&gt;itemsize);
+    }
+    else {
+        NDArrayObject *nd;
+        Py_buffer *subview;
+
+        nd = (NDArrayObject *)ndarray_new(&amp;NDArray_Type, NULL, NULL);
+        if (nd == NULL)
+            return NULL;
+
+        if (ndarray_init_staticbuf((PyObject *)self, nd, PyBUF_FULL_RO) &lt; 0) {
+            Py_DECREF(nd);
+            return NULL;
+        }
+
+        subview = &amp;nd-&gt;staticbuf.base;
+
+        subview-&gt;buf = ptr;
+        subview-&gt;len /= subview-&gt;shape[0];
+
+        subview-&gt;ndim--;
+        subview-&gt;shape++;
+        if (subview-&gt;strides) subview-&gt;strides++;
+        if (subview-&gt;suboffsets) subview-&gt;suboffsets++;
+
+        init_flags(&amp;nd-&gt;staticbuf);
+
+        return (PyObject *)nd;
+    }
+}
+
+/*
+  For each dimension, we get valid (start, stop, step, slicelength) quadruples
+  from PySlice_GetIndicesEx().
+
+  Slicing NumPy arrays
+  ====================
+
+    A pointer to an element in a NumPy array is defined by:
+
+      ptr = (char *)buf + indices[0] * strides[0] +
+                          ... +
+                          indices[ndim-1] * strides[ndim-1]
+
+    Adjust buf:
+    -----------
+      Adding start[n] for each dimension effectively adds the constant:
+
+        c = start[0] * strides[0] + ... + start[ndim-1] * strides[ndim-1]
+
+      Therefore init_slice() adds all start[n] directly to buf.
+
+    Adjust shape:
+    -------------
+      Obviously shape[n] = slicelength[n]
+
+    Adjust strides:
+    ---------------
+      In the original array, the next element in a dimension is reached
+      by adding strides[n] to the pointer. In the sliced array, elements
+      may be skipped, so the next element is reached by adding:
+
+        strides[n] * step[n]
+
+  Slicing PIL arrays
+  ==================
+
+    Layout:
+    -------
+      In the first (zeroth) dimension, PIL arrays have an array of pointers
+      to sub-arrays of ndim-1. Striding in the first dimension is done by
+      getting the index of the nth pointer, dereference it and then add a
+      suboffset to it. The arrays pointed to can best be seen a regular
+      NumPy arrays.
+
+    Adjust buf:
+    -----------
+      In the original array, buf points to a location (usually the start)
+      in the array of pointers. For the sliced array, start[0] can be
+      added to buf in the same manner as for NumPy arrays.
+
+    Adjust suboffsets:
+    ------------------
+      Due to the dereferencing step in the addressing scheme, it is not
+      possible to adjust buf for higher dimensions. Recall that the
+      sub-arrays pointed to are regular NumPy arrays, so for each of
+      those arrays adding start[n] effectively adds the constant:
+
+        c = start[1] * strides[1] + ... + start[ndim-1] * strides[ndim-1]
+
+      This constant is added to suboffsets[0]. suboffsets[0] in turn is
+      added to each pointer right after dereferencing.
+
+    Adjust shape and strides:
+    -------------------------
+      Shape and strides are not influenced by the dereferencing step, so
+      they are adjusted in the same manner as for NumPy arrays.
+
+  Multiple levels of suboffsets
+  =============================
+
+      For a construct like an array of pointers to array of pointers to
+      sub-arrays of ndim-2:
+
+        suboffsets[0] = start[1] * strides[1]
+        suboffsets[1] = start[2] * strides[2] + ...
+*/
+static int
+init_slice(Py_buffer *base, PyObject *key, int dim)
+{
+    Py_ssize_t start, stop, step, slicelength;
+
+    if (PySlice_Unpack(key, &amp;start, &amp;stop, &amp;step) &lt; 0) {
+        return -1;
+    }
+    slicelength = PySlice_AdjustIndices(base-&gt;shape[dim], &amp;start, &amp;stop, step);
+
+
+    if (base-&gt;suboffsets == NULL || dim == 0) {
+    adjust_buf:
+        base-&gt;buf = (char *)base-&gt;buf + base-&gt;strides[dim] * start;
+    }
+    else {
+        Py_ssize_t n = dim-1;
+        while (n &gt;= 0 &amp;&amp; base-&gt;suboffsets[n] &lt; 0)
+            n--;
+        if (n &lt; 0)
+            goto adjust_buf; /* all suboffsets are negative */
+        base-&gt;suboffsets[n] = base-&gt;suboffsets[n] + base-&gt;strides[dim] * start;
+    }
+    base-&gt;shape[dim] = slicelength;
+    base-&gt;strides[dim] = base-&gt;strides[dim] * step;
+
+    return 0;
+}
+
+static int
+copy_structure(Py_buffer *base)
+{
+    Py_ssize_t *shape = NULL, *strides = NULL, *suboffsets = NULL;
+    Py_ssize_t i;
+
+    shape = PyMem_Malloc(base-&gt;ndim * (sizeof *shape));
+    strides = PyMem_Malloc(base-&gt;ndim * (sizeof *strides));
+    if (shape == NULL || strides == NULL)
+        goto err_nomem;
+
+    suboffsets = NULL;
+    if (base-&gt;suboffsets) {
+        suboffsets = PyMem_Malloc(base-&gt;ndim * (sizeof *suboffsets));
+        if (suboffsets == NULL)
+            goto err_nomem;
+    }
+
+    for (i = 0; i &lt; base-&gt;ndim; i++) {
+        shape[i] = base-&gt;shape[i];
+        strides[i] = base-&gt;strides[i];
+        if (suboffsets)
+            suboffsets[i] = base-&gt;suboffsets[i];
+    }
+
+    base-&gt;shape = shape;
+    base-&gt;strides = strides;
+    base-&gt;suboffsets = suboffsets;
+
+    return 0;
+
+err_nomem:
+    PyErr_NoMemory();
+    PyMem_XFree(shape);
+    PyMem_XFree(strides);
+    PyMem_XFree(suboffsets);
+    return -1;
+}
+
+static PyObject *
+ndarray_subscript(NDArrayObject *self, PyObject *key)
+{
+    NDArrayObject *nd;
+    ndbuf_t *ndbuf;
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+
+    if (base-&gt;ndim == 0) {
+        if (PyTuple_Check(key) &amp;&amp; PyTuple_GET_SIZE(key) == 0) {
+            return unpack_single(base-&gt;buf, base-&gt;format, base-&gt;itemsize);
+        }
+        else if (key == Py_Ellipsis) {
+            Py_INCREF(self);
+            return (PyObject *)self;
+        }
+        else {
+            PyErr_SetString(PyExc_TypeError, "invalid indexing of scalar");
+            return NULL;
+        }
+    }
+    if (PyIndex_Check(key)) {
+        Py_ssize_t index = PyLong_AsSsize_t(key);
+        if (index == -1 &amp;&amp; PyErr_Occurred())
+            return NULL;
+        return ndarray_item(self, index);
+    }
+
+    nd = (NDArrayObject *)ndarray_new(&amp;NDArray_Type, NULL, NULL);
+    if (nd == NULL)
+        return NULL;
+
+    /* new ndarray is a consumer */
+    if (ndarray_init_staticbuf((PyObject *)self, nd, PyBUF_FULL_RO) &lt; 0) {
+        Py_DECREF(nd);
+        return NULL;
+    }
+
+    /* copy shape, strides and suboffsets */
+    ndbuf = nd-&gt;head;
+    base = &amp;ndbuf-&gt;base;
+    if (copy_structure(base) &lt; 0) {
+        Py_DECREF(nd);
+        return NULL;
+    }
+    ndbuf-&gt;flags |= ND_OWN_ARRAYS;
+
+    if (PySlice_Check(key)) {
+        /* one-dimensional slice */
+        if (init_slice(base, key, 0) &lt; 0)
+            goto err_occurred;
+    }
+    else if (PyTuple_Check(key)) {
+        /* multi-dimensional slice */
+        PyObject *tuple = key;
+        Py_ssize_t i, n;
+
+        n = PyTuple_GET_SIZE(tuple);
+        for (i = 0; i &lt; n; i++) {
+<span style = "background-color:#fdd">            key = PyTuple_GET_ITEM(tuple, i);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+            if (!PySlice_Check(key))
+                goto type_error;
+            if (init_slice(base, key, (int)i) &lt; 0)
+                goto err_occurred;
+        }
+    }
+    else {
+        goto type_error;
+    }
+
+    init_len(base);
+    init_flags(ndbuf);
+
+    return (PyObject *)nd;
+
+
+type_error:
+    PyErr_Format(PyExc_TypeError,
+        "cannot index memory using \"%.200s\"",
+        key-&gt;ob_type-&gt;tp_name);
+err_occurred:
+    Py_DECREF(nd);
+    return NULL;
+}
+
+
+static int
+ndarray_ass_subscript(NDArrayObject *self, PyObject *key, PyObject *value)
+{
+    NDArrayObject *nd;
+    Py_buffer *dest = &amp;self-&gt;head-&gt;base;
+    Py_buffer src;
+    char *ptr;
+    Py_ssize_t index;
+    int ret = -1;
+
+    if (dest-&gt;readonly) {
+        PyErr_SetString(PyExc_TypeError, "ndarray is not writable");
+        return -1;
+    }
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError, "ndarray data cannot be deleted");
+        return -1;
+    }
+    if (dest-&gt;ndim == 0) {
+        if (key == Py_Ellipsis ||
+            (PyTuple_Check(key) &amp;&amp; PyTuple_GET_SIZE(key) == 0)) {
+            ptr = (char *)dest-&gt;buf;
+            return pack_single(ptr, value, dest-&gt;format, dest-&gt;itemsize);
+        }
+        else {
+            PyErr_SetString(PyExc_TypeError, "invalid indexing of scalar");
+            return -1;
+        }
+    }
+    if (dest-&gt;ndim == 1 &amp;&amp; PyIndex_Check(key)) {
+        /* rvalue must be a single item */
+        index = PyLong_AsSsize_t(key);
+        if (index == -1 &amp;&amp; PyErr_Occurred())
+            return -1;
+        else {
+            ptr = ptr_from_index(dest, index);
+            if (ptr == NULL)
+                return -1;
+        }
+        return pack_single(ptr, value, dest-&gt;format, dest-&gt;itemsize);
+    }
+
+    /* rvalue must be an exporter */
+    if (PyObject_GetBuffer(value, &amp;src, PyBUF_FULL_RO) == -1)
+        return -1;
+
+    nd = (NDArrayObject *)ndarray_subscript(self, key);
+    if (nd != NULL) {
+        dest = &amp;nd-&gt;head-&gt;base;
+        ret = copy_buffer(dest, &amp;src);
+        Py_DECREF(nd);
+    }
+
+    PyBuffer_Release(&amp;src);
+    return ret;
+}
+
+static PyObject *
+slice_indices(PyObject *self, PyObject *args)
+{
+    PyObject *ret, *key, *tmp;
+    Py_ssize_t s[4]; /* start, stop, step, slicelength */
+    Py_ssize_t i, len;
+
+    if (!PyArg_ParseTuple(args, "On", &amp;key, &amp;len)) {
+        return NULL;
+    }
+    if (!PySlice_Check(key)) {
+        PyErr_SetString(PyExc_TypeError,
+            "first argument must be a slice object");
+        return NULL;
+    }
+    if (PySlice_Unpack(key, &amp;s[0], &amp;s[1], &amp;s[2]) &lt; 0) {
+        return NULL;
+    }
+    s[3] = PySlice_AdjustIndices(len, &amp;s[0], &amp;s[1], s[2]);
+
+    ret = PyTuple_New(4);
+    if (ret == NULL)
+        return NULL;
+
+    for (i = 0; i &lt; 4; i++) {
+        tmp = PyLong_FromSsize_t(s[i]);
+        if (tmp == NULL)
+            goto error;
+<span style = "background-color:#fdd">        PyTuple_SET_ITEM(ret, i, tmp);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+    }
+
+    return ret;
+
+error:
+    Py_DECREF(ret);
+    return NULL;
+}
+
+
+static PyMappingMethods ndarray_as_mapping = {
+    NULL,                                 /* mp_length */
+    (binaryfunc)ndarray_subscript,        /* mp_subscript */
+    (objobjargproc)ndarray_ass_subscript  /* mp_ass_subscript */
+};
+
+static PySequenceMethods ndarray_as_sequence = {
+        0,                                /* sq_length */
+        0,                                /* sq_concat */
+        0,                                /* sq_repeat */
+        (ssizeargfunc)ndarray_item,       /* sq_item */
+};
+
+
+/**************************************************************************/
+/*                                 getters                                */
+/**************************************************************************/
+
+static PyObject *
+ssize_array_as_tuple(Py_ssize_t *array, Py_ssize_t len)
+{
+    PyObject *tuple, *x;
+    Py_ssize_t i;
+
+    if (array == NULL)
+        return PyTuple_New(0);
+
+    tuple = PyTuple_New(len);
+    if (tuple == NULL)
+        return NULL;
+
+    for (i = 0; i &lt; len; i++) {
+        x = PyLong_FromSsize_t(array[i]);
+        if (x == NULL) {
+            Py_DECREF(tuple);
+            return NULL;
+        }
+<span style = "background-color:#fdd">        PyTuple_SET_ITEM(tuple, i, x);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+    }
+
+    return tuple;
+}
+
+static PyObject *
+ndarray_get_flags(NDArrayObject *self, void *closure)
+{
+    return PyLong_FromLong(self-&gt;head-&gt;flags);
+}
+
+static PyObject *
+ndarray_get_offset(NDArrayObject *self, void *closure)
+{
+    ndbuf_t *ndbuf = self-&gt;head;
+    return PyLong_FromSsize_t(ndbuf-&gt;offset);
+}
+
+static PyObject *
+ndarray_get_obj(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+
+    if (base-&gt;obj == NULL) {
+        Py_RETURN_NONE;
+    }
+    Py_INCREF(base-&gt;obj);
+    return base-&gt;obj;
+}
+
+static PyObject *
+ndarray_get_nbytes(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+    return PyLong_FromSsize_t(base-&gt;len);
+}
+
+static PyObject *
+ndarray_get_readonly(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+    return PyBool_FromLong(base-&gt;readonly);
+}
+
+static PyObject *
+ndarray_get_itemsize(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+    return PyLong_FromSsize_t(base-&gt;itemsize);
+}
+
+static PyObject *
+ndarray_get_format(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+    char *fmt = base-&gt;format ? base-&gt;format : "";
+    return PyUnicode_FromString(fmt);
+}
+
+static PyObject *
+ndarray_get_ndim(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+    return PyLong_FromSsize_t(base-&gt;ndim);
+}
+
+static PyObject *
+ndarray_get_shape(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+    return ssize_array_as_tuple(base-&gt;shape, base-&gt;ndim);
+}
+
+static PyObject *
+ndarray_get_strides(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+    return ssize_array_as_tuple(base-&gt;strides, base-&gt;ndim);
+}
+
+static PyObject *
+ndarray_get_suboffsets(NDArrayObject *self, void *closure)
+{
+    Py_buffer *base = &amp;self-&gt;head-&gt;base;
+    return ssize_array_as_tuple(base-&gt;suboffsets, base-&gt;ndim);
+}
+
+static PyObject *
+ndarray_c_contig(PyObject *self, PyObject *dummy)
+{
+    NDArrayObject *nd = (NDArrayObject *)self;
+    int ret = PyBuffer_IsContiguous(&amp;nd-&gt;head-&gt;base, 'C');
+
+    if (ret != ND_C_CONTIGUOUS(nd-&gt;head-&gt;flags)) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "results from PyBuffer_IsContiguous() and flags differ");
+        return NULL;
+    }
+    return PyBool_FromLong(ret);
+}
+
+static PyObject *
+ndarray_fortran_contig(PyObject *self, PyObject *dummy)
+{
+    NDArrayObject *nd = (NDArrayObject *)self;
+    int ret = PyBuffer_IsContiguous(&amp;nd-&gt;head-&gt;base, 'F');
+
+    if (ret != ND_FORTRAN_CONTIGUOUS(nd-&gt;head-&gt;flags)) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "results from PyBuffer_IsContiguous() and flags differ");
+        return NULL;
+    }
+    return PyBool_FromLong(ret);
+}
+
+static PyObject *
+ndarray_contig(PyObject *self, PyObject *dummy)
+{
+    NDArrayObject *nd = (NDArrayObject *)self;
+    int ret = PyBuffer_IsContiguous(&amp;nd-&gt;head-&gt;base, 'A');
+
+    if (ret != ND_ANY_CONTIGUOUS(nd-&gt;head-&gt;flags)) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "results from PyBuffer_IsContiguous() and flags differ");
+        return NULL;
+    }
+    return PyBool_FromLong(ret);
+}
+
+
+static PyGetSetDef ndarray_getset [] =
+{
+  /* ndbuf */
+  { "flags",        (getter)ndarray_get_flags,      NULL, NULL, NULL},
+  { "offset",       (getter)ndarray_get_offset,     NULL, NULL, NULL},
+  /* ndbuf.base */
+  { "obj",          (getter)ndarray_get_obj,        NULL, NULL, NULL},
+  { "nbytes",       (getter)ndarray_get_nbytes,     NULL, NULL, NULL},
+  { "readonly",     (getter)ndarray_get_readonly,   NULL, NULL, NULL},
+  { "itemsize",     (getter)ndarray_get_itemsize,   NULL, NULL, NULL},
+  { "format",       (getter)ndarray_get_format,     NULL, NULL, NULL},
+  { "ndim",         (getter)ndarray_get_ndim,       NULL, NULL, NULL},
+  { "shape",        (getter)ndarray_get_shape,      NULL, NULL, NULL},
+  { "strides",      (getter)ndarray_get_strides,    NULL, NULL, NULL},
+  { "suboffsets",   (getter)ndarray_get_suboffsets, NULL, NULL, NULL},
+  { "c_contiguous", (getter)ndarray_c_contig,       NULL, NULL, NULL},
+  { "f_contiguous", (getter)ndarray_fortran_contig, NULL, NULL, NULL},
+  { "contiguous",   (getter)ndarray_contig,         NULL, NULL, NULL},
+  {NULL}
+};
+
+static PyObject *
+ndarray_tolist(PyObject *self, PyObject *dummy)
+{
+    return ndarray_as_list((NDArrayObject *)self);
+}
+
+static PyObject *
+ndarray_tobytes(PyObject *self, PyObject *dummy)
+{
+    ndbuf_t *ndbuf = ((NDArrayObject *)self)-&gt;head;
+    Py_buffer *src = &amp;ndbuf-&gt;base;
+    Py_buffer dest;
+    PyObject *ret = NULL;
+    char *mem;
+
+    if (ND_C_CONTIGUOUS(ndbuf-&gt;flags))
+        return PyBytes_FromStringAndSize(src-&gt;buf, src-&gt;len);
+
+    assert(src-&gt;shape != NULL);
+    assert(src-&gt;strides != NULL);
+    assert(src-&gt;ndim &gt; 0);
+
+    mem = PyMem_Malloc(src-&gt;len);
+    if (mem == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    dest = *src;
+    dest.buf = mem;
+    dest.suboffsets = NULL;
+    dest.strides = strides_from_shape(ndbuf, 0);
+    if (dest.strides == NULL)
+        goto out;
+    if (copy_buffer(&amp;dest, src) &lt; 0)
+        goto out;
+
+    ret = PyBytes_FromStringAndSize(mem, src-&gt;len);
+
+out:
+    PyMem_XFree(dest.strides);
+    PyMem_Free(mem);
+    return ret;
+}
+
+/* add redundant (negative) suboffsets for testing */
+static PyObject *
+ndarray_add_suboffsets(PyObject *self, PyObject *dummy)
+{
+    NDArrayObject *nd = (NDArrayObject *)self;
+    Py_buffer *base = &amp;nd-&gt;head-&gt;base;
+    Py_ssize_t i;
+
+    if (base-&gt;suboffsets != NULL) {
+        PyErr_SetString(PyExc_TypeError,
+            "cannot add suboffsets to PIL-style array");
+            return NULL;
+    }
+    if (base-&gt;strides == NULL) {
+        PyErr_SetString(PyExc_TypeError,
+            "cannot add suboffsets to array without strides");
+            return NULL;
+    }
+
+    base-&gt;suboffsets = PyMem_Malloc(base-&gt;ndim * (sizeof *base-&gt;suboffsets));
+    if (base-&gt;suboffsets == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    for (i = 0; i &lt; base-&gt;ndim; i++)
+        base-&gt;suboffsets[i] = -1;
+
+    nd-&gt;head-&gt;flags &amp;= ~(ND_C|ND_FORTRAN);
+
+    Py_RETURN_NONE;
+}
+
+/* Test PyMemoryView_FromBuffer(): return a memoryview from a static buffer.
+   Obviously this is fragile and only one such view may be active at any
+   time. Never use anything like this in real code! */
+static char *infobuf = NULL;
+static PyObject *
+ndarray_memoryview_from_buffer(PyObject *self, PyObject *dummy)
+{
+    const NDArrayObject *nd = (NDArrayObject *)self;
+    const Py_buffer *view = &amp;nd-&gt;head-&gt;base;
+    const ndbuf_t *ndbuf;
+    static char format[ND_MAX_NDIM+1];
+    static Py_ssize_t shape[ND_MAX_NDIM];
+    static Py_ssize_t strides[ND_MAX_NDIM];
+    static Py_ssize_t suboffsets[ND_MAX_NDIM];
+    static Py_buffer info;
+    char *p;
+
+    if (!ND_IS_CONSUMER(nd))
+        ndbuf = nd-&gt;head; /* self is ndarray/original exporter */
+    else if (NDArray_Check(view-&gt;obj) &amp;&amp; !ND_IS_CONSUMER(view-&gt;obj))
+        /* self is ndarray and consumer from ndarray/original exporter */
+        ndbuf = ((NDArrayObject *)view-&gt;obj)-&gt;head;
+    else {
+        PyErr_SetString(PyExc_TypeError,
+        "memoryview_from_buffer(): ndarray must be original exporter or "
+        "consumer from ndarray/original exporter");
+         return NULL;
+    }
+
+    info = *view;
+    p = PyMem_Realloc(infobuf, ndbuf-&gt;len);
+    if (p == NULL) {
+        PyMem_Free(infobuf);
+        PyErr_NoMemory();
+        infobuf = NULL;
+        return NULL;
+    }
+    else {
+        infobuf = p;
+    }
+    /* copy the complete raw data */
+    memcpy(infobuf, ndbuf-&gt;data, ndbuf-&gt;len);
+    info.buf = infobuf + ((char *)view-&gt;buf - ndbuf-&gt;data);
+
+    if (view-&gt;format) {
+        if (strlen(view-&gt;format) &gt; ND_MAX_NDIM) {
+            PyErr_Format(PyExc_TypeError,
+                "memoryview_from_buffer: format is limited to %d characters",
+                ND_MAX_NDIM);
+                return NULL;
+        }
+        strcpy(format, view-&gt;format);
+        info.format = format;
+    }
+    if (view-&gt;ndim &gt; ND_MAX_NDIM) {
+        PyErr_Format(PyExc_TypeError,
+            "memoryview_from_buffer: ndim is limited to %d", ND_MAX_NDIM);
+            return NULL;
+    }
+    if (view-&gt;shape) {
+        memcpy(shape, view-&gt;shape, view-&gt;ndim * sizeof(Py_ssize_t));
+        info.shape = shape;
+    }
+    if (view-&gt;strides) {
+        memcpy(strides, view-&gt;strides, view-&gt;ndim * sizeof(Py_ssize_t));
+        info.strides = strides;
+    }
+    if (view-&gt;suboffsets) {
+        memcpy(suboffsets, view-&gt;suboffsets, view-&gt;ndim * sizeof(Py_ssize_t));
+        info.suboffsets = suboffsets;
+    }
+
+    return PyMemoryView_FromBuffer(&amp;info);
+}
+
+/* Get a single item from bufobj at the location specified by seq.
+   seq is a list or tuple of indices. The purpose of this function
+   is to check other functions against PyBuffer_GetPointer(). */
+static PyObject *
+get_pointer(PyObject *self, PyObject *args)
+{
+    PyObject *ret = NULL, *bufobj, *seq;
+    Py_buffer view;
+    Py_ssize_t indices[ND_MAX_NDIM];
+    Py_ssize_t i;
+    void *ptr;
+
+    if (!PyArg_ParseTuple(args, "OO", &amp;bufobj, &amp;seq)) {
+        return NULL;
+    }
+
+    CHECK_LIST_OR_TUPLE(seq);
+    if (PyObject_GetBuffer(bufobj, &amp;view, PyBUF_FULL_RO) &lt; 0)
+        return NULL;
+
+    if (view.ndim &gt; ND_MAX_NDIM) {
+        PyErr_Format(PyExc_ValueError,
+            "get_pointer(): ndim &gt; %d", ND_MAX_NDIM);
+        goto out;
+    }
+    if (PySequence_Fast_GET_SIZE(seq) != view.ndim) {
+        PyErr_SetString(PyExc_ValueError,
+            "get_pointer(): len(indices) != ndim");
+        goto out;
+    }
+
+    for (i = 0; i &lt; view.ndim; i++) {
+<span style = "background-color:#fdd">        PyObject *x = PySequence_Fast_GET_ITEM(seq, i);        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+        indices[i] = PyLong_AsSsize_t(x);
+        if (PyErr_Occurred())
+            goto out;
+        if (indices[i] &lt; 0 || indices[i] &gt;= view.shape[i]) {
+            PyErr_Format(PyExc_ValueError,
+                "get_pointer(): invalid index %zd at position %zd",
+                indices[i], i);
+            goto out;
+        }
+    }
+
+    ptr = PyBuffer_GetPointer(&amp;view, indices);
+    ret = unpack_single(ptr, view.format, view.itemsize);
+
+out:
+    PyBuffer_Release(&amp;view);
+    return ret;
+}
+
+static PyObject *
+get_sizeof_void_p(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    return PyLong_FromSize_t(sizeof(void *));
+}
+
+static char
+get_ascii_order(PyObject *order)
+{
+    PyObject *ascii_order;
+    char ord;
+
+    if (!PyUnicode_Check(order)) {
+        PyErr_SetString(PyExc_TypeError,
+            "order must be a string");
+        return CHAR_MAX;
+    }
+
+    ascii_order = PyUnicode_AsASCIIString(order);
+    if (ascii_order == NULL) {
+        return CHAR_MAX;
+    }
+
+    ord = PyBytes_AS_STRING(ascii_order)[0];
+    Py_DECREF(ascii_order);
+
+    if (ord != 'C' &amp;&amp; ord != 'F' &amp;&amp; ord != 'A') {
+        PyErr_SetString(PyExc_ValueError,
+            "invalid order, must be C, F or A");
+        return CHAR_MAX;
+    }
+
+    return ord;
+}
+
+/* Get a contiguous memoryview. */
+static PyObject *
+get_contiguous(PyObject *self, PyObject *args)
+{
+    PyObject *obj;
+    PyObject *buffertype;
+    PyObject *order;
+    long type;
+    char ord;
+
+    if (!PyArg_ParseTuple(args, "OOO", &amp;obj, &amp;buffertype, &amp;order)) {
+        return NULL;
+    }
+
+    if (!PyLong_Check(buffertype)) {
+        PyErr_SetString(PyExc_TypeError,
+            "buffertype must be PyBUF_READ or PyBUF_WRITE");
+        return NULL;
+    }
+
+    type = PyLong_AsLong(buffertype);
+    if (type == -1 &amp;&amp; PyErr_Occurred()) {
+        return NULL;
+    }
+    if (type != PyBUF_READ &amp;&amp; type != PyBUF_WRITE) {
+        PyErr_SetString(PyExc_ValueError,
+            "invalid buffer type");
+        return NULL;
+    }
+
+    ord = get_ascii_order(order);
+    if (ord == CHAR_MAX)
+        return NULL;
+
+    return PyMemoryView_GetContiguous(obj, (int)type, ord);
+}
+
+/* PyBuffer_ToContiguous() */
+static PyObject *
+py_buffer_to_contiguous(PyObject *self, PyObject *args)
+{
+    PyObject *obj;
+    PyObject *order;
+    PyObject *ret = NULL;
+    int flags;
+    char ord;
+    Py_buffer view;
+    char *buf = NULL;
+
+    if (!PyArg_ParseTuple(args, "OOi", &amp;obj, &amp;order, &amp;flags)) {
+        return NULL;
+    }
+
+    if (PyObject_GetBuffer(obj, &amp;view, flags) &lt; 0) {
+        return NULL;
+    }
+
+    ord = get_ascii_order(order);
+    if (ord == CHAR_MAX) {
+        goto out;
+    }
+
+    buf = PyMem_Malloc(view.len);
+    if (buf == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+
+    if (PyBuffer_ToContiguous(buf, &amp;view, view.len, ord) &lt; 0) {
+        goto out;
+    }
+
+    ret = PyBytes_FromStringAndSize(buf, view.len);
+
+out:
+    PyBuffer_Release(&amp;view);
+    PyMem_XFree(buf);
+    return ret;
+}
+
+static int
+fmtcmp(const char *fmt1, const char *fmt2)
+{
+    if (fmt1 == NULL) {
+        return fmt2 == NULL || strcmp(fmt2, "B") == 0;
+    }
+    if (fmt2 == NULL) {
+        return fmt1 == NULL || strcmp(fmt1, "B") == 0;
+    }
+    return strcmp(fmt1, fmt2) == 0;
+}
+
+static int
+arraycmp(const Py_ssize_t *a1, const Py_ssize_t *a2, const Py_ssize_t *shape,
+         Py_ssize_t ndim)
+{
+    Py_ssize_t i;
+
+
+    for (i = 0; i &lt; ndim; i++) {
+        if (shape &amp;&amp; shape[i] &lt;= 1) {
+            /* strides can differ if the dimension is less than 2 */
+            continue;
+        }
+        if (a1[i] != a2[i]) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+/* Compare two contiguous buffers for physical equality. */
+static PyObject *
+cmp_contig(PyObject *self, PyObject *args)
+{
+    PyObject *b1, *b2; /* buffer objects */
+    Py_buffer v1, v2;
+    PyObject *ret;
+    int equal = 0;
+
+    if (!PyArg_ParseTuple(args, "OO", &amp;b1, &amp;b2)) {
+        return NULL;
+    }
+
+    if (PyObject_GetBuffer(b1, &amp;v1, PyBUF_FULL_RO) &lt; 0) {
+        PyErr_SetString(PyExc_TypeError,
+            "cmp_contig: first argument does not implement the buffer "
+            "protocol");
+        return NULL;
+    }
+    if (PyObject_GetBuffer(b2, &amp;v2, PyBUF_FULL_RO) &lt; 0) {
+        PyErr_SetString(PyExc_TypeError,
+            "cmp_contig: second argument does not implement the buffer "
+            "protocol");
+        PyBuffer_Release(&amp;v1);
+        return NULL;
+    }
+
+    if (!(PyBuffer_IsContiguous(&amp;v1, 'C')&amp;&amp;PyBuffer_IsContiguous(&amp;v2, 'C')) &amp;&amp;
+        !(PyBuffer_IsContiguous(&amp;v1, 'F')&amp;&amp;PyBuffer_IsContiguous(&amp;v2, 'F'))) {
+        goto result;
+    }
+
+    /* readonly may differ if created from non-contiguous */
+    if (v1.len != v2.len ||
+        v1.itemsize != v2.itemsize ||
+        v1.ndim != v2.ndim ||
+        !fmtcmp(v1.format, v2.format) ||
+        !!v1.shape != !!v2.shape ||
+        !!v1.strides != !!v2.strides ||
+        !!v1.suboffsets != !!v2.suboffsets) {
+        goto result;
+    }
+
+    if ((v1.shape &amp;&amp; !arraycmp(v1.shape, v2.shape, NULL, v1.ndim)) ||
+        (v1.strides &amp;&amp; !arraycmp(v1.strides, v2.strides, v1.shape, v1.ndim)) ||
+        (v1.suboffsets &amp;&amp; !arraycmp(v1.suboffsets, v2.suboffsets, NULL,
+                                    v1.ndim))) {
+        goto result;
+    }
+
+    if (memcmp((char *)v1.buf, (char *)v2.buf, v1.len) != 0) {
+        goto result;
+    }
+
+    equal = 1;
+
+result:
+    PyBuffer_Release(&amp;v1);
+    PyBuffer_Release(&amp;v2);
+
+    ret = equal ? Py_True : Py_False;
+    Py_INCREF(ret);
+    return ret;
+}
+
+static PyObject *
+is_contiguous(PyObject *self, PyObject *args)
+{
+    PyObject *obj;
+    PyObject *order;
+    PyObject *ret = NULL;
+    Py_buffer view, *base;
+    char ord;
+
+    if (!PyArg_ParseTuple(args, "OO", &amp;obj, &amp;order)) {
+        return NULL;
+    }
+
+    ord = get_ascii_order(order);
+    if (ord == CHAR_MAX) {
+        return NULL;
+    }
+
+    if (NDArray_Check(obj)) {
+        /* Skip the buffer protocol to check simple etc. buffers directly. */
+        base = &amp;((NDArrayObject *)obj)-&gt;head-&gt;base;
+        ret = PyBuffer_IsContiguous(base, ord) ? Py_True : Py_False;
+    }
+    else {
+        if (PyObject_GetBuffer(obj, &amp;view, PyBUF_FULL_RO) &lt; 0) {
+            PyErr_SetString(PyExc_TypeError,
+                "is_contiguous: object does not implement the buffer "
+                "protocol");
+            return NULL;
+        }
+        ret = PyBuffer_IsContiguous(&amp;view, ord) ? Py_True : Py_False;
+        PyBuffer_Release(&amp;view);
+    }
+
+    Py_INCREF(ret);
+    return ret;
+}
+
+static Py_hash_t
+ndarray_hash(PyObject *self)
+{
+    const NDArrayObject *nd = (NDArrayObject *)self;
+    const Py_buffer *view = &amp;nd-&gt;head-&gt;base;
+    PyObject *bytes;
+    Py_hash_t hash;
+
+    if (!view-&gt;readonly) {
+         PyErr_SetString(PyExc_ValueError,
+             "cannot hash writable ndarray object");
+         return -1;
+    }
+    if (view-&gt;obj != NULL &amp;&amp; PyObject_Hash(view-&gt;obj) == -1) {
+         return -1;
+    }
+
+    bytes = ndarray_tobytes(self, NULL);
+    if (bytes == NULL) {
+        return -1;
+    }
+
+    hash = PyObject_Hash(bytes);
+    Py_DECREF(bytes);
+    return hash;
+}
+
+
+static PyMethodDef ndarray_methods [] =
+{
+    { "tolist", ndarray_tolist, METH_NOARGS, NULL },
+    { "tobytes", ndarray_tobytes, METH_NOARGS, NULL },
+    { "push", (PyCFunction)(void(*)(void))ndarray_push, METH_VARARGS|METH_KEYWORDS, NULL },
+    { "pop", ndarray_pop, METH_NOARGS, NULL },
+    { "add_suboffsets", ndarray_add_suboffsets, METH_NOARGS, NULL },
+    { "memoryview_from_buffer", ndarray_memoryview_from_buffer, METH_NOARGS, NULL },
+    {NULL}
+};
+
+static PyTypeObject NDArray_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "ndarray",                   /* Name of this type */
+    sizeof(NDArrayObject),       /* Basic object size */
+    0,                           /* Item size for varobject */
+    (destructor)ndarray_dealloc, /* tp_dealloc */
+    0,                           /* tp_vectorcall_offset */
+    0,                           /* tp_getattr */
+    0,                           /* tp_setattr */
+    0,                           /* tp_as_async */
+    0,                           /* tp_repr */
+    0,                           /* tp_as_number */
+    &amp;ndarray_as_sequence,        /* tp_as_sequence */
+    &amp;ndarray_as_mapping,         /* tp_as_mapping */
+    (hashfunc)ndarray_hash,      /* tp_hash */
+    0,                           /* tp_call */
+    0,                           /* tp_str */
+    PyObject_GenericGetAttr,     /* tp_getattro */
+    0,                           /* tp_setattro */
+    &amp;ndarray_as_buffer,          /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,          /* tp_flags */
+    0,                           /* tp_doc */
+    0,                           /* tp_traverse */
+    0,                           /* tp_clear */
+    0,                           /* tp_richcompare */
+    0,                           /* tp_weaklistoffset */
+    0,                           /* tp_iter */
+    0,                           /* tp_iternext */
+    ndarray_methods,             /* tp_methods */
+    0,                           /* tp_members */
+    ndarray_getset,              /* tp_getset */
+    0,                           /* tp_base */
+    0,                           /* tp_dict */
+    0,                           /* tp_descr_get */
+    0,                           /* tp_descr_set */
+    0,                           /* tp_dictoffset */
+    ndarray_init,                /* tp_init */
+    0,                           /* tp_alloc */
+    ndarray_new,                 /* tp_new */
+};
+
+/**************************************************************************/
+/*                          StaticArray Object                            */
+/**************************************************************************/
+
+static PyTypeObject StaticArray_Type;
+
+typedef struct {
+    PyObject_HEAD
+    int legacy_mode; /* if true, use the view.obj==NULL hack */
+} StaticArrayObject;
+
+static char static_mem[12] = {0,1,2,3,4,5,6,7,8,9,10,11};
+static Py_ssize_t static_shape[1] = {12};
+static Py_ssize_t static_strides[1] = {1};
+static Py_buffer static_buffer = {
+    static_mem,     /* buf */
+    NULL,           /* obj */
+    12,             /* len */
+    1,              /* itemsize */
+    1,              /* readonly */
+    1,              /* ndim */
+    "B",            /* format */
+    static_shape,   /* shape */
+    static_strides, /* strides */
+    NULL,           /* suboffsets */
+    NULL            /* internal */
+};
+
+static PyObject *
+staticarray_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    return (PyObject *)PyObject_New(StaticArrayObject, &amp;StaticArray_Type);
+}
+
+static int
+staticarray_init(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    StaticArrayObject *a = (StaticArrayObject *)self;
+    static char *kwlist[] = {
+        "legacy_mode", NULL
+    };
+    PyObject *legacy_mode = Py_False;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|O", kwlist, &amp;legacy_mode))
+        return -1;
+
+    a-&gt;legacy_mode = (legacy_mode != Py_False);
+    return 0;
+}
+
+static void
+staticarray_dealloc(StaticArrayObject *self)
+{
+    PyObject_Del(self);
+}
+
+/* Return a buffer for a PyBUF_FULL_RO request. Flags are not checked,
+   which makes this object a non-compliant exporter! */
+static int
+staticarray_getbuf(StaticArrayObject *self, Py_buffer *view, int flags)
+{
+    *view = static_buffer;
+
+    if (self-&gt;legacy_mode) {
+        view-&gt;obj = NULL; /* Don't use this in new code. */
+    }
+    else {
+        view-&gt;obj = (PyObject *)self;
+        Py_INCREF(view-&gt;obj);
+    }
+
+    return 0;
+}
+
+static PyBufferProcs staticarray_as_buffer = {
+    (getbufferproc)staticarray_getbuf, /* bf_getbuffer */
+    NULL,                              /* bf_releasebuffer */
+};
+
+static PyTypeObject StaticArray_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "staticarray",                   /* Name of this type */
+    sizeof(StaticArrayObject),       /* Basic object size */
+    0,                               /* Item size for varobject */
+    (destructor)staticarray_dealloc, /* tp_dealloc */
+    0,                               /* tp_vectorcall_offset */
+    0,                               /* tp_getattr */
+    0,                               /* tp_setattr */
+    0,                               /* tp_as_async */
+    0,                               /* tp_repr */
+    0,                               /* tp_as_number */
+    0,                               /* tp_as_sequence */
+    0,                               /* tp_as_mapping */
+    0,                               /* tp_hash */
+    0,                               /* tp_call */
+    0,                               /* tp_str */
+    0,                               /* tp_getattro */
+    0,                               /* tp_setattro */
+    &amp;staticarray_as_buffer,          /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,              /* tp_flags */
+    0,                               /* tp_doc */
+    0,                               /* tp_traverse */
+    0,                               /* tp_clear */
+    0,                               /* tp_richcompare */
+    0,                               /* tp_weaklistoffset */
+    0,                               /* tp_iter */
+    0,                               /* tp_iternext */
+    0,                               /* tp_methods */
+    0,                               /* tp_members */
+    0,                               /* tp_getset */
+    0,                               /* tp_base */
+    0,                               /* tp_dict */
+    0,                               /* tp_descr_get */
+    0,                               /* tp_descr_set */
+    0,                               /* tp_dictoffset */
+    staticarray_init,                /* tp_init */
+    0,                               /* tp_alloc */
+    staticarray_new,                 /* tp_new */
+};
+
+
+static struct PyMethodDef _testbuffer_functions[] = {
+    {"slice_indices", slice_indices, METH_VARARGS, NULL},
+    {"get_pointer", get_pointer, METH_VARARGS, NULL},
+    {"get_sizeof_void_p", get_sizeof_void_p, METH_NOARGS, NULL},
+    {"get_contiguous", get_contiguous, METH_VARARGS, NULL},
+    {"py_buffer_to_contiguous", py_buffer_to_contiguous, METH_VARARGS, NULL},
+    {"is_contiguous", is_contiguous, METH_VARARGS, NULL},
+    {"cmp_contig", cmp_contig, METH_VARARGS, NULL},
+    {NULL, NULL}
+};
+
+static struct PyModuleDef _testbuffermodule = {
+    PyModuleDef_HEAD_INIT,
+    "_testbuffer",
+    NULL,
+    -1,
+    _testbuffer_functions,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
+
+
+PyMODINIT_FUNC
+PyInit__testbuffer(void)
+{
+    PyObject *m;
+
+    m = PyModule_Create(&amp;_testbuffermodule);
+    if (m == NULL)
+        return NULL;
+
+    Py_TYPE(&amp;NDArray_Type) = &amp;PyType_Type;
+    Py_INCREF(&amp;NDArray_Type);
+    PyModule_AddObject(m, "ndarray", (PyObject *)&amp;NDArray_Type);
+
+    Py_TYPE(&amp;StaticArray_Type) = &amp;PyType_Type;
+    Py_INCREF(&amp;StaticArray_Type);
+    PyModule_AddObject(m, "staticarray", (PyObject *)&amp;StaticArray_Type);
+
+    structmodule = PyImport_ImportModule("struct");
+    if (structmodule == NULL)
+        return NULL;
+
+    Struct = PyObject_GetAttrString(structmodule, "Struct");
+    calcsize = PyObject_GetAttrString(structmodule, "calcsize");
+    if (Struct == NULL || calcsize == NULL)
+        return NULL;
+
+    simple_format = PyUnicode_FromString(simple_fmt);
+    if (simple_format == NULL)
+        return NULL;
+
+    PyModule_AddIntMacro(m, ND_MAX_NDIM);
+    PyModule_AddIntMacro(m, ND_VAREXPORT);
+    PyModule_AddIntMacro(m, ND_WRITABLE);
+    PyModule_AddIntMacro(m, ND_FORTRAN);
+    PyModule_AddIntMacro(m, ND_SCALAR);
+    PyModule_AddIntMacro(m, ND_PIL);
+    PyModule_AddIntMacro(m, ND_GETBUF_FAIL);
+    PyModule_AddIntMacro(m, ND_GETBUF_UNDEFINED);
+    PyModule_AddIntMacro(m, ND_REDIRECT);
+
+    PyModule_AddIntMacro(m, PyBUF_SIMPLE);
+    PyModule_AddIntMacro(m, PyBUF_WRITABLE);
+    PyModule_AddIntMacro(m, PyBUF_FORMAT);
+    PyModule_AddIntMacro(m, PyBUF_ND);
+    PyModule_AddIntMacro(m, PyBUF_STRIDES);
+    PyModule_AddIntMacro(m, PyBUF_INDIRECT);
+    PyModule_AddIntMacro(m, PyBUF_C_CONTIGUOUS);
+    PyModule_AddIntMacro(m, PyBUF_F_CONTIGUOUS);
+    PyModule_AddIntMacro(m, PyBUF_ANY_CONTIGUOUS);
+    PyModule_AddIntMacro(m, PyBUF_FULL);
+    PyModule_AddIntMacro(m, PyBUF_FULL_RO);
+    PyModule_AddIntMacro(m, PyBUF_RECORDS);
+    PyModule_AddIntMacro(m, PyBUF_RECORDS_RO);
+    PyModule_AddIntMacro(m, PyBUF_STRIDED);
+    PyModule_AddIntMacro(m, PyBUF_STRIDED_RO);
+    PyModule_AddIntMacro(m, PyBUF_CONTIG);
+    PyModule_AddIntMacro(m, PyBUF_CONTIG_RO);
+
+    PyModule_AddIntMacro(m, PyBUF_READ);
+    PyModule_AddIntMacro(m, PyBUF_WRITE);
+
+    return m;
+}
+
+
+
+      </pre>
+    </body>
+</html>

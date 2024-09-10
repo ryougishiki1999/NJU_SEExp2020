@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/http/httpserver.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "httpserver.h"
+
+#include &lt;string&gt;
+
+#include "tcpserver.h"
+#include "log.h"
+#include "httpconnection.h"
+#include "httprequest.h"
+#include "httpresponse.h"
+#include "wsconnection.h"
+#include "connection.h"
+#include "httpparser.h"
+#include "wsutil.h"
+
+using namespace std;
+
+namespace tnet
+{
+    static string rootPath = "/";
+
+    void httpNotFoundCallback(const HttpConnectionPtr_t&amp; conn, const HttpRequest&amp; request)
+    {
+        HttpResponse resp;
+        resp.statusCode = 404;
+        
+        conn-&gt;send(resp);      
+    } 
+
+
+    HttpServer::HttpServer(TcpServer* server)
+        : m_server(server)
+    {
+    }
+   
+    HttpServer::~HttpServer()
+    {
+        
+    }
+     
+    int HttpServer::listen(const Address&amp; addr)
+    {
+        return m_server-&gt;listen(addr, std::bind(&amp;HttpServer::onConnEvent, this, _1, _2, _3));     
+    }
+
+    void HttpServer::onConnEvent(const ConnectionPtr_t&amp; conn, ConnEvent event, const void* context)
+    {
+        switch(event)
+        {
+            case Conn_EstablishedEvent:
+                {
+                    HttpConnectionPtr_t httpConn = std::make_shared&lt;HttpConnection&gt;(conn, 
+                        std::bind(&amp;HttpServer::onRequest, this, _1, _2, _3, _4));
+            
+                    conn-&gt;setEventCallback(std::bind(&amp;HttpConnection::onConnEvent, httpConn, _1, _2, _3));
+                }
+                break;
+            default:
+                LOG_INFO("error when enter this");
+                return;
+        }
+    }
+    
+    void HttpServer::setHttpCallback(const string&amp; path, const HttpCallback_t&amp; callback)
+    {
+        m_httpCallbacks[path] = callback;    
+    }
+
+    void HttpServer::setWsCallback(const string&amp; path, const WsCallback_t&amp; callback)
+    {
+        m_wsCallbacks[path] = callback;    
+    }
+
+    void HttpServer::setHttpCallback(const string&amp; path, const HttpCallback_t&amp; callback, const AuthCallback_t&amp; auth)
+    {
+        setHttpCallback(path, callback);
+
+        m_authCallbacks[path] = auth;
+    }
+
+    void HttpServer::setWsCallback(const string&amp; path, const WsCallback_t&amp; callback, const AuthCallback_t&amp; auth)
+    {
+        setWsCallback(path, callback);
+
+        m_authCallbacks[path] = auth;
+    }
+
+    void HttpServer::onError(const HttpConnectionPtr_t&amp; conn, const HttpError&amp; error)
+    {
+        conn-&gt;send(error.statusCode, error.message); 
+        conn-&gt;shutDown(1000);
+    }
+
+    bool HttpServer::authRequest(const HttpConnectionPtr_t&amp; conn, const HttpRequest&amp; request)
+    {
+        auto it = m_authCallbacks.find(request.path);
+        if(it == m_authCallbacks.end())
+        {
+            return true;
+        }
+
+        HttpError err = (it-&gt;second)(request);
+        if(err.statusCode != 200)
+        {
+            onError(conn, err);
+            return false;
+        } 
+        else
+        {
+            return true;
+        }
+    }
+
+    void HttpServer::onRequest(const HttpConnectionPtr_t&amp; conn, const HttpRequest&amp; request, RequestEvent event, const void* context)
+    {
+        switch(event)
+        {
+            case Request_Upgrade:
+                onWebsocket(conn, request, context);
+                break;
+            case Request_Error:
+                onError(conn, *(HttpError*)context);
+                break;
+            case Request_Complete:
+                {
+                    map&lt;string, HttpCallback_t&gt;::iterator iter = m_httpCallbacks.find(request.path);
+                    if(iter == m_httpCallbacks.end())
+                    {
+                        httpNotFoundCallback(conn, request); 
+                    }
+                    else
+                    {
+                        if(authRequest(conn, request))
+                        { 
+                            (iter-&gt;second)(conn, request);    
+                        }
+                    }
+                }
+                break;
+            default:
+                LOG_ERROR("invalid request event %d", event);
+                break;
+        }
+    }
+
+
+    void HttpServer::onWebsocket(const HttpConnectionPtr_t&amp; conn, const HttpRequest&amp; request, const void* context)
+    {
+        map&lt;string, WsCallback_t&gt;::iterator iter = m_wsCallbacks.find(request.path);
+        if(iter == m_wsCallbacks.end())
+        {
+            onError(conn, 404);
+        }
+        else
+        {
+            if(!authRequest(conn, request))
+            {
+                return;
+            }
+
+            const StackBuffer* buffer = (const StackBuffer*)context;
+
+            ConnectionPtr_t c = conn-&gt;lockConn();
+            if(!c)
+            {
+                return;    
+            }
+
+            WsConnectionPtr_t wsConn(new WsConnection(c, iter-&gt;second));
+
+            HttpResponse resp;
+            HttpError error = WsUtil::handshake(request, resp); 
+
+            if(error.statusCode != 200)
+            {
+                onError(conn, error);
+                return;    
+            }
+
+            c-&gt;send(resp.dump());
+
+            wsConn-&gt;onOpen(&amp;request);
+
+            wsConn-&gt;onRead(c, buffer-&gt;buffer, buffer-&gt;count);
+            c-&gt;setEventCallback(std::bind(&amp;WsConnection::onConnEvent, wsConn, _1, _2, _3));
+           
+            return;
+        }
+<span style = "background-color:#fdd">    }        Memory Leak:Potential memory leak at pointer 'wsConn._M_refcount._M_pi'</span>
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,1282 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>mainwindow.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#include "mainwindow.h"
+#include&lt;QFileDialog&gt;
+#include&lt;QMessageBox&gt;
+#include"../ExplanationDialog/explanationdialog.h"
+#include"../HistoryDialog/historydialog.h"
+#include&lt;stdio.h&gt;
+#include&lt;QDateTime&gt;
+#include"../ProcessDialog/processdialog.h"
+#include"../History/History.h"
+#include "DirTreeDialog/dirtreedialog.h"
+#include&lt;set&gt;
+#include&lt;string&gt;
+using namespace std;
+#include&lt;fstream&gt;
+
+// const value of mainWindow
+const int WINDOW_WIDTH=800;
+const int WINDOW_HEIGHT=560;
+<span style = "background-color:#dfd">const QString html_enable=QStringLiteral("html");
+const QString json_enable=QStringLiteral("json");
+const QString text_enable=QStringLiteral("text");
+const QString godmode_enable=QStringLiteral("-g");
+const QString divZero_enable=QStringLiteral("hisa.DivZeroChecker");
+const QString memory_enable=QStringLiteral("hisa.MemoryChecker");
+const QString deference_enable=QStringLiteral("hisa.DereferenceChecker");
+const QString arraybound_enable=QStringLiteral("hisa.ArrayBoundChecker");
+const QString uninit_enable=QStringLiteral("hisa.UninitObjChecker");
+const QString time_enable=QStringLiteral("time");
+const QString checker_enable=QStringLiteral("checker");
+const QString desc_enale=QStringLiteral("desc");
+const QString stats_enable=QStringLiteral("stats");
+const QString config_addr=QStringLiteral("./config.txt");</span>
+const int LINEEDIT_HEIGHT=30;
+
+//initialize MainWindow and its widgets.
+//initialize options and store the results in each map
+MainWindow::MainWindow(bool &amp;is_successful,QWidget *parent) :
+<span style = "background-color:#dfd">    QMainWindow(parent)
+{
+    is_successful = true;
+    this-&gt;console_version_addr = get_console_addr();
+    if (console_version_addr.trimmed().size() == 0)</span>
+    {   
+<span style = "background-color:#fdd">        QMessageBox::critical(this, QStringLiteral("Console Version Lost"), 
+            QStringLiteral("Hisa Gui is supported by the console version,\n"
+            "we can't find correct console version address in config.txt"));
+        is_successful = false;
+        return;</span>
+    }
+
+<span style = "background-color:#dfd">    language=English;
+    command="";</span>
+    // initialize mainwindow
+<span style = "background-color:#dfd">    this-&gt;setMinimumSize(WINDOW_WIDTH, WINDOW_HEIGHT);
+    this-&gt;setWindowTitle(QStringLiteral("Hisa"));</span>
+
+    //initialize menu bar
+<span style = "background-color:#dfd">    this-&gt;menu_bar=new QMenuBar(this);
+    this-&gt;menu_bar-&gt;setObjectName(QStringLiteral("menu_bar"));
+    this-&gt;menu_bar-&gt;setGeometry(QRect(0, 0, 800, 20));
+    this-&gt;setMenuBar(menu_bar);</span>
+
+    //initialize help menu
+<span style = "background-color:#dfd">    this-&gt;help_menu=new QMenu(QStringLiteral("Help"));
+    this-&gt;help_menu-&gt;setObjectName(QStringLiteral("help_menu"));
+    this-&gt;menuBar()-&gt;addMenu(help_menu);</span>
+
+    //initialize in addr help action
+<span style = "background-color:#dfd">    this-&gt;in_addr_help=new QAction(this);
+    this-&gt;in_addr_help-&gt;setObjectName(QStringLiteral("in_addr_help"));
+    this-&gt;in_addr_help-&gt;setText(QStringLiteral("About project addr"));
+    help_menu-&gt;addAction(in_addr_help);
+    this-&gt;help_menu-&gt;addSeparator();
+    QObject::connect(in_addr_help,SIGNAL(triggered()),this,SLOT(about_in_addr()));</span>
+
+    //initialize help menu
+<span style = "background-color:#dfd">    this-&gt;options_help_menu=new QMenu(QStringLiteral("About Options"));
+    this-&gt;options_help_menu-&gt;setObjectName(QStringLiteral("options_help_menu"));
+    this-&gt;help_menu-&gt;addMenu(options_help_menu);
+    this-&gt;help_menu-&gt;addSeparator();</span>
+
+    //initialize check mode help action
+<span style = "background-color:#dfd">    this-&gt;check_mode_help=new QAction(this);
+    this-&gt;check_mode_help-&gt;setObjectName(QStringLiteral("check_mode_help"));
+    this-&gt;check_mode_help-&gt;setText(QStringLiteral("About Check Mode Options"));
+    QObject::connect(check_mode_help,SIGNAL(triggered()),this,SLOT(about_check_mode()));
+    options_help_menu-&gt;addAction(check_mode_help);
+    this-&gt;options_help_menu-&gt;addSeparator();</span>
+
+    //initialize output info help action
+<span style = "background-color:#dfd">    this-&gt;output_info_help=new QAction(this);
+    this-&gt;output_info_help-&gt;setObjectName(QStringLiteral("output_info_help"));
+    this-&gt;output_info_help-&gt;setText(QStringLiteral("About Output Info Options"));
+    QObject::connect(output_info_help,SIGNAL(triggered()),this,SLOT(about_output_info()));
+    options_help_menu-&gt;addAction(output_info_help);
+    this-&gt;options_help_menu-&gt;addSeparator();</span>
+
+    //initialize format help action
+<span style = "background-color:#dfd">    this-&gt;output_format_help=new QAction(this);
+    this-&gt;output_format_help-&gt;setObjectName(QStringLiteral("output_format_help"));
+    this-&gt;output_format_help-&gt;setText(QStringLiteral("About Report Type Options"));
+    QObject::connect(output_format_help,SIGNAL(triggered()),this,SLOT(about_output_format()));
+    options_help_menu-&gt;addAction(output_format_help);
+    this-&gt;options_help_menu-&gt;addSeparator();</span>
+
+
+    //initialize checker help action
+<span style = "background-color:#dfd">    this-&gt;checker_help=new QAction(this);
+    this-&gt;checker_help-&gt;setObjectName(QStringLiteral("checker_help"));
+    this-&gt;checker_help-&gt;setText(QStringLiteral("About Checker Options"));
+    QObject::connect(checker_help,SIGNAL(triggered()),this,SLOT(about_checker()));
+    options_help_menu-&gt;addAction(checker_help);
+    this-&gt;options_help_menu-&gt;addSeparator();</span>
+
+    //initialize help menu
+<span style = "background-color:#dfd">    this-&gt;contact_us_help=new QAction(this);
+    this-&gt;contact_us_help-&gt;setObjectName(QStringLiteral("contact_us_help"));
+    this-&gt;contact_us_help-&gt;setText(QStringLiteral("Contact us"));
+    QObject::connect(contact_us_help,SIGNAL(triggered()),this,SLOT(about_contact_us()));
+    help_menu-&gt;addAction(contact_us_help);</span>
+
+    //initialize settings menu_bar
+<span style = "background-color:#dfd">    this-&gt;settings_menu=new QMenu(QStringLiteral("Settings"));
+    this-&gt;settings_menu-&gt;setObjectName(QStringLiteral("settings_menu"));
+    this-&gt;language_menu=new QMenu(QStringLiteral("Language"));
+    this-&gt;language_menu-&gt;setObjectName(QStringLiteral("language_menu"));</span>
+
+    //initialize Chinese languag action
+<span style = "background-color:#dfd">    this-&gt;action_Chinese=new QAction(language_menu);
+    this-&gt;action_Chinese-&gt;setObjectName(QStringLiteral("action_Chinese"));
+    this-&gt;action_Chinese-&gt;setText( QStringLiteral("Chinese"));
+    this-&gt;language_menu-&gt;addAction(action_Chinese);
+    this-&gt;language_menu-&gt;addSeparator();
+    QObject::connect(action_Chinese,SIGNAL(triggered()),this,SLOT(convert_to_chinese()));</span>
+
+    //initialize English languag action
+<span style = "background-color:#dfd">    this-&gt;action_English=new QAction(language_menu);
+    this-&gt;action_English-&gt;setObjectName(QStringLiteral("action_English"));
+    this-&gt;action_English-&gt;setText(QStringLiteral("English"));
+    this-&gt;language_menu-&gt;addAction(action_English);
+    QObject::connect(action_English,SIGNAL(triggered()),this,SLOT(convert_to_english()));</span>
+
+    //initialize History setting action
+<span style = "background-color:#dfd">    this-&gt;action_history=new QAction(this);
+    this-&gt;action_history-&gt;setObjectName(QStringLiteral("action_history"));
+    this-&gt;action_history-&gt;setText(QStringLiteral("History"));
+    QObject::connect(action_history,SIGNAL(triggered()),this,SLOT(show_history()));</span>
+
+    //initialize restore default options action
+<span style = "background-color:#dfd">    this-&gt;action_rst_dft_ops=new QAction(this);
+    this-&gt;action_rst_dft_ops-&gt;setObjectName(QStringLiteral("action_rst_dft_ops"));
+    this-&gt;action_rst_dft_ops-&gt;setText(QStringLiteral("Restore Default Config"));
+    QObject::connect(action_rst_dft_ops,SIGNAL(triggered()),this,SLOT(restore_default_options()));</span>
+
+    //insert actions and menu into settings menu
+<span style = "background-color:#dfd">    this-&gt;settings_menu-&gt;addMenu(language_menu);
+    this-&gt;settings_menu-&gt;addSeparator();
+    this-&gt;settings_menu-&gt;addAction(action_history);
+    this-&gt;settings_menu-&gt;addSeparator();
+    this-&gt;settings_menu-&gt;addAction(action_rst_dft_ops);
+    this-&gt;menu_bar-&gt;addMenu(settings_menu);</span>
+
+    //initialize central widget
+<span style = "background-color:#dfd">    this-&gt;central_widget=new QWidget(this);
+    this-&gt;central_widget-&gt;setObjectName(QStringLiteral("central_widget"));</span>
+
+    //initialize global gridLayout
+<span style = "background-color:#dfd">    this-&gt;gridLayout_global = new QGridLayout(central_widget);
+    this-&gt;gridLayout_global-&gt;setObjectName(QStringLiteral("gridLayout_global"));
+    this-&gt;gridLayout_global-&gt;setSpacing(6);
+    this-&gt;gridLayout_global-&gt;setContentsMargins(11, 11, 11, 11);</span>
+
+    //initialize horizontalLayout
+<span style = "background-color:#dfd">    this-&gt;horizontalLayout = new QHBoxLayout();
+    this-&gt;horizontalLayout-&gt;setObjectName(QStringLiteral("horizontalLayout"));
+    this-&gt;horizontalLayout-&gt;setSpacing(6);</span>
+
+    //initialize input address reminder
+<span style = "background-color:#dfd">    this-&gt;in_addr_reminder_label=new QLabel(central_widget);
+    this-&gt;in_addr_reminder_label-&gt;setObjectName(QStringLiteral("in_addr_reminder_label"));
+    this-&gt;in_addr_reminder_label-&gt;setText(QStringLiteral("where is the project:  "));
+    this-&gt;horizontalLayout-&gt;addWidget(in_addr_reminder_label);</span>
+
+
+    //initialize input address LineEdit
+<span style = "background-color:#dfd">    this-&gt;in_addr_line_edit = new QLineEdit(central_widget);
+    this-&gt;in_addr_line_edit-&gt;setObjectName(QStringLiteral("in_addr_line_edit"));
+    this-&gt;in_addr_line_edit-&gt;setFixedHeight(LINEEDIT_HEIGHT);
+    this-&gt;horizontalLayout-&gt;addWidget(in_addr_line_edit);</span>
+
+    //initialize inpiut address choice button
+<span style = "background-color:#dfd">    this-&gt;choose_inaddr_button = new QPushButton(central_widget);
+    this-&gt;choose_inaddr_button-&gt;setObjectName(QStringLiteral("choose_inaddr_button"));
+    QObject::connect(this-&gt;choose_inaddr_button,SIGNAL(clicked()),this,SLOT(choose_in_addr()));
+    this-&gt;choose_inaddr_button-&gt;setText(QStringLiteral("Browse Source..."));
+    this-&gt;horizontalLayout-&gt;addWidget(choose_inaddr_button);</span>
+
+<span style = "background-color:#dfd">    this-&gt;gridLayout_global-&gt;addLayout(horizontalLayout,</span>
+                                       0, 0, 1, 1);
+
+    //initialize horizontalLayout_2
+<span style = "background-color:#dfd">    this-&gt;horizontalLayout_2 = new QHBoxLayout();
+    this-&gt;horizontalLayout_2-&gt;setObjectName(QStringLiteral("horizontalLayout_2"));
+    this-&gt;horizontalLayout_2-&gt;setSpacing(6);</span>
+
+    //initialize output address reminder
+<span style = "background-color:#dfd">    this-&gt;out_addr_reminder_label = new QLabel(central_widget);
+    this-&gt;out_addr_reminder_label-&gt;setObjectName(QStringLiteral("out_addr_reminder_label"));
+    this-&gt;out_addr_reminder_label-&gt;setText(QStringLiteral("where to put bug reort:"));
+    this-&gt;horizontalLayout_2-&gt;addWidget(out_addr_reminder_label);</span>
+
+    //initialize output address LineEdit
+<span style = "background-color:#dfd">    this-&gt;out_addr_line_edit = new QLineEdit(central_widget);
+    this-&gt;out_addr_line_edit-&gt;setObjectName(QStringLiteral("out_addr_line_edit"));
+    this-&gt;out_addr_line_edit-&gt;setFixedHeight(LINEEDIT_HEIGHT);
+    this-&gt;horizontalLayout_2-&gt;addWidget(out_addr_line_edit);</span>
+
+    //initialize outpiut address choice button
+<span style = "background-color:#dfd">    this-&gt;choose_outaddr_button = new QPushButton(central_widget);
+    this-&gt;choose_outaddr_button-&gt;setObjectName(QStringLiteral("choose_outaddr_button"));
+    QObject::connect(this-&gt;choose_outaddr_button,SIGNAL(clicked()),this,SLOT(choose_out_addr()));
+    this-&gt;choose_outaddr_button-&gt;setText(QStringLiteral("Browse Source..."));
+    this-&gt;horizontalLayout_2-&gt;addWidget(choose_outaddr_button);
+    this-&gt;gridLayout_global-&gt;addLayout(horizontalLayout_2,</span>
+                                       3, 0, 1, 1);
+
+    //initilize title font
+<span style = "background-color:#dfd">    QFont title_font;
+    title_font.setFamily(QStringLiteral("Agency FB"));
+    title_font.setPointSize(10);
+    title_font.setBold(true);
+    title_font.setWeight(75);</span>
+
+    //initialize option list gridLayout
+<span style = "background-color:#dfd">    this-&gt;gridLayout_option_table = new QGridLayout();
+    this-&gt;gridLayout_option_table-&gt;setObjectName(QStringLiteral("gridLayout_option_table"));
+    this-&gt;gridLayout_option_table-&gt;setSpacing(6);</span>
+
+    //fill the option list gridlayout
+<span style = "background-color:#dfd">    verticalSpacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer,</span>
+                                          1, 4, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_1 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_1,</span>
+                                          1, 6, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_2 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_2,</span>
+                                          1, 2, 1, 1);
+
+    //initilize CheckMode choice List
+
+    //initialize CheckMode choice list title
+<span style = "background-color:#dfd">    this-&gt;checkmode_choice_title_label = new QLabel(central_widget);
+    this-&gt;checkmode_choice_title_label-&gt;setObjectName(QStringLiteral("checkmode_choice_title_label"));
+    this-&gt;checkmode_choice_title_label-&gt;setFont(title_font);
+    this-&gt;checkmode_choice_title_label-&gt;setText(QStringLiteral("Check Mode"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(checkmode_choice_title_label,</span>
+                                            0, 0, 1, 1);
+
+    //initialize student checkbox
+<span style = "background-color:#dfd">    this-&gt;student_box= new QCheckBox(central_widget);
+    this-&gt;student_box-&gt;setObjectName(QStringLiteral("student_box"));
+    this-&gt;student_box-&gt;setText(QStringLiteral("Student"));
+    this-&gt;student_box-&gt;setChecked(true);
+    this-&gt;student_box-&gt;setToolTip(QStringLiteral("Use the Checkers written\n "
+                                  "by our team to analyze"));
+    QObject::connect(this-&gt;student_box,SIGNAL(clicked()),this,SLOT(change_studentbox()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(student_box,</span>
+                                            2, 0, 1, 1);
+
+    //initialize profession checkbox
+<span style = "background-color:#dfd">    this-&gt;profession_box = new QCheckBox(central_widget);
+    this-&gt;profession_box-&gt;setObjectName(QStringLiteral("profession_box"));
+    this-&gt;profession_box-&gt;setText(QStringLiteral("Godmode"));
+    this-&gt;profession_box-&gt;setToolTip(QStringLiteral("Use the checkers in \n "</span>
+                                     "clang-static-analyzer to analyze.\n"
+<span style = "background-color:#dfd">                                     "The checker options will be disable"));
+    QObject::connect(this-&gt;profession_box,SIGNAL(clicked()),this,SLOT(change_godmodebox()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(profession_box,</span>
+                                            4, 0, 1, 1);
+<span style = "background-color:#dfd">    check_mode_mp[godmode_enable]=profession_box-&gt;isChecked();</span>
+    //initilize output information choice List
+
+    //initilize output information choice List title label
+<span style = "background-color:#dfd">    this-&gt;outinfo_choice_title_label = new QLabel(central_widget);
+    this-&gt;outinfo_choice_title_label-&gt;setObjectName(QStringLiteral("outinfo_choice_title_label"));
+    this-&gt;outinfo_choice_title_label-&gt;setFont(title_font);
+    this-&gt;outinfo_choice_title_label-&gt;setText(QStringLiteral("Output Info"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(outinfo_choice_title_label,</span>
+                                            0, 2, 1, 1);
+
+    //initilize bugLocation checkbox
+<span style = "background-color:#dfd">    this-&gt;bugLocation_box = new QCheckBox(central_widget);
+    this-&gt;bugLocation_box-&gt;setObjectName(QStringLiteral("bugLocation_box"));
+    this-&gt;bugLocation_box-&gt;setText(QStringLiteral("Bug Location"));
+    this-&gt;bugLocation_box-&gt;setChecked(true);
+    this-&gt;bugLocation_box-&gt;setToolTip(QStringLiteral("you can not cancel this option"));
+    QObject::connect(this-&gt;bugLocation_box,SIGNAL(clicked()),this,SLOT(change_buglocationbox()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(bugLocation_box,</span>
+                                            2, 2, 1, 1);
+
+    //initilize bugType checkbox
+<span style = "background-color:#dfd">    this-&gt;bugType_box = new QCheckBox(central_widget);
+    this-&gt;bugType_box-&gt;setObjectName(QStringLiteral("bugType_box"));
+    this-&gt;bugType_box-&gt;setText(QStringLiteral("Bug Type"));
+    this-&gt;bugType_box-&gt;setChecked(true);
+    this-&gt;bugType_box-&gt;setToolTip(QStringLiteral("you can not cancel this option"));
+    QObject::connect(this-&gt;bugType_box,SIGNAL(clicked()),this,SLOT(change_bugtypebox()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(bugType_box,</span>
+                                            4, 2, 1, 1);
+
+    //initilize analyzeTime checkbox
+<span style = "background-color:#dfd">    this-&gt;analyzeTime_box= new QCheckBox(central_widget);
+    this-&gt;analyzeTime_box-&gt;setObjectName(QStringLiteral("analyzeTime_box"));
+    this-&gt;analyzeTime_box-&gt;setText(QStringLiteral("Analyze Time"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(analyzeTime_box,</span>
+                                            6, 2, 1, 1);
+<span style = "background-color:#dfd">    QObject::connect(this-&gt;analyzeTime_box,SIGNAL(clicked()),this,SLOT(change_analyzetime_box()));
+    output_info_mp[time_enable]=analyzeTime_box-&gt;isChecked();</span>
+
+    //initilize checker checkbox
+<span style = "background-color:#dfd">    this-&gt;checker_box = new QCheckBox(central_widget);
+    this-&gt;checker_box-&gt;setObjectName(QStringLiteral("checker_box"));
+    this-&gt;checker_box-&gt;setText(QStringLiteral("Checker"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(checker_box,</span>
+                                            8, 2, 1, 1);
+<span style = "background-color:#dfd">    QObject::connect(this-&gt;checker_box,SIGNAL(clicked()),this,SLOT(change_checker_box()));
+    output_info_mp[checker_enable]=checker_box-&gt;isChecked();</span>
+
+    //initilize description checkbox
+<span style = "background-color:#dfd">    this-&gt;desc_box = new QCheckBox(central_widget);
+    this-&gt;desc_box-&gt;setObjectName(QStringLiteral("desc_box"));
+    this-&gt;desc_box-&gt;setText(QStringLiteral("Description"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(desc_box,</span>
+                                            10, 2, 1, 1);
+<span style = "background-color:#dfd">    QObject::connect(this-&gt;desc_box,SIGNAL(clicked()),this,SLOT(change_description_box()));
+    output_info_mp[desc_enale]=desc_box-&gt;isChecked();</span>
+
+    //initilize statistics checkbox
+<span style = "background-color:#dfd">    this-&gt;statistics_box = new QCheckBox(central_widget);
+    this-&gt;statistics_box-&gt;setObjectName(QStringLiteral("statistics_box"));
+    this-&gt;statistics_box-&gt;setText(QStringLiteral("Statistics"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(statistics_box,</span>
+                                            12, 2, 1, 1);
+<span style = "background-color:#dfd">    QObject::connect(this-&gt;statistics_box,SIGNAL(clicked()),this,SLOT(change_statistics_box()));
+    output_info_mp[stats_enable]=statistics_box-&gt;isChecked();</span>
+
+    //initilize report format choice List
+
+    //initilize report format choice List title label
+<span style = "background-color:#dfd">    this-&gt;reporformat_choice_title_label = new QLabel(central_widget);
+    this-&gt;reporformat_choice_title_label-&gt;setObjectName(QStringLiteral("reporformat_choice_title_label"));
+    this-&gt;reporformat_choice_title_label-&gt;setFont(title_font);
+    this-&gt;reporformat_choice_title_label-&gt;setText(QStringLiteral("Report Type"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(reporformat_choice_title_label,</span>
+                                            0, 4, 1, 1);
+    //initilize html checkbox
+<span style = "background-color:#dfd">    this-&gt;html_box = new QCheckBox(central_widget);
+    this-&gt;html_box-&gt;setObjectName(QStringLiteral("html_box"));
+    this-&gt;html_box-&gt;setText(QStringLiteral("Html"));
+     this-&gt;html_box-&gt;setChecked(true);
+    this-&gt;html_box-&gt;setToolTip(QStringLiteral("you must choose one of the formats"));
+    QObject::connect(this-&gt;html_box,SIGNAL(clicked()),this,SLOT(change_html_box()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(html_box,</span>
+                                            2, 4, 1, 1);
+<span style = "background-color:#dfd">    report_type_mp[html_enable]=html_box-&gt;isChecked();</span>
+
+    //initilize json checkbox
+<span style = "background-color:#dfd">    this-&gt;json_box = new QCheckBox(central_widget);
+    this-&gt;json_box-&gt;setObjectName(QStringLiteral("json_box"));
+    this-&gt;json_box-&gt;setText(QStringLiteral("Json"));
+    this-&gt;json_box-&gt;setToolTip(QStringLiteral("you must choose one of the formats"));
+    QObject::connect(this-&gt;json_box,SIGNAL(clicked()),this,SLOT(change_json_box()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(json_box,</span>
+                                            4, 4, 1, 1);
+<span style = "background-color:#dfd">    report_type_mp[json_enable]=json_box-&gt;isChecked();</span>
+
+    //initilize text checkbox
+<span style = "background-color:#dfd">    this-&gt;text_box = new QCheckBox(central_widget);
+    this-&gt;text_box-&gt;setObjectName(QStringLiteral("text_box"));
+    this-&gt;text_box-&gt;setText(QStringLiteral("Text"));
+    this-&gt;text_box-&gt;setToolTip(QStringLiteral("you must choose one of the formats"));
+    QObject::connect(this-&gt;text_box,SIGNAL(clicked()),this,SLOT(change_text_box()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(text_box,</span>
+                                            6, 4, 1, 1);
+<span style = "background-color:#dfd">    report_type_mp[text_enable]=text_box-&gt;isChecked();</span>
+
+    //initilize checker choice List
+
+    //initilize checker choice List title
+<span style = "background-color:#dfd">    this-&gt;checker_choice_title_label = new QLabel(central_widget);
+    this-&gt;checker_choice_title_label-&gt;setObjectName(QStringLiteral("checker_choice_title_label"));
+    this-&gt;checker_choice_title_label-&gt;setFont(title_font);
+    this-&gt;checker_choice_title_label-&gt;setText(QStringLiteral("Checker"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(checker_choice_title_label,</span>
+                                            0, 6, 1, 1);
+
+    //initilize divide and mod zero checker box
+<span style = "background-color:#dfd">    this-&gt;divzero_box = new QCheckBox(central_widget);
+    this-&gt;divzero_box-&gt;setObjectName(QStringLiteral("divzero_box"));
+    this-&gt;divzero_box-&gt;setText(QStringLiteral("Divide Zero"));
+    this-&gt;divzero_box-&gt;setChecked(true);
+    this-&gt;divzero_box-&gt;setToolTip(QStringLiteral("divide zero\n"
+                                  "mod zero"));
+    QObject::connect(this-&gt;divzero_box,SIGNAL(clicked()),this,SLOT(change_divzero_box()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(divzero_box,</span>
+                                            2, 6, 1, 1);
+<span style = "background-color:#dfd">    checker_mp[divZero_enable]=divzero_box-&gt;isChecked();</span>
+
+    //initilize memory checker box
+<span style = "background-color:#dfd">    this-&gt;memory_box = new QCheckBox(central_widget);
+    this-&gt;memory_box-&gt;setObjectName(QStringLiteral("memory_box"));
+    this-&gt;memory_box-&gt;setText(QStringLiteral("Memory"));
+    this-&gt;memory_box-&gt;setChecked(true);
+    this-&gt;memory_box-&gt;setToolTip(QStringLiteral("double free\n"</span>
+                                 "use after free\n"
+<span style = "background-color:#dfd">                                 "memory leak"));
+    QObject::connect(this-&gt;memory_box,SIGNAL(clicked()),this,SLOT(change_memory_box()));
+    this-&gt;gridLayout_option_table-&gt;addWidget(memory_box,</span>
+                                            4, 6, 1, 1);
+<span style = "background-color:#dfd">    checker_mp[memory_enable]=memory_box-&gt;isChecked();</span>
+
+    //initilize null pointer deference box
+<span style = "background-color:#dfd">    this-&gt;deference_box = new QCheckBox(central_widget);
+    this-&gt;deference_box-&gt;setObjectName(QStringLiteral("deference_box"));
+    this-&gt;deference_box-&gt;setText(QStringLiteral("Deference"));
+    this-&gt;deference_box-&gt;setChecked(true);
+    this-&gt;deference_box-&gt;setToolTip(QStringLiteral("null pointer dereference"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(deference_box,</span>
+                                            6, 6, 1, 1);
+<span style = "background-color:#dfd">    QObject::connect(this-&gt;deference_box,SIGNAL(clicked()),this,SLOT(change_deference_box()));
+    checker_mp[deference_enable]=deference_box-&gt;isChecked();</span>
+
+    //initilize uninitialized struct box
+<span style = "background-color:#dfd">    this-&gt;uninit_struct_box = new QCheckBox(central_widget);
+    this-&gt;uninit_struct_box-&gt;setObjectName(QStringLiteral("uninit_struct_box"));
+    this-&gt;uninit_struct_box-&gt;setText(QStringLiteral("Uninit Struct"));
+    this-&gt;uninit_struct_box-&gt;setChecked(true);
+    this-&gt;uninit_struct_box-&gt;setToolTip(QStringLiteral("non union\n"</span>
+                                        "primitive uninitialized struct\n"
+<span style = "background-color:#dfd">                                        "reference uninitialized"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(uninit_struct_box,</span>
+                                            8, 6, 1, 1);
+<span style = "background-color:#dfd">    QObject::connect(this-&gt;uninit_struct_box,SIGNAL(clicked()),this,SLOT(change_uninit_box()));
+    checker_mp[uninit_enable]=uninit_struct_box-&gt;isChecked();</span>
+
+
+    //initilize arrayBound box
+<span style = "background-color:#dfd">    this-&gt;array_bound_box = new QCheckBox(central_widget);
+    this-&gt;array_bound_box-&gt;setObjectName(QStringLiteral("array_bound_box"));
+    this-&gt;array_bound_box-&gt;setText(QStringLiteral("Array Bound"));
+    this-&gt;array_bound_box-&gt;setChecked(true);
+    this-&gt;array_bound_box-&gt;setToolTip(QStringLiteral("array index out-of-bound"));
+    this-&gt;gridLayout_option_table-&gt;addWidget(array_bound_box,</span>
+                                            10, 6, 1, 1);
+<span style = "background-color:#dfd">    QObject::connect(this-&gt;array_bound_box,SIGNAL(clicked()),this,SLOT(change_array_bound_box()));
+    checker_mp[arraybound_enable]=deference_box-&gt;isChecked();</span>
+
+<span style = "background-color:#dfd">    this-&gt;setCentralWidget(central_widget);</span>
+
+    //fill the option table layout with spacer
+<span style = "background-color:#dfd">    verticalSpacer_3 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_3,</span>
+                                          1, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_4 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_4,</span>
+                                          3, 2, 1, 1);
+<span style = "background-color:#dfd">    horizontalSpacer = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    this-&gt;gridLayout_option_table-&gt;addItem(horizontalSpacer,</span>
+                                          0, 1, 1, 1);
+<span style = "background-color:#dfd">    horizontalSpacer_1 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    this-&gt;gridLayout_option_table-&gt;addItem(horizontalSpacer_1,</span>
+                                          0, 3, 1, 1);
+<span style = "background-color:#dfd">    horizontalSpacer_2 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    this-&gt;gridLayout_option_table-&gt;addItem(horizontalSpacer_2,</span>
+                                          0, 5, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_5 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_5,</span>
+                                          3, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_6 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_6,</span>
+                                          7, 6, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_7 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_7,</span>
+                                          11, 2, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_8 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_8,</span>
+                                          5, 2, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_9 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_9,</span>
+                                          3, 6, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_10 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_10,</span>
+                                          5, 6, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_11 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_11,</span>
+                                          9, 2, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_12 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_12,</span>
+                                          7, 2, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_13 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_option_table-&gt;addItem(verticalSpacer_13,</span>
+                                          3, 4, 1, 1);
+
+    //fill the global layout with spacer
+<span style = "background-color:#dfd">    this-&gt;gridLayout_global-&gt;addLayout(gridLayout_option_table,</span>
+                                       6, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_14 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_global-&gt;addItem(verticalSpacer_14,</span>
+                                     4, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_15 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_global-&gt;addItem(verticalSpacer_15,</span>
+                                     2, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_16 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_global-&gt;addItem(verticalSpacer_16,</span>
+                                     11, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_17 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_global-&gt;addItem(verticalSpacer_17,</span>
+                                     10, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_18 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_global-&gt;addItem(verticalSpacer_18,</span>
+                                     8, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_19 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_global-&gt;addItem(verticalSpacer_19,</span>
+                                     5, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_20 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_global-&gt;addItem(verticalSpacer_20,</span>
+                                     7, 0, 1, 1);
+<span style = "background-color:#dfd">    verticalSpacer_21 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    this-&gt;gridLayout_global-&gt;addItem(verticalSpacer_21,</span>
+                                     1, 0, 1, 1);
+
+    //initialize start_to_analyze button
+<span style = "background-color:#dfd">    this-&gt;start_button = new QCommandLinkButton(central_widget);
+    this-&gt;start_button-&gt;setObjectName(QStringLiteral("start_button"));
+    this-&gt;start_button-&gt;setText(QStringLiteral("GO!"));
+    QObject::connect(this-&gt;start_button,SIGNAL(clicked()),this,SLOT(start_analyze()));
+    this-&gt;start_button-&gt;setDescription(QStringLiteral("Start to analyze your project"));
+    this-&gt;gridLayout_global-&gt;addWidget(start_button, 9, 0, 1, 1);</span>
+
+
+    //initialize bars
+<span style = "background-color:#dfd">    main_tool_bar = new QToolBar(this);
+    this-&gt;main_tool_bar-&gt;setObjectName(QStringLiteral("main_tool_bar"));
+    this-&gt;addToolBar(Qt::TopToolBarArea, main_tool_bar);
+    status_bar = new QStatusBar(this);
+    this-&gt;status_bar-&gt;setObjectName(QStringLiteral("status_bar"));
+    this-&gt;setStatusBar(status_bar);
+}</span>
+
+//read the addr of console version
+//user can not start gui if fail
+QString MainWindow::get_console_addr()
+<span style = "background-color:#dfd">{
+    string file_name = "config.txt";
+    ifstream fin;
+    fin.open(file_name, ios::in);
+    if (!fin)</span>
+    { // if file does not exist return empty
+<span style = "background-color:#fdd">        return "";</span>
+    }
+<span style = "background-color:#dfd">    string console_addr;
+    fin &gt;&gt; console_addr;
+    fin.close();
+    return QString::fromLocal8Bit(console_addr.c_str());
+}</span>
+
+//users can only choose one of student mode box and check mode box 
+void MainWindow::change_godmodebox()
+<span style = "background-color:#dfd">{
+    if(this-&gt;profession_box-&gt;checkState()==</span>
+            this-&gt;student_box-&gt;checkState())
+<span style = "background-color:#dfd">        reverse_checkbox(this-&gt;student_box);
+    if(this-&gt;profession_box-&gt;isChecked())</span>
+    {
+<span style = "background-color:#dfd">        hide_checkers();
+        check_mode_mp[godmode_enable]=true;
+    }</span>
+    else 
+    {
+<span style = "background-color:#dfd">        reshow_checkers();
+        check_mode_mp[godmode_enable]=false;</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+// users can only choose one of student mode box and check mode box
+void MainWindow::change_studentbox()
+<span style = "background-color:#dfd">{
+    if(this-&gt;profession_box-&gt;checkState()==</span>
+            this-&gt;student_box-&gt;checkState())
+<span style = "background-color:#dfd">        reverse_checkbox(this-&gt;profession_box);
+    if(this-&gt;profession_box-&gt;isChecked())</span>
+    {
+<span style = "background-color:#dfd">        hide_checkers();
+        check_mode_mp[godmode_enable]=true;
+    }</span>
+    else 
+    {
+<span style = "background-color:#dfd">        reshow_checkers();
+        check_mode_mp[godmode_enable]=false;</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+//users can't cancel bugtypebox
+<span style = "background-color:#dfd">void MainWindow::change_bugtypebox(){
+    stay_checked(this-&gt;bugType_box);
+    switch (this-&gt;language)</span>
+    {
+    case Chinese:
+<span style = "background-color:#fdd">        QMessageBox::warning(this, QStringLiteral("æç¤º"), QStringLiteral("ç¼ºé·ä½ç½®åç¼ºé·ç±»åä¸ºå¿éé¡¹"));
+        break;</span>
+    default:
+<span style = "background-color:#dfd">        QMessageBox::warning(this, QStringLiteral("forbidden"), QStringLiteral("Bug Location and Bug Type can't be canceled"));</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+// users can't cancel buglocationbox
+void MainWindow::change_buglocationbox()
+<span style = "background-color:#dfd">{
+    stay_checked(this-&gt;bugLocation_box);
+    switch (this-&gt;language)</span>
+    {
+    case Chinese:
+<span style = "background-color:#fdd">        QMessageBox::warning(this, QStringLiteral("æç¤º"), QStringLiteral("ç¼ºé·ä½ç½®åç¼ºé·ç±»åä¸ºå¿éé¡¹"));
+        break;</span>
+    default:
+<span style = "background-color:#dfd">        QMessageBox::warning(this, QStringLiteral("forbidden"), QStringLiteral("Bug Location and Bug Type can't be canceled"));</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+void MainWindow::change_analyzetime_box()
+<span style = "background-color:#dfd">{
+    output_info_mp[time_enable]=analyzeTime_box-&gt;isChecked();
+}</span>
+
+void MainWindow::change_checker_box()
+<span style = "background-color:#dfd">{
+    output_info_mp[checker_enable]=checker_box-&gt;isChecked();
+}</span>
+
+void MainWindow::change_description_box()
+<span style = "background-color:#dfd">{
+    output_info_mp[desc_enale]=desc_box-&gt;isChecked();
+}</span>
+
+void MainWindow::change_statistics_box()
+<span style = "background-color:#dfd">{
+    output_info_mp[stats_enable]=statistics_box-&gt;isChecked();
+}</span>
+
+void MainWindow::change_json_box()
+<span style = "background-color:#dfd">{
+    report_type_mp[json_enable]=json_box-&gt;isChecked();
+    forbidden_empty();
+}</span>
+
+void MainWindow::change_html_box()
+<span style = "background-color:#dfd">{
+    report_type_mp[html_enable]=html_box-&gt;isChecked();
+    forbidden_empty();
+}</span>
+
+void MainWindow::change_text_box()
+<span style = "background-color:#dfd">{
+    report_type_mp[text_enable]=text_box-&gt;isChecked();
+    forbidden_empty();
+}</span>
+
+//it is uesd in ReportType choices list
+//user must choose one of the reporttypes
+void MainWindow::forbidden_empty()
+<span style = "background-color:#dfd">{</span>
+    if(!this-&gt;html_box-&gt;isChecked() &amp;&amp;
+<span style = "background-color:#dfd">       !this-&gt;json_box-&gt;isChecked() &amp;&amp;</span>
+       !this-&gt;text_box-&gt;isChecked()){
+<span style = "background-color:#dfd">        this-&gt;html_box-&gt;setChecked(true);
+        report_type_mp[html_enable]=true;
+        switch (this-&gt;language)</span>
+        {
+        case Chinese:
+<span style = "background-color:#fdd">            QMessageBox::warning(this, QStringLiteral("æç¤º"), QStringLiteral("è¯·è³å°éæ©ä¸ä¸ªè¾åºç±»å"));
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            QMessageBox::warning(this, QStringLiteral("forbidden"), QStringLiteral("you must chose one of the output type boxs"));</span>
+        }        
+    }
+<span style = "background-color:#dfd">}</span>
+
+void MainWindow::change_divzero_box()
+<span style = "background-color:#dfd">{
+    checker_mp[divZero_enable]=divzero_box-&gt;isChecked();
+}</span>
+
+void MainWindow::change_memory_box()
+<span style = "background-color:#dfd">{
+    checker_mp[memory_enable]=memory_box-&gt;isChecked();
+}</span>
+
+void MainWindow::change_deference_box()
+<span style = "background-color:#dfd">{
+    checker_mp[deference_enable]=deference_box-&gt;isChecked();
+}</span>
+
+void MainWindow::change_array_bound_box()
+<span style = "background-color:#dfd">{
+    checker_mp[arraybound_enable]=array_bound_box-&gt;isChecked();
+}</span>
+
+void MainWindow::change_uninit_box()
+<span style = "background-color:#dfd">{
+    checker_mp[uninit_enable]=uninit_struct_box-&gt;isChecked();
+}</span>
+
+void MainWindow::choose_in_addr()
+<span style = "background-color:#dfd">{
+    QString project_addr= QFileDialog::getExistingDirectory(this,QStringLiteral("choose your project path"),"",0);
+    this-&gt;in_addr_line_edit-&gt;setText(project_addr);
+}</span>
+
+void MainWindow::choose_out_addr()
+<span style = "background-color:#dfd">{
+    QString report_addr= QFileDialog::getExistingDirectory(this,QStringLiteral("choose your project path"),"",0);
+    this-&gt;out_addr_line_edit-&gt;setText(report_addr);
+}</span>
+
+//firtly,check if input address or output address is empty
+//secondly check if compile_commands.json file exists
+//thirdly build document tree according to compile_commands.json
+//then show user document tree and let him choose the files he wants to analyze
+//last show processDialog and call console version to analyze 
+void MainWindow::start_analyze()
+<span style = "background-color:#dfd">{
+    item his_item;
+    if(this-&gt;in_addr_line_edit-&gt;text().trimmed().size()==0)</span>
+    {
+<span style = "background-color:#dfd">        switch (this-&gt;language)</span>
+        {
+        case Chinese:
+<span style = "background-color:#dfd">            QMessageBox::warning(this, QStringLiteral("é¡¹ç®å°åéæ¼"), QStringLiteral("è¯·è¾å¥æ¨çé¡¹ç®æä»¶æå¨å°å"));
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            QMessageBox::warning(this, QStringLiteral("Project Address Lost"), QStringLiteral("Please input your project address"));</span>
+        }        
+<span style = "background-color:#dfd">        return;</span>
+    }
+<span style = "background-color:#dfd">    QString compile_db_path;
+    QString input_file_command=QStringLiteral("-input ");
+    if(this-&gt;out_addr_line_edit-&gt;text().trimmed().size()==0)</span>
+    {
+<span style = "background-color:#dfd">        switch (this-&gt;language)</span>
+        {
+        case Chinese:
+<span style = "background-color:#dfd">            QMessageBox::warning(this, QStringLiteral("è¾åºå°åéæ¼"), QStringLiteral("è¯·è¾å¥æ¨çç¼ºé·æ¥åè¾åºå°å"));
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            QMessageBox::warning(this, QStringLiteral("Output Address Lost"), QStringLiteral("Please input the report address"));</span>
+        }        
+<span style = "background-color:#dfd">        return;</span>
+<span style = "background-color:#fdd">     }</span>
+    else{
+<span style = "background-color:#dfd">       std::set&lt;std::string&gt; file_list;
+       DirTreeDialog d(&amp;file_list,string(in_addr_line_edit-&gt;text().trimmed().toLocal8Bit()),this-&gt;language,this);
+       if(d.get_status()==INIT_FAIL) return;</span>
+       else {
+<span style = "background-color:#dfd">           d.exec();
+           if(file_list.empty()){
+               if (d.get_status() == FINISHED)
+                   switch (this-&gt;language)</span>
+                   {
+                   case Chinese:
+<span style = "background-color:#dfd">                       QMessageBox::warning(this, QStringLiteral("æä»¶åè¡¨ç¼ºå¤±"), QStringLiteral("è¯·è³å°éæ©ä¸ä¸ªéè¦è¢«æ£æµçæä»¶"));
+                       break;</span>
+                   default:
+<span style = "background-color:#dfd">                       QMessageBox::warning(this, QStringLiteral("File List Lost"), QStringLiteral("Please choose one file at least to analyze"));</span>
+                   }                          
+<span style = "background-color:#dfd">               return;</span>
+<span style = "background-color:#fdd">           }</span>
+<span style = "background-color:#dfd">           else if (d.get_status()!=FINISHED)return ;
+           compile_db_path=d.get_compiledb_path();
+           for(std::set&lt;std::string&gt;::iterator it=file_list.begin();it!=file_list.end() ;it++)</span>
+           {
+<span style = "background-color:#dfd">                input_file_command=input_file_command+QString::fromLocal8Bit(it-&gt;c_str())+QStringLiteral(" ");
+           }</span>
+       }
+<span style = "background-color:#dfd">    }
+    command="";
+    command = QStringLiteral("-compilation-database-path ") + compile_db_path.trimmed() + QStringLiteral(" ") +
+            command+input_file_command+ QStringLiteral("-output --path ") + out_addr_line_edit-&gt;text().trimmed() +
+            QStringLiteral(" ");</span>
+
+    //set attributes of his_item
+<span style = "background-color:#dfd">    his_item.in_addr=in_addr_line_edit-&gt;text().trimmed().toLocal8Bit();
+    his_item.out_addr=out_addr_line_edit-&gt;text().trimmed().toLocal8Bit();</span>
+
+<span style = "background-color:#dfd">    QString output_info_str=QStringLiteral("--info ");
+    bool enable=false;
+    for(std::map&lt;QString,bool&gt;::iterator i=output_info_mp.begin();i!=output_info_mp.end();i++)</span>
+    {
+<span style = "background-color:#dfd">        if(i-&gt;second)</span>
+        {
+<span style = "background-color:#fdd">            output_info_str+=i-&gt;first+QString(" ");
+            enable=true;</span>
+<span style = "background-color:#dfd">        }
+    }
+    if(enable)command+=output_info_str;</span>
+
+<span style = "background-color:#dfd">    QString format_str=QStringLiteral("--format ");
+    for(std::map&lt;QString,bool&gt;::iterator i=report_type_mp.begin();i!=report_type_mp.end();i++)</span>
+    {
+<span style = "background-color:#dfd">        if(i-&gt;second)</span>
+        {
+<span style = "background-color:#dfd">            format_str+=i-&gt;first+QStringLiteral(" ");
+        }
+    }
+    command+=format_str;</span>
+
+<span style = "background-color:#dfd">    if(check_mode_mp[godmode_enable])</span>
+    {
+<span style = "background-color:#dfd">        command+=godmode_enable;
+        his_item.is_godmode=true;
+    }</span>
+    else{
+<span style = "background-color:#dfd">    QString checker_str=QStringLiteral("-enable-checker ");
+        for(std::map&lt;QString,bool&gt;::iterator i=checker_mp.begin();i!=checker_mp.end();i++)</span>
+        {
+<span style = "background-color:#dfd">            if(i-&gt;second)</span>
+            {
+<span style = "background-color:#dfd">                checker_str += i-&gt;first + QStringLiteral(" ");
+            }
+        }
+        command+=checker_str;
+    }
+    command=command.trimmed();
+    QString exec_command=direct_exec_command(command);
+    QDateTime current_time=QDateTime::currentDateTime();
+    his_item.time=current_time.toString("yyyy-MM-dd,hh:mm:ss").toStdString();
+    History temp_h;
+    temp_h.add_history(his_item);
+    ProcessDialog *p=new ProcessDialog(this-&gt;language,this);
+    if(p-&gt;exec_command(exec_command))p-&gt;exec();</span>
+    else {
+<span style = "background-color:#dfd">        command_to_file(command);
+        switch (this-&gt;language)</span>
+        {
+        case Chinese:
+<span style = "background-color:#dfd">            QMessageBox::critical(this, QStringLiteral("æ§è¡éè¯¯"),
+                QStringLiteral("Hisaæ æ³å¯¹æ¨çé¡¹ç®è¿è¡åæï¼"</span>
+                "å¯è½æ¯å ä¸ºconfig.txtæä»¶ä¸­çå°ååçäºéè¯¯"
+<span style = "background-color:#dfd">               "æä»¬å°å¯¹åºçå½ä»¤è¾åºå¨äºæ¨æå®çè¾åºå°åï¼æ¨å¯ä»¥è°ç¨æå¨è°ç¨å½ä»¤è¡çæ¬è¾å¥å½ä»¤è¿è¡åæ"));
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            QMessageBox::critical(this, QStringLiteral("execution error"),
+                                  QStringLiteral("Hisa can't execute your project,"</span>
+                                  "this may be caused by address error occurred in the config.txt,"
+                                  "and we have written the corresponding command to the specified output file,"
+                                  "you can use console version to execute,"
+<span style = "background-color:#dfd">                                  "you can get mroe information from www.Hisa.com"));</span>
+        }                          
+    }
+<span style = "background-color:#dfd">}</span>
+
+//when the godmode is chosen
+//checker list should hide
+void MainWindow::hide_checkers()
+<span style = "background-color:#dfd">{
+    this-&gt;checker_choice_title_label-&gt;hide();
+    this-&gt;memory_box-&gt;hide();
+    this-&gt;divzero_box-&gt;hide();
+    this-&gt;deference_box-&gt;hide();
+    this-&gt;uninit_struct_box-&gt;hide();
+    this-&gt;array_bound_box-&gt;hide();
+}</span>
+
+// when the student mode is chosen after godmode
+//checker list should reshow
+void MainWindow::reshow_checkers()
+<span style = "background-color:#dfd">{
+    this-&gt;checker_choice_title_label-&gt;show();
+    this-&gt;memory_box-&gt;show();
+    this-&gt;divzero_box-&gt;show();
+    this-&gt;deference_box-&gt;show();
+    this-&gt;uninit_struct_box-&gt;show();
+    this-&gt;array_bound_box-&gt;show();
+}</span>
+
+//convert all the English remind and content to Chinese 
+void MainWindow::convert_to_english()
+<span style = "background-color:#dfd">{
+    if(language==English)return;
+    language=English;
+    this-&gt;in_addr_help-&gt;setText(QStringLiteral("About project addr"));
+    this-&gt;options_help_menu-&gt;setTitle(QStringLiteral("About Options"));
+    this-&gt;check_mode_help-&gt;setText(QStringLiteral("About Check Mode Options"));
+     this-&gt;output_info_help-&gt;setText(QStringLiteral("About Output Info Options"));
+    this-&gt;output_format_help-&gt;setText(QStringLiteral("About Report Type Options"));
+    this-&gt;checker_help-&gt;setText(QStringLiteral("About Checker Options"));
+    this-&gt;contact_us_help-&gt;setText(QStringLiteral("Contact us"));
+    this-&gt;help_menu-&gt;setTitle(QStringLiteral("Help"));
+    this-&gt;settings_menu-&gt;setTitle(QStringLiteral("Settings"));
+    this-&gt;language_menu-&gt;setTitle(QStringLiteral("Language"));
+    this-&gt;action_Chinese-&gt;setText(QStringLiteral("Chinese"));
+    this-&gt;action_English-&gt;setText(QStringLiteral("English"));
+    this-&gt;action_history-&gt;setText(QStringLiteral("History"));
+    this-&gt;action_rst_dft_ops-&gt;setText(QStringLiteral("Restore Default Config"));
+    this-&gt;in_addr_reminder_label-&gt;setText(QStringLiteral("where is the project:  "));
+    this-&gt;choose_inaddr_button-&gt;setText(QStringLiteral("Browse Source..."));
+    this-&gt;out_addr_reminder_label-&gt;setText(QStringLiteral("where to put bug reort:"));
+    this-&gt;choose_outaddr_button-&gt;setText(QStringLiteral("Browse Source..."));
+    this-&gt;checkmode_choice_title_label-&gt;setText(QStringLiteral("Check Mode"));
+    this-&gt;student_box-&gt;setText(QStringLiteral("Student"));
+    this-&gt;profession_box-&gt;setText(QStringLiteral("Godmode"));
+    this-&gt;outinfo_choice_title_label-&gt;setText(QStringLiteral("Output Info"));
+    this-&gt;bugLocation_box-&gt;setText(QStringLiteral("Bug Location"));
+    this-&gt;bugType_box-&gt;setText(QStringLiteral("Bug Type"));
+    this-&gt;analyzeTime_box-&gt;setText(QStringLiteral("Analyze Time"));
+    this-&gt;checker_box-&gt;setText(QStringLiteral("Checker"));
+    this-&gt;desc_box-&gt;setText(QStringLiteral("Description"));
+    this-&gt;statistics_box-&gt;setText(QStringLiteral("Statistics"));
+    this-&gt;reporformat_choice_title_label-&gt;setText(QStringLiteral("Report Type"));
+    this-&gt;checker_choice_title_label-&gt;setText(QStringLiteral("Checker"));
+    this-&gt;divzero_box-&gt;setText(QStringLiteral("Divide Zero"));
+    this-&gt;divzero_box-&gt;setToolTip(QStringLiteral("divide zero\n"
+                                      "mod zero"));
+    this-&gt;memory_box-&gt;setText(QStringLiteral("Memory"));
+    this-&gt;memory_box-&gt;setToolTip(QStringLiteral("double free\n"</span>
+                                     "use after free\n"
+<span style = "background-color:#dfd">                                     "memory leak"));
+    this-&gt;deference_box-&gt;setText(QStringLiteral("Deference"));
+    this-&gt;deference_box-&gt;setToolTip(QStringLiteral("null pointer dereference"));
+    this-&gt;uninit_struct_box-&gt;setText(QStringLiteral("Uninit Struct"));
+    this-&gt;uninit_struct_box-&gt;setToolTip(QStringLiteral("non union\n"</span>
+                                            "primitive uninitialized struct\n"
+<span style = "background-color:#dfd">                                            "reference uninitialized"));
+    this-&gt;array_bound_box-&gt;setText(QStringLiteral("Array Bound"));
+    this-&gt;array_bound_box-&gt;setToolTip(QStringLiteral("array index out-of-bound"));
+    this-&gt;start_button-&gt;setText(QStringLiteral("GO!"));
+    this-&gt;start_button-&gt;setDescription(QStringLiteral("Start to analyse your project"));
+    this-&gt;student_box-&gt;setToolTip(QStringLiteral("Use the Checkers written\n "
+                                      "by our team to analyze"));
+    this-&gt;profession_box-&gt;setToolTip(QStringLiteral("Use the checkers in \n "</span>
+                                         "clang-static-analyzer to analyze.\n"
+<span style = "background-color:#dfd">                                         "The checker options will be disable"));
+    this-&gt;bugLocation_box-&gt;setToolTip(QStringLiteral("you can not cancel this option"));
+    this-&gt;bugType_box-&gt;setToolTip(QStringLiteral("you can not cancel this option"));
+    this-&gt;html_box-&gt;setToolTip(QStringLiteral("you must choose one of the formats"));
+    this-&gt;json_box-&gt;setToolTip(QStringLiteral("you must choose one of the formats"));
+    this-&gt;text_box-&gt;setToolTip(QStringLiteral("you must choose one of the formats"));
+}</span>
+
+// convert all the Chinese remind and content to English
+void MainWindow::convert_to_chinese()
+<span style = "background-color:#dfd">{
+    if(language==Chinese)return;
+    language=Chinese;
+    in_addr_help-&gt;setText(QStringLiteral("å³äºé¡¹ç®å°å"));
+    options_help_menu-&gt;setTitle(QStringLiteral("å³äºéé¡¹"));
+    check_mode_help-&gt;setText(QStringLiteral("å³äºæ£æµæ¨¡å¼éé¡¹"));
+    output_info_help-&gt;setText(QStringLiteral("å³äºè¾åºä¿¡æ¯éé¡¹"));
+    output_format_help-&gt;setText(QStringLiteral("å³äºæ¥åæ ¼å¼éé¡¹"));
+    checker_help-&gt;setText(QStringLiteral("å³äºæ£æµå¨éé¡¹"));
+    contact_us_help-&gt;setText(QStringLiteral("èç³»æä»¬"));
+    help_menu-&gt;setTitle(QStringLiteral("å¸®å©"));
+    settings_menu-&gt;setTitle(QStringLiteral("è®¾ç½®"));
+    language_menu-&gt;setTitle(QStringLiteral("è¯­è¨"));
+    action_Chinese-&gt;setText(QStringLiteral("ä¸­æ(ç®ä½)"));
+    action_English-&gt;setText(QStringLiteral("è±æ"));
+    action_history-&gt;setText(QStringLiteral("åå²è®°å½"));
+    action_rst_dft_ops-&gt;setText(QStringLiteral("æ¢å¤é»è®¤è®¾ç½®"));
+    this-&gt;in_addr_reminder_label-&gt;setText(QStringLiteral("å¾æ£æµé¡¹ç®å°å:  "));
+    this-&gt;choose_inaddr_button-&gt;setText(QStringLiteral("æå¼..."));
+    this-&gt;out_addr_reminder_label-&gt;setText(QStringLiteral("æ£æµæ¥åè¾åºå°å:"));
+    this-&gt;choose_outaddr_button-&gt;setText(QStringLiteral("æå¼..."));
+    this-&gt;checkmode_choice_title_label-&gt;setText(QStringLiteral("æ£æµæ¨¡å¼"));
+    this-&gt;student_box-&gt;setText(QStringLiteral("å­¦çç"));
+    this-&gt;profession_box-&gt;setText(QStringLiteral("ä¸ä¸ç"));
+    this-&gt;outinfo_choice_title_label-&gt;setText(QStringLiteral("è¾åºä¿¡æ¯"));
+    this-&gt;bugLocation_box-&gt;setText(QStringLiteral("ç¼ºé·ä½ç½®"));
+    this-&gt;bugType_box-&gt;setText(QStringLiteral("ç¼ºé·ç§ç±»"));
+    this-&gt;analyzeTime_box-&gt;setText(QStringLiteral("æ£æµæ¶é´"));
+    this-&gt;checker_box-&gt;setText(QStringLiteral("æ£æµå¨"));
+    this-&gt;desc_box-&gt;setText(QStringLiteral("ç¼ºé·æè¿°"));
+    this-&gt;statistics_box-&gt;setText(QStringLiteral("ç»è®¡ä¿¡æ¯"));
+    this-&gt;reporformat_choice_title_label-&gt;setText(QStringLiteral("æ¥åæ ¼å¼"));
+    this-&gt;checker_choice_title_label-&gt;setText(QStringLiteral("æ£æµå¨"));
+    this-&gt;divzero_box-&gt;setText(QStringLiteral("é¤æ¨¡0æ£æµå¨"));
+    this-&gt;divzero_box-&gt;setToolTip(QStringLiteral("é¤0\n"
+                                      "æ¨¡0"));
+    this-&gt;memory_box-&gt;setText(QStringLiteral("åå­æ£æµå¨"));
+    this-&gt;memory_box-&gt;setToolTip(QStringLiteral("åå­éå¤éæ¾\n"</span>
+                                     "åå­éæ¾åä½¿ç¨\n"
+<span style = "background-color:#dfd">                                     "åå­æº¢åº"));
+    this-&gt;deference_box-&gt;setText(QStringLiteral("è§£å¼ç¨æ£æµå¨"));
+    this-&gt;deference_box-&gt;setToolTip(QStringLiteral("ç©ºæéè§£å¼ç¨"));
+    this-&gt;uninit_struct_box-&gt;setText(QStringLiteral("åå§åæ£æµå¨"));
+    this-&gt;uninit_struct_box-&gt;setToolTip(QStringLiteral("ç»æä½æåæªåå§å\n"</span>
+                                            "åç½®ç±»ååéæªåå§å\n"
+<span style = "background-color:#dfd">                                            "å¼ç¨æªåå§å"));
+    this-&gt;array_bound_box-&gt;setText(QStringLiteral("æ°ç»è¶çæ£æµå¨"));
+    this-&gt;array_bound_box-&gt;setToolTip(QStringLiteral("æ°ç»ä¸æ è®¿é®è¶ç"));
+    this-&gt;start_button-&gt;setText(QStringLiteral("å¯å¨!"));
+    this-&gt;start_button-&gt;setDescription(QStringLiteral("å¼å§æ£æµæ¨çé¡¹ç®"));
+    this-&gt;student_box-&gt;setToolTip(QStringLiteral("ä½¿ç¨æä»¬å¢éèªä¸»å¼åç\n "
+                                      "æ£æµå¨è¿è¡ç¼ºé·æ£æµ"));
+    this-&gt;profession_box-&gt;setToolTip(QStringLiteral("ä½¿ç¨ clang åç½®ç \n "</span>
+                                         "clang-static-analyzer è¿è¡ç¼ºé·æ£æµ.\n"
+<span style = "background-color:#dfd">                                         "éä¸­è¯¥é¡¹å\næ£æµå¨éé¡¹åè¡¨å°ä¸å¯è§"));
+    this-&gt;bugLocation_box-&gt;setToolTip(QStringLiteral("è¯¥éé¡¹ä¸ºå¿ééé¡¹"));
+    this-&gt;bugType_box-&gt;setToolTip(QStringLiteral("è¯¥éé¡¹ä¸ºå¿ééé¡¹"));
+    this-&gt;html_box-&gt;setToolTip(QStringLiteral("æ¨å¿é¡»éæ©ä¸ä¸ªè¾åºæ ¼å¼"));
+    this-&gt;json_box-&gt;setToolTip(QStringLiteral("æ¨å¿é¡»éæ©ä¸ä¸ªè¾åºæ ¼å¼"));
+    this-&gt;text_box-&gt;setToolTip(QStringLiteral("æ¨å¿é¡»éæ©ä¸ä¸ªè¾åºæ ¼å¼"));
+}</span>
+
+//give user information about input address
+//there is information in two languages to be chosen
+void MainWindow::about_in_addr()
+<span style = "background-color:#dfd">{
+    QString content;
+    QString title;
+    QString button_text;
+    switch(this-&gt;language){</span>
+        case Chinese:
+<span style = "background-color:#dfd">            title=QStringLiteral("å³äºé¡¹ç®å°å");
+            content=QStringLiteral("å¦æé¡¹ç®æå¤æçä¾èµï¼é£ä¹é¡¹ç®å°åçç®å½ä¸­å¿é¡»åå«"
+                    "ç¨cmakeæå¶ä»å·¥å·çæç compile_commands.json");
+            button_text=QStringLiteral("ç¡®è®¤");
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            title=QStringLiteral("About Project Address");
+            content=QStringLiteral("If the project has complex dependencies,the directory of "</span>
+                    "the project catalog must contain "
+<span style = "background-color:#dfd">                    "compile_commands.json generated by cmake or otehr tools");
+            button_text=QStringLiteral("OK");</span>
+    }
+<span style = "background-color:#dfd">    ExplanationDialog *e_d=new ExplanationDialog(this,title,content,button_text);
+    e_d-&gt;show();
+}</span>
+
+// give user information about checkmode choices list
+// there is information in two languages to be chosen
+void MainWindow::about_check_mode()
+<span style = "background-color:#dfd">{
+    QString content;
+    QString title;
+    QString button_text;
+    switch(this-&gt;language){</span>
+        case Chinese:
+<span style = "background-color:#dfd">            title=QStringLiteral("å³äºæ£æµæ¨¡å¼");
+            content=QStringLiteral("æ£æµæ¨¡å¼åä¸ºå­¦ççåä¸ä¸çï¼"</span>
+                    "åªè½éæ©å¶ä¸­ä¹ä¸è¿è¡ç¼ºé·æ£æµï¼\n\n"
+                    "å­¦ççï¼æ¯ç±åäº¬å¤§è½¯ä»¶å·¥ç¨ç»¼åå®éªå¢éåä½å¼åçï¼"
+                    "ä¸æ¯æè¿ç¨é´çç¼ºé·æ£æµå¹¶ä¸"
+                    "å¶ä¸­é¨åæ£æµåè½ä¸å®åï¼æ¼æ¥çï¼è¯¯æ¥çè¾é«\n\n"
+                    "ä¸ä¸çï¼ç´æ¥ä½¿ç¨clang-static-anlyzerè¿è¡ç¼ºé·æ£æµï¼"
+                    "ä¸æ¯æè¿ç¨é´çç¼ºé·æ£æµï¼å¹¶ä¸å½éä¸­è¯¥éé¡¹åé»è®¤å¼å¯æææ£æµå¨ï¼"
+<span style = "background-color:#dfd">                    "å æ­¤å½éä¸­è¯¥éé¡¹åæ£æµå¨éæ©åè¡¨è¢«éè");
+            button_text=QStringLiteral("ç¡®è®¤");
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            title=QStringLiteral("About Check Mode");
+            content=QStringLiteral("The check mode is divided into student version and godmode version,"</span>
+                    "you can only choose one of them to analyze: \n\n"
+                    "Studentï¼jointly developed by the integrated experimental team "
+                    "of software engineering at nanjing university,"
+                    "analysis between different processes is not supported and"
+                    "the checkers' performance is far from perfection,"
+                    "false positive rate and false negative rate are high \n\n"
+                    "GodModeï¼directly use clang-static-anlyzer to analyze,,"
+                    "analysis between processes is not supported."
+                    "And all the checkers are turned on by default when this option is selected,"
+<span style = "background-color:#dfd">                    "so the detector selection list is hidden when this option is selected ");
+            button_text=QStringLiteral("OK");</span>
+    }
+<span style = "background-color:#dfd">    ExplanationDialog *e_d=new ExplanationDialog(this,title,content,button_text);
+    e_d-&gt;show();
+}</span>
+
+// give user information about output address
+// there is information in two languages to be chosen
+void MainWindow::about_output_info()
+<span style = "background-color:#dfd">{
+    QString content;
+    QString title;
+    QString button_text;
+    switch(this-&gt;language){</span>
+        case Chinese:
+<span style = "background-color:#dfd">            title=QStringLiteral("å³äºè¾åºä¿¡æ¯");
+            content=QStringLiteral("è¾åºä¿¡æ¯å±æ6ä¸ªéé¡¹ï¼\n\n"</span>
+                    "ç¼ºé·ä½ç½®ï¼å¿éé¡¹ï¼è¾åºç¼ºé·æå¨çæä»¶ååè¡æ°\n\n"
+                    "ç¼ºé·ç§ç±»ï¼å¿éé¡¹ï¼è¾åºç¼ºé·çç§ç±»\n\n"
+                    "æ£æµæ¶é´ï¼å¯éé¡¹ï¼è¾åºç¼ºé·æ£æµæç¨çæ»æ¶é´ï¼ä»¥ç§ä¸ºåä½\n\n"
+                    "æ£æµå¨ï¼å¯éé¡¹ï¼è¾åºæ£æµåºæ¯ä¸ªç¼ºé·çæ£æµå¨\n\n"
+                    "ç¼ºé·æè¿°ï¼å¯éé¡¹ï¼è¾åºå¯¹æ¯ä¸ªç¼ºé·çç¼ºé·ç§ç±»çæè¿°\n\n"
+<span style = "background-color:#dfd">                    "ç»è®¡ä¿¡æ¯ï¼å¯éé¡¹ï¼è¾åºææçç¼ºé·ç§ç±»ä»¥åæ¯ç§ç¼ºé·å¨ææç¼ºé·ä¸­æå çæ¯ä¾");
+            button_text=QStringLiteral("ç¡®è®¤");
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            title=QStringLiteral("About Output Information");
+            content=QStringLiteral("6 options for output information: \n\n"</span>
+                    "Bug Location: required, output file name and line number of bugs\n\n"
+                    "Bug Type: required, type of bugs \n\n"
+                    "Analyze Time: optional, output total bug analyze time in seconds \n\n"
+                    "Checker: optional, output the checker of each bug\n\n"
+                    "Description: optional output description of each bug\n\n"
+<span style = "background-color:#dfd">                    "Statistics: optional, output all bug types and the percentage of each type in all bugs ");
+            button_text=QStringLiteral("OK");</span>
+    }
+<span style = "background-color:#dfd">    ExplanationDialog *e_d=new ExplanationDialog(this,title,content,button_text);
+    e_d-&gt;show();
+}</span>
+
+// give user information about report type choices list
+// there is information in two languages to be chosen
+void MainWindow::about_output_format()
+<span style = "background-color:#dfd">{
+    QString content;
+    QString title;
+    QString button_text;
+    switch(this-&gt;language){</span>
+        case Chinese:
+<span style = "background-color:#dfd">            title=QStringLiteral("å³äºè¾åºæ ¼å¼");
+            content=QStringLiteral("æä»¬ä¸ºç¨æ·æä¾äºä¸ç§æ¥åçè¾åºæ ¼å¼ä¾ç¨æ·éæ©ï¼\n\n"</span>
+                    "Htmlï¼ä»¥.htmlä¸ºåç¼çæä»¶è¾åºï¼å¯ä»¥éè¿è¶é¾æ¥å¨ç»è®¡ä¿¡æ¯åè¯¦ç»ä»£ç ä¹é´è¿è¡è·³è½¬\n\n"
+                    "Jsonï¼ä½¿ç¨.jsonä¸ºåç¼çæä»¶è¾åºï¼æ¹ä¾¿ç¨æ·å°æ£æµç»æéæè¿èªå·±çå·¥ä½æµä¸­\n\n"
+<span style = "background-color:#dfd">                    "Textï¼ä½¿ç¨.txtä¸ºåç¼çæä»¶è¾åºï¼æ¹ä¾¿ç¨æ·çææ¥åä»èè¿è¡éè§åå±ç¤º");
+            button_text=QStringLiteral("ç¡®è®¤");
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            title=QStringLiteral("About Output Type");
+            content=QStringLiteral("We provide users with three report output formats to choose from:\n\n"</span>
+                    "Html: file output with.html suffix, "
+                    "you can jump between statistics and detailed code by hyperlink\n\n"
+                    "Json: output with .json suffixed files to "
+                    "make it easier for users to integrate test results into their own workflows.\n\n"
+                    "Text: use file output with the suffix .txt "
+<span style = "background-color:#dfd">                    "to facilitate user report generation for viewing and presentation");
+            button_text=QStringLiteral("OK");</span>
+    }
+<span style = "background-color:#dfd">    ExplanationDialog *e_d=new ExplanationDialog(this,title,content,button_text);
+    e_d-&gt;show();
+}</span>
+
+// give user information about checker choices list
+// there is information in two languages to be chosen
+void MainWindow::about_checker()
+<span style = "background-color:#dfd">{
+    QString content;
+    QString title;
+    QString button_text;
+    switch(this-&gt;language){</span>
+        case Chinese:
+<span style = "background-color:#dfd">            title=QStringLiteral("å³äºæ£æµå¨");
+            content=QStringLiteral("å¨ä¸ä¸çæ¬ä¸­å¼å¯clang-static-analyzerä¸­çæææ£æµå¨è¿è¡æ£æµ\n\n"</span>
+                    "å¨å­¦ççæ¬ä¸­å¯ä»¥èªè¡éæ©å­¦çèªä¸»å¼åçæ£æµå¨ï¼\n\n"
+                    "é¤æ¨¡0æ£æµå¨ï¼å¯¹ä»£ç ä¸­è¿ç¨ååççæ´åå¸¸éååéçé¤0åæ¨¡0ç¼ºé·è¿è¡æ£æµ\n\n"
+                    "åå­æ£æµå¨ï¼å¯¹ä»£ç ä¸­è¿ç¨ååççéå¤éæ¾åå­ï¼åå­æ³é²ååå­éæ¾åä½¿ç¨ç¼ºé·è¿è¡æ£æµ\n\n"
+                    "è§£å¼ç¨æ£æµå¨ï¼å¯¹ä»£ç ä¸­è¿ç¨ååççç©ºæéè§£å¼ç¨ç¼ºé·è¿è¡æ£æµ\n\n"
+                    "åå§åæ£æµå¨ï¼å¯¹ä»£ç ä¸­è¿ç¨ååççåéæªåå§å(åæ¬ç»æä½æå)åå¼ç¨æªåå§åè¿è¡æ£æµ\n\n"
+<span style = "background-color:#dfd">                    "æ°ç»è¶çæ£æµå¨ï¼å¯¹ä»£ç ä¸­è¿ç¨ååççæ°ç»ä¸æ è¶çéè¯¯è¿è¡æ£æµ");
+            button_text=QStringLiteral("ç¡®è®¤");
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            title=QStringLiteral("About Checker");
+            content=QStringLiteral("Turn on all detectors in clang-static-analyzer for detection in the GodMode version\n\n"</span>
+                    "Checkers can be selected from the student version.\n\n"
+                    "Divide and Mod 0 Checker: analysis of defects of integer constants and"
+                    " variables in each process of code with divding 0 and modulating 0 \n\n"
+                    "Memory Checker: analysis of double free, memory leaks, "
+                    "and use-after-free occurring in each process of code \n\n"
+                    "Deference Checker: analysis of null pointer deference in each process of code\n\n"
+                    "Uninitialization Checker: analysis uninitialized variables (including struct members) "
+                    "and uninitialized references in each process of code \n\n"
+<span style = "background-color:#dfd">                    "ArrayBound Checkerï¼analysis of array index out-of-bound error in each process of code");
+            button_text=QStringLiteral("OK");</span>
+    }
+<span style = "background-color:#dfd">    ExplanationDialog *e_d=new ExplanationDialog(this,title,content,button_text);
+    e_d-&gt;show();
+}</span>
+
+// give user information about developer
+// there is information in two languages to be chosen
+void MainWindow::about_contact_us()
+<span style = "background-color:#dfd">{
+    QString content;
+    QString title;
+    QString button_text;
+    switch(this-&gt;language){</span>
+        case Chinese:
+<span style = "background-color:#dfd">            title=QStringLiteral("èç³»æä»¬");
+            content=QStringLiteral("æ¬é¡¹ç®ç±åäº¬å¤§å­¦ç5ä½åå­¦å¨å©æä½æ°ççå¸®å©ä¸å®æï¼"</span>
+                    "å¨ä½¿ç¨çè¿ç¨ä¸­éå°ä»»ä½é®é¢è¯·åéé®ä»¶è³ï¼"
+                    "kecheng.nju@gmail.comï¼æä»¬ä¼å°½å¿«åå¤ã\n\n"
+<span style = "background-color:#dfd">                    "å¹¶ä¸æä»¬ä¼å°½å¿«å®æç¨æ·æåä¸å®ç½çæ­å»ºï¼æ¹ä¾¿ç¨æ·ä½¿ç¨");
+            button_text=QStringLiteral("ç¡®è®¤");
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            title=QStringLiteral("Contact Us");
+            content=QStringLiteral("The project was completed by five students from nanjing university "</span>
+                    "with the help of assistant professor Jiexuan He."
+                    "If you meet any problems, please send an email to:"
+                    "Kecheng.nju@gmail.com, we will reply as soon as possible.\n\n"
+                    "And we will complete the user manual and "
+<span style = "background-color:#dfd">                    "official website as soon as possible for the convenience of users");
+            button_text=QStringLiteral("OK");</span>
+    }
+<span style = "background-color:#dfd">    ExplanationDialog *e_d=new ExplanationDialog(this,title,content,button_text);
+    e_d-&gt;show();
+}</span>
+
+// show HistoryDialog to user
+void MainWindow::show_history()
+<span style = "background-color:#dfd">{</span>
+    HistoryDialog *h_d;
+<span style = "background-color:#dfd">    h_d=new HistoryDialog(this-&gt;language);
+    h_d-&gt;exec();
+    delete h_d;
+}</span>
+
+//generate finally command
+QString MainWindow::direct_exec_command(QString command)
+<span style = "background-color:#dfd">{
+    return console_version_addr+" "+command;
+}</span>
+
+//when console version address lost
+//output console command to outputaddress
+bool MainWindow::command_to_file(QString exec_command)
+<span style = "background-color:#dfd">{
+    QString command_file_name=(out_addr_line_edit-&gt;text().trimmed()+QStringLiteral("/command.txt"));
+    FILE *command_file=fopen(command_file_name.toStdString().c_str(),</span>
+                             "w");
+<span style = "background-color:#dfd">    if(command_file==NULL)return false;
+    fprintf(command_file,"%s",exec_command.toStdString().c_str());
+    fclose(command_file);
+    return true;
+}</span>
+
+//reset language to English
+//reset to default choices
+void MainWindow::restore_default_options()
+<span style = "background-color:#dfd">{</span>
+    //restore language option
+<span style = "background-color:#dfd">    convert_to_english();</span>
+
+    //restore CheckMode options
+<span style = "background-color:#dfd">    student_box-&gt;setChecked(true);
+    if(profession_box-&gt;isChecked())change_studentbox();</span>
+
+    //restore output information options
+<span style = "background-color:#dfd">    analyzeTime_box-&gt;setChecked(false);
+    checker_box-&gt;setChecked(false);
+    desc_box-&gt;setChecked(false);
+    statistics_box-&gt;setChecked(false);</span>
+
+    //restore output type options
+<span style = "background-color:#dfd">    html_box-&gt;setChecked(true);
+    json_box-&gt;setChecked(false);
+    text_box-&gt;setChecked(false);</span>
+
+    //restore checker optons
+<span style = "background-color:#dfd">    divzero_box-&gt;setChecked(true);
+    memory_box-&gt;setChecked(true);
+    deference_box-&gt;setChecked(true);
+    uninit_struct_box-&gt;setChecked(true);
+    array_bound_box-&gt;setChecked(true);
+}</span>
+
+<span style = "background-color:#dfd">MainWindow::~MainWindow(){
+}</span></pre>
+	</body>
+</html>

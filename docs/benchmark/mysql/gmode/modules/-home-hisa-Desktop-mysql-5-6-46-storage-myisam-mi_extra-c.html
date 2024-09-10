@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/myisam/mi_extra.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+#include "myisamdef.h"
+#ifdef HAVE_SYS_MMAN_H
+#include &lt;sys/mman.h&gt;
+#endif
+
+static void mi_extra_keyflag(MI_INFO *info, enum ha_extra_function function);
+
+
+/*
+  Set options and buffers to optimize table handling
+
+  SYNOPSIS
+    mi_extra()
+    info	open table
+    function	operation
+    extra_arg	Pointer to extra argument (normally pointer to ulong)
+    		Used when function is one of:
+		HA_EXTRA_WRITE_CACHE
+		HA_EXTRA_CACHE
+  RETURN VALUES
+    0  ok
+    #  error
+*/
+
+int mi_extra(MI_INFO *info, enum ha_extra_function function, void *extra_arg)
+{
+  int error=0;
+  ulong cache_size;
+  MYISAM_SHARE *share=info-&gt;s;
+  DBUG_ENTER("mi_extra");
+  DBUG_PRINT("enter",("function: %d",(int) function));
+
+  switch (function) {
+  case HA_EXTRA_RESET_STATE:		/* Reset state (don't free buffers) */
+    info-&gt;lastinx= 0;			/* Use first index as def */
+    info-&gt;last_search_keypage=info-&gt;lastpos= HA_OFFSET_ERROR;
+    info-&gt;page_changed=1;
+					/* Next/prev gives first/last */
+    if (info-&gt;opt_flag &amp; READ_CACHE_USED)
+    {
+      reinit_io_cache(&amp;info-&gt;rec_cache,READ_CACHE,0,
+		      (pbool) (info-&gt;lock_type != F_UNLCK),
+		      (pbool) MY_TEST(info-&gt;update &amp; HA_STATE_ROW_CHANGED)
+		      );
+    }
+    info-&gt;update= ((info-&gt;update &amp; HA_STATE_CHANGED) | HA_STATE_NEXT_FOUND |
+		   HA_STATE_PREV_FOUND);
+    break;
+  case HA_EXTRA_CACHE:
+    if (info-&gt;lock_type == F_UNLCK &amp;&amp;
+	(share-&gt;options &amp; HA_OPTION_PACK_RECORD))
+    {
+      error=1;			/* Not possibly if not locked */
+      my_errno=EACCES;
+      break;
+    }
+    if (info-&gt;s-&gt;file_map) /* Don't use cache if mmap */
+      break;
+#if defined(HAVE_MMAP) &amp;&amp; defined(HAVE_MADVISE)
+    if ((share-&gt;options &amp; HA_OPTION_COMPRESS_RECORD))
+    {
+      mysql_mutex_lock(&amp;share-&gt;intern_lock);
+      if (_mi_memmap_file(info))
+      {
+	/* We don't nead MADV_SEQUENTIAL if small file */
+	madvise((char*) share-&gt;file_map, share-&gt;state.state.data_file_length,
+		share-&gt;state.state.data_file_length &lt;= RECORD_CACHE_SIZE*16 ?
+		MADV_RANDOM : MADV_SEQUENTIAL);
+        mysql_mutex_unlock(&amp;share-&gt;intern_lock);
+	break;
+      }
+      mysql_mutex_unlock(&amp;share-&gt;intern_lock);
+    }
+#endif
+    if (info-&gt;opt_flag &amp; WRITE_CACHE_USED)
+    {
+      info-&gt;opt_flag&amp;= ~WRITE_CACHE_USED;
+      if ((error=end_io_cache(&amp;info-&gt;rec_cache)))
+	break;
+    }
+    if (!(info-&gt;opt_flag &amp;
+	  (READ_CACHE_USED | WRITE_CACHE_USED | MEMMAP_USED)))
+    {
+      cache_size= (extra_arg ? *(ulong*) extra_arg :
+		   my_default_record_cache_size);
+      if (!(init_io_cache(&amp;info-&gt;rec_cache,info-&gt;dfile,
+			 (uint) MY_MIN(info-&gt;state-&gt;data_file_length + 1,
+                                       cache_size),
+			  READ_CACHE,0L,(pbool) (info-&gt;lock_type != F_UNLCK),
+			  MYF(share-&gt;write_flag &amp; MY_WAIT_IF_FULL))))
+      {
+	info-&gt;opt_flag|=READ_CACHE_USED;
+	info-&gt;update&amp;= ~HA_STATE_ROW_CHANGED;
+      }
+      if (share-&gt;concurrent_insert)
+	info-&gt;rec_cache.end_of_file=info-&gt;state-&gt;data_file_length;
+    }
+    break;
+  case HA_EXTRA_REINIT_CACHE:
+    if (info-&gt;opt_flag &amp; READ_CACHE_USED)
+    {
+      reinit_io_cache(&amp;info-&gt;rec_cache,READ_CACHE,info-&gt;nextpos,
+		      (pbool) (info-&gt;lock_type != F_UNLCK),
+		      (pbool) MY_TEST(info-&gt;update &amp; HA_STATE_ROW_CHANGED));
+      info-&gt;update&amp;= ~HA_STATE_ROW_CHANGED;
+      if (share-&gt;concurrent_insert)
+	info-&gt;rec_cache.end_of_file=info-&gt;state-&gt;data_file_length;
+    }
+    break;
+  case HA_EXTRA_WRITE_CACHE:
+    if (info-&gt;lock_type == F_UNLCK)
+    {
+      error=1;			/* Not possibly if not locked */
+      break;
+    }
+
+    cache_size= (extra_arg ? *(ulong*) extra_arg :
+		 my_default_record_cache_size);
+    if (!(info-&gt;opt_flag &amp;
+	  (READ_CACHE_USED | WRITE_CACHE_USED | OPT_NO_ROWS)) &amp;&amp;
+	!share-&gt;state.header.uniques)
+      if (!(init_io_cache(&amp;info-&gt;rec_cache,info-&gt;dfile, cache_size,
+			 WRITE_CACHE,info-&gt;state-&gt;data_file_length,
+			  (pbool) (info-&gt;lock_type != F_UNLCK),
+			  MYF(share-&gt;write_flag &amp; MY_WAIT_IF_FULL))))
+      {
+	info-&gt;opt_flag|=WRITE_CACHE_USED;
+	info-&gt;update&amp;= ~(HA_STATE_ROW_CHANGED |
+			 HA_STATE_WRITE_AT_END |
+			 HA_STATE_EXTEND_BLOCK);
+      }
+    break;
+  case HA_EXTRA_PREPARE_FOR_UPDATE:
+    if (info-&gt;s-&gt;data_file_type != DYNAMIC_RECORD)
+      break;
+    /* Remove read/write cache if dynamic rows */
+  case HA_EXTRA_NO_CACHE:
+    if (info-&gt;opt_flag &amp; (READ_CACHE_USED | WRITE_CACHE_USED))
+    {
+      info-&gt;opt_flag&amp;= ~(READ_CACHE_USED | WRITE_CACHE_USED);
+      error=end_io_cache(&amp;info-&gt;rec_cache);
+      /* Sergei will insert full text index caching here */
+    }
+#if defined(HAVE_MMAP) &amp;&amp; defined(HAVE_MADVISE)
+    if (info-&gt;opt_flag &amp; MEMMAP_USED)
+      madvise((char*) share-&gt;file_map, share-&gt;state.state.data_file_length,
+              MADV_RANDOM);
+#endif
+    break;
+  case HA_EXTRA_FLUSH_CACHE:
+    if (info-&gt;opt_flag &amp; WRITE_CACHE_USED)
+    {
+      if ((error=flush_io_cache(&amp;info-&gt;rec_cache)))
+      {
+        mi_print_error(info-&gt;s, HA_ERR_CRASHED);
+	mi_mark_crashed(info);			/* Fatal error found */
+      }
+    }
+    break;
+  case HA_EXTRA_NO_READCHECK:
+    info-&gt;opt_flag&amp;= ~READ_CHECK_USED;		/* No readcheck */
+    break;
+  case HA_EXTRA_READCHECK:
+    info-&gt;opt_flag|= READ_CHECK_USED;
+    break;
+  case HA_EXTRA_KEYREAD:			/* Read only keys to record */
+  case HA_EXTRA_REMEMBER_POS:
+    info-&gt;opt_flag |= REMEMBER_OLD_POS;
+    bmove((uchar*) info-&gt;lastkey+share-&gt;base.max_key_length*2,
+	  (uchar*) info-&gt;lastkey,info-&gt;lastkey_length);
+    info-&gt;save_update=	info-&gt;update;
+    info-&gt;save_lastinx= info-&gt;lastinx;
+    info-&gt;save_lastpos= info-&gt;lastpos;
+    info-&gt;save_lastkey_length=info-&gt;lastkey_length;
+    if (function == HA_EXTRA_REMEMBER_POS)
+      break;
+    /* fall through */
+  case HA_EXTRA_KEYREAD_CHANGE_POS:
+    info-&gt;opt_flag |= KEY_READ_USED;
+    info-&gt;read_record=_mi_read_key_record;
+    break;
+  case HA_EXTRA_NO_KEYREAD:
+  case HA_EXTRA_RESTORE_POS:
+    if (info-&gt;opt_flag &amp; REMEMBER_OLD_POS)
+    {
+      bmove((uchar*) info-&gt;lastkey,
+	    (uchar*) info-&gt;lastkey+share-&gt;base.max_key_length*2,
+	    info-&gt;save_lastkey_length);
+      info-&gt;update=	info-&gt;save_update | HA_STATE_WRITTEN;
+      info-&gt;lastinx=	info-&gt;save_lastinx;
+      info-&gt;lastpos=	info-&gt;save_lastpos;
+      info-&gt;lastkey_length=info-&gt;save_lastkey_length;
+    }
+    info-&gt;read_record=	share-&gt;read_record;
+    info-&gt;opt_flag&amp;= ~(KEY_READ_USED | REMEMBER_OLD_POS);
+    break;
+  case HA_EXTRA_NO_USER_CHANGE: /* Database is somehow locked agains changes */
+    info-&gt;lock_type= F_EXTRA_LCK; /* Simulate as locked */
+    break;
+  case HA_EXTRA_WAIT_LOCK:
+    info-&gt;lock_wait=0;
+    break;
+  case HA_EXTRA_NO_WAIT_LOCK:
+    info-&gt;lock_wait=MY_DONT_WAIT;
+    break;
+  case HA_EXTRA_NO_KEYS:
+    if (info-&gt;lock_type == F_UNLCK)
+    {
+      error=1;					/* Not possibly if not lock */
+      break;
+    }
+    if (mi_is_any_key_active(share-&gt;state.key_map))
+    {
+      MI_KEYDEF *key=share-&gt;keyinfo;
+      uint i;
+      for (i=0 ; i &lt; share-&gt;base.keys ; i++,key++)
+      {
+        if (!(key-&gt;flag &amp; HA_NOSAME) &amp;&amp; info-&gt;s-&gt;base.auto_key != i+1)
+        {
+          mi_clear_key_active(share-&gt;state.key_map, i);
+          info-&gt;update|= HA_STATE_CHANGED;
+        }
+      }
+
+      if (!share-&gt;changed)
+      {
+	share-&gt;state.changed|= STATE_CHANGED | STATE_NOT_ANALYZED;
+	share-&gt;changed=1;			/* Update on close */
+	if (!share-&gt;global_changed)
+	{
+	  share-&gt;global_changed=1;
+	  share-&gt;state.open_count++;
+	}
+      }
+      share-&gt;state.state= *info-&gt;state;
+      error=mi_state_info_write(share-&gt;kfile,&amp;share-&gt;state,1 | 2);
+    }
+    break;
+  case HA_EXTRA_FORCE_REOPEN:
+    mysql_mutex_lock(&amp;THR_LOCK_myisam);
+    share-&gt;last_version= 0L;			/* Impossible version */
+    mysql_mutex_unlock(&amp;THR_LOCK_myisam);
+    break;
+  case HA_EXTRA_PREPARE_FOR_DROP:
+    mysql_mutex_lock(&amp;THR_LOCK_myisam);
+    share-&gt;last_version= 0L;			/* Impossible version */
+#ifdef __WIN__REMOVE_OBSOLETE_WORKAROUND
+    /* Close the isam and data files as Win32 can't drop an open table */
+    mysql_mutex_lock(&amp;share-&gt;intern_lock);
+    if (flush_key_blocks(share-&gt;key_cache, share-&gt;kfile,
+			 (function == HA_EXTRA_FORCE_REOPEN ?
+			  FLUSH_RELEASE : FLUSH_IGNORE_CHANGED)))
+    {
+      error=my_errno;
+      share-&gt;changed=1;
+      mi_print_error(info-&gt;s, HA_ERR_CRASHED);
+      mi_mark_crashed(info);			/* Fatal error found */
+    }
+    if (info-&gt;opt_flag &amp; (READ_CACHE_USED | WRITE_CACHE_USED))
+    {
+      info-&gt;opt_flag&amp;= ~(READ_CACHE_USED | WRITE_CACHE_USED);
+      error=end_io_cache(&amp;info-&gt;rec_cache);
+    }
+    if (info-&gt;lock_type != F_UNLCK &amp;&amp; ! info-&gt;was_locked)
+    {
+      info-&gt;was_locked=info-&gt;lock_type;
+      if (mi_lock_database(info,F_UNLCK))
+	error=my_errno;
+      info-&gt;lock_type = F_UNLCK;
+    }
+    if (share-&gt;kfile &gt;= 0)
+      _mi_decrement_open_count(info);
+    if (share-&gt;kfile &gt;= 0 &amp;&amp; mysql_file_close(share-&gt;kfile, MYF(0)))
+      error=my_errno;
+    {
+      LIST *list_element ;
+      for (list_element=myisam_open_list ;
+	   list_element ;
+	   list_element=list_element-&gt;next)
+      {
+	MI_INFO *tmpinfo=(MI_INFO*) list_element-&gt;data;
+	if (tmpinfo-&gt;s == info-&gt;s)
+	{
+          if (tmpinfo-&gt;dfile &gt;= 0 &amp;&amp; mysql_file_close(tmpinfo-&gt;dfile, MYF(0)))
+	    error = my_errno;
+	  tmpinfo-&gt;dfile= -1;
+	}
+      }
+    }
+    share-&gt;kfile= -1;				/* Files aren't open anymore */
+    mysql_mutex_unlock(&amp;share-&gt;intern_lock);
+#endif
+    mysql_mutex_unlock(&amp;THR_LOCK_myisam);
+    break;
+  case HA_EXTRA_FLUSH:
+    if (!share-&gt;temporary)
+      flush_key_blocks(share-&gt;key_cache, share-&gt;kfile, FLUSH_KEEP);
+#ifdef HAVE_PWRITE
+    _mi_decrement_open_count(info);
+#endif
+    if (share-&gt;not_flushed)
+    {
+      share-&gt;not_flushed=0;
+      if (mysql_file_sync(share-&gt;kfile, MYF(0)))
+	error= my_errno;
+      if (mysql_file_sync(info-&gt;dfile, MYF(0)))
+	error= my_errno;
+      if (error)
+      {
+	share-&gt;changed=1;
+        mi_print_error(info-&gt;s, HA_ERR_CRASHED);
+	mi_mark_crashed(info);			/* Fatal error found */
+      }
+    }
+    if (share-&gt;base.blobs)
+      mi_alloc_rec_buff(info, -1, &amp;info-&gt;rec_buff);
+    break;
+  case HA_EXTRA_NORMAL:				/* Theese isn't in use */
+    info-&gt;quick_mode=0;
+    break;
+  case HA_EXTRA_QUICK:
+    info-&gt;quick_mode=1;
+    break;
+  case HA_EXTRA_NO_ROWS:
+    if (!share-&gt;state.header.uniques)
+      info-&gt;opt_flag|= OPT_NO_ROWS;
+    break;
+  case HA_EXTRA_PRELOAD_BUFFER_SIZE:
+    info-&gt;preload_buff_size= *((ulong *) extra_arg); 
+    break;
+  case HA_EXTRA_CHANGE_KEY_TO_UNIQUE:
+  case HA_EXTRA_CHANGE_KEY_TO_DUP:
+    mi_extra_keyflag(info, function);
+    break;
+  case HA_EXTRA_MMAP:
+#ifdef HAVE_MMAP
+    mysql_mutex_lock(&amp;share-&gt;intern_lock);
+    /*
+      Memory map the data file if it is not already mapped. It is safe
+      to memory map a file while other threads are using file I/O on it.
+      Assigning a new address to a function pointer is an atomic
+      operation. intern_lock prevents that two or more mappings are done
+      at the same time.
+    */
+    if (!share-&gt;file_map)
+    {
+      if (mi_dynmap_file(info, share-&gt;state.state.data_file_length))
+      {
+        DBUG_PRINT("warning",("mmap failed: errno: %d",errno));
+        error= my_errno= errno;
+      }
+    }
+    mysql_mutex_unlock(&amp;share-&gt;intern_lock);
+#endif
+    break;
+  case HA_EXTRA_MARK_AS_LOG_TABLE:
+    mysql_mutex_lock(&amp;share-&gt;intern_lock);
+    share-&gt;is_log_table= TRUE;
+    mysql_mutex_unlock(&amp;share-&gt;intern_lock);
+    break;
+  case HA_EXTRA_KEY_CACHE:
+  case HA_EXTRA_NO_KEY_CACHE:
+  default:
+    break;
+  }
+  {
+    char tmp[1];
+    tmp[0]=function;
+    myisam_log_command(MI_LOG_EXTRA,info,(uchar*) tmp,1,error);
+  }
+  DBUG_RETURN(error);
+} /* mi_extra */
+
+
+void mi_set_index_cond_func(MI_INFO *info, index_cond_func_t func,
+                            void *func_arg)
+{
+  info-&gt;index_cond_func= func;
+  info-&gt;index_cond_func_arg= func_arg;
+}
+
+/*
+    Start/Stop Inserting Duplicates Into a Table, WL#1648.
+ */
+static void mi_extra_keyflag(MI_INFO *info, enum ha_extra_function function)
+{
+  uint  idx;
+
+  for (idx= 0; idx&lt; info-&gt;s-&gt;base.keys; idx++)
+  {
+    switch (function) {
+    case HA_EXTRA_CHANGE_KEY_TO_UNIQUE:
+      info-&gt;s-&gt;keyinfo[idx].flag|= HA_NOSAME;
+      break;
+    case HA_EXTRA_CHANGE_KEY_TO_DUP:
+      info-&gt;s-&gt;keyinfo[idx].flag&amp;= ~(HA_NOSAME);
+      break;
+    default:
+      break;
+    }
+  }
+}
+
+
+int mi_reset(MI_INFO *info)
+{
+  int error= 0;
+  MYISAM_SHARE *share=info-&gt;s;
+  DBUG_ENTER("mi_reset");
+  /*
+    Free buffers and reset the following flags:
+    EXTRA_CACHE, EXTRA_WRITE_CACHE, EXTRA_KEYREAD, EXTRA_QUICK
+
+    If the row buffer cache is large (for dynamic tables), reduce it
+    to save memory.
+  */
+  if (info-&gt;opt_flag &amp; (READ_CACHE_USED | WRITE_CACHE_USED))
+  {
+    info-&gt;opt_flag&amp;= ~(READ_CACHE_USED | WRITE_CACHE_USED);
+    error= end_io_cache(&amp;info-&gt;rec_cache);
+  }
+  if (share-&gt;base.blobs)
+    mi_alloc_rec_buff(info, -1, &amp;info-&gt;rec_buff);
+#if defined(HAVE_MMAP) &amp;&amp; defined(HAVE_MADVISE)
+  if (info-&gt;opt_flag &amp; MEMMAP_USED)
+    madvise((char*) share-&gt;file_map, share-&gt;state.state.data_file_length,
+            MADV_RANDOM);
+#endif
+  info-&gt;opt_flag&amp;= ~(KEY_READ_USED | REMEMBER_OLD_POS);
+  info-&gt;quick_mode=0;
+  info-&gt;lastinx= 0;			/* Use first index as def */
+  info-&gt;last_search_keypage= info-&gt;lastpos= HA_OFFSET_ERROR;
+  info-&gt;page_changed= 1;
+  info-&gt;update= ((info-&gt;update &amp; HA_STATE_CHANGED) | HA_STATE_NEXT_FOUND |
+                 HA_STATE_PREV_FOUND);
+  DBUG_RETURN(error);
+}
+      </pre>
+    </body>
+</html>

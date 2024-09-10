@@ -1,0 +1,111 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>explanationdialog.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#include "explanationdialog.h"
+#include&lt;QPushButton&gt;
+
+/*****************************************************************************
+This is source coode of ExplanationDialog.
+ExplanationDialog shows the help information for users to use HiSA.
+This file contains the initialization of all the members of ExplanationDialog
+and the implementation of all of its functions
+******************************************************************************/
+
+// const value of ExplanationDialog
+const int DIALOG_WIDTH=500;
+const int DIALOG_HEIGHT=600;
+const int TITLE_FONT_SIZE=14;
+const int TITLE_FONT_WEIGHT=75;
+const int CENTER_WIDGET_X = 10;
+const int CENTER_WIDGET_Y = 10;
+const int CENTER_WIDGET_WIDTH = 480;
+const int CENTER_WIDGET_HEIGHT = 580;
+const int TEXT_FONT_SIZE=12;
+const int BUTTON_HEIGHT=40;
+const int CONTENT_MARGIN = 0;
+
+//initialize ExplanationDialog and its widgets
+ExplanationDialog::ExplanationDialog(QWidget *parent,QString title,QString content,QString button_text) :
+<span style = "background-color:#dfd">    QDialog(parent)
+{</span>
+    //initialize Dialog
+<span style = "background-color:#dfd">    this-&gt;setFixedWidth(DIALOG_WIDTH);
+    this-&gt;setFixedHeight(DIALOG_HEIGHT);
+    Qt::WindowFlags flags=Qt::Dialog;
+    flags |=Qt::WindowCloseButtonHint;setWindowFlags(flags);
+    this-&gt;setWindowFlags(flags);
+    this-&gt;setWindowTitle(title);</span>
+
+    //initialize central widget
+<span style = "background-color:#dfd">    widget = new QWidget(this);
+    widget-&gt;setObjectName(QStringLiteral("widget"));
+    widget-&gt;setGeometry(QRect(CENTER_WIDGET_X, CENTER_WIDGET_Y, </span>
+                        CENTER_WIDGET_WIDTH, CENTER_WIDGET_HEIGHT));
+
+    //initialize vBoxlayout
+<span style = "background-color:#dfd">    vbox_layout = new QVBoxLayout(widget);
+    vbox_layout-&gt;setObjectName( QStringLiteral ("vbox_layout"));
+    vbox_layout-&gt;setContentsMargins(CONTENT_MARGIN, CONTENT_MARGIN, </span>
+                                    CONTENT_MARGIN, CONTENT_MARGIN);
+
+    //initialize title label
+<span style = "background-color:#dfd">    this-&gt;title_label=new QLabel(widget);
+    title_label-&gt;setObjectName( QStringLiteral ("title_label"));</span>
+
+    //initialize title label font
+<span style = "background-color:#dfd">    QFont title_font;
+    title_font.setFamily(QStringLiteral("Agency FB"));
+    title_font.setPointSize(TITLE_FONT_SIZE);
+    title_font.setBold(true);
+    title_font.setWeight(TITLE_FONT_WEIGHT);</span>
+
+    //set font for title label
+<span style = "background-color:#dfd">    title_label-&gt;setFont(title_font);
+    this-&gt;title_label-&gt;setText(title);
+    vbox_layout-&gt;addWidget(title_label);</span>
+
+    //initialize text font
+<span style = "background-color:#dfd">    QFont text_font;
+    text_font.setFamily(QStringLiteral("Bahnschrift"));
+    text_font.setPointSize(TEXT_FONT_SIZE);</span>
+
+    //initialize TextBrowser
+<span style = "background-color:#dfd">    this-&gt;dialog_content=new QTextBrowser(widget);
+    this-&gt;dialog_content-&gt;setObjectName( QStringLiteral ("dialog_content"));
+    this-&gt;dialog_content-&gt;setText(content);
+    this-&gt;dialog_content-&gt;setFont(text_font);
+    vbox_layout-&gt;addWidget(dialog_content);</span>
+
+    //initialize confrm button
+<span style = "background-color:#dfd">    this-&gt;confirm_button=new QPushButton(widget);
+    this-&gt;confirm_button-&gt;setObjectName( QStringLiteral ("confirm_button"));
+    this-&gt;confirm_button-&gt;setFixedHeight(BUTTON_HEIGHT);
+    this-&gt;confirm_button-&gt;setText(button_text);</span>
+
+    //initialize font of button
+<span style = "background-color:#dfd">    QFont button_font;
+    button_font.setFamily(QStringLiteral("Agency FB"));
+    button_font.setPointSize(TITLE_FONT_SIZE);
+    this-&gt;confirm_button-&gt;setFont(button_font);
+    vbox_layout-&gt;addWidget(confirm_button);
+    connect(confirm_button,SIGNAL(clicked()),this,SLOT(click_confirm_button()));
+}</span>
+
+void ExplanationDialog::click_confirm_button()
+<span style = "background-color:#dfd">{
+    this-&gt;close();
+}</span>
+
+ExplanationDialog::~ExplanationDialog()
+<span style = "background-color:#dfd">{
+}</span></pre>
+	</body>
+</html>

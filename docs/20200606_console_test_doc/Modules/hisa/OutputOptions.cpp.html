@@ -1,0 +1,48 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>OutputOptions.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "OutputOptions.h"
+
+OutputOptions::OutputOptions()
+<span style = "background-color:#dfd">{
+    output_time = output_checker = output_description = output_stats = 0;
+}</span>
+void OutputOptions::dump(std::ostream &amp;os)
+<span style = "background-color:#dfd">{
+    os &lt;&lt; "\tOutput Time: " &lt;&lt; (bool)output_time &lt;&lt; '\n';
+    os &lt;&lt; "\tOutput Checker: " &lt;&lt; (bool)output_checker &lt;&lt; '\n';
+    os &lt;&lt; "\tOutput Description: " &lt;&lt; (bool)output_description &lt;&lt; '\n';
+    os &lt;&lt; "\tOutput Stats: " &lt;&lt; (bool)output_stats &lt;&lt; '\n';
+    os &lt;&lt; "\tOutput Path: " &lt;&lt; output_path &lt;&lt; '\n';
+    os &lt;&lt; "\tOutput Formats: ";
+    for (const auto &amp;i : output_formats)</span>
+    {
+<span style = "background-color:#dfd">        os &lt;&lt; i &lt;&lt; ' ';
+    }
+    os &lt;&lt; '\n';
+}</span>
+void OutputOptions::reset()
+<span style = "background-color:#dfd">{
+    output_time = output_checker = output_description = output_stats = 0;
+    output_path = "";
+    output_formats.clear();
+}</span>
+
+void OutputOptions::add_output_format(const std::string &amp;f)
+<span style = "background-color:#dfd">{
+    output_formats.push_back(f);
+}</span>
+void OutputOptions::clear_output_format()
+<span style = "background-color:#fdd">{
+    output_formats.clear();
+}</span></pre>
+	</body>
+</html>

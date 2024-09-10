@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/http/wsclient.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "wsclient.h"
+
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+#include "connection.h"
+#include "wsconnection.h"
+#include "address.h"
+#include "stringutil.h"
+#include "wsutil.h"
+#include "log.h"
+#include "httprequest.h"
+#include "httpresponse.h"
+#include "ioloop.h"
+#include "sockutil.h"
+#include "address.h"
+#include "httpconnector.h"
+#include "connector.inl"
+
+using namespace std;
+
+namespace tnet
+{
+    WsClient::WsClient(IOLoop* loop)
+        : m_loop(loop)
+    {
+        
+    }
+
+    WsClient::~WsClient()
+    {
+        
+    }
+
+    void WsClient::connect(const string&amp; url, const WsCallback_t&amp; callback)
+    {
+        HttpRequest req;
+        req.url = url;
+        connect(req, callback);
+    }
+
+    void WsClient::connect(const string&amp; url, const Headers_t&amp; headers, const WsCallback_t&amp; callback)
+    {
+        HttpRequest req;
+        req.url = url;
+        req.headers = headers;
+        
+        connect(req, callback);    
+    }
+
+    void WsClient::connect(HttpRequest&amp; request, const WsCallback_t&amp; callback)
+    {
+        WsUtil::buildRequest(request);
+        
+        request.parseUrl();
+        
+        Address addr(request.host, request.port);
+
+        HttpConnectorPtr_t conn = std::make_shared&lt;HttpConnector&gt;();
+        conn-&gt;connect(m_loop, addr, std::bind(&amp;WsClient::onConnect, shared_from_this(), _1, _2, request.dump(), callback));
+    }
+
+    void WsClient::onResponse(const HttpConnectorPtr_t&amp; conn, const HttpResponse&amp; response, ResponseEvent event, const WsCallback_t&amp; callback)
+    {
+        ConnectionPtr_t c = conn-&gt;lockConn();         
+        if(c)
+        {
+            WsConnectionPtr_t wsConn = std::make_shared&lt;WsConnection&gt;(c, callback);
+            if(response.statusCode != 101)
+            {
+                wsConn-&gt;onError();
+                return;    
+            }
+            
+            wsConn-&gt;onOpen(&amp;response);
+            
+            c-&gt;setEventCallback(std::bind(&amp;WsConnection::onConnEvent, wsConn, _1, _2, _3));
+        }
+    }
+
+    void WsClient::onConnect(const HttpConnectorPtr_t&amp; conn, bool connected,
+                             const string&amp; requestData, const WsCallback_t&amp; callback)
+    {
+        if(!connected)
+        {
+            LOG_ERROR("wsclient connect error");
+            return;
+        }
+
+        string data = std::move(requestData);
+        WsCallback_t cb = std::move(callback);            
+
+        conn-&gt;setCallback(std::bind(&amp;WsClient::onResponse, shared_from_this(), _1, _2, _3, cb));
+        conn-&gt;send(data);
+    }
+}
+      </pre>
+    </body>
+</html>

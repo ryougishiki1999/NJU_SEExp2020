@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/cmd-line-utils/libedit/read.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*	$NetBSD: read.c,v 1.67 2011/08/16 16:25:15 christos Exp $	*/
+
+/*-
+ * Copyright (c) 1992, 1993
+ *	The Regents of the University of California.  All rights reserved.
+ *
+ * This code is derived from software contributed to Berkeley by
+ * Christos Zoulas of Cornell University.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+#include "config.h"
+#if !defined(lint) &amp;&amp; !defined(SCCSID)
+#if 0
+static char sccsid[] = "@(#)read.c	8.1 (Berkeley) 6/4/93";
+#else
+#endif
+#endif /* not lint &amp;&amp; not SCCSID */
+
+/*
+ * read.c: Clean this junk up! This is horrible code.
+ *	   Terminal read functions
+ */
+#include &lt;errno.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;limits.h&gt;
+#include "el.h"
+
+#define OKCMD	-1	/* must be -1! */
+
+private int	read__fixio(int, int);
+private int	read_preread(EditLine *);
+private int	read_char(EditLine *, Char *);
+private int	read_getcmd(EditLine *, el_action_t *, Char *);
+private void	read_pop(c_macro_t *);
+
+/* read_init():
+ *	Initialize the read stuff
+ */
+protected int
+read_init(EditLine *el)
+{
+	/* builtin read_char */
+	el-&gt;el_read.read_char = read_char;
+	return 0;
+}
+
+
+/* el_read_setfn():
+ *	Set the read char function to the one provided.
+ *	If it is set to EL_BUILTIN_GETCFN, then reset to the builtin one.
+ */
+protected int
+el_read_setfn(EditLine *el, el_rfunc_t rc)
+{
+	el-&gt;el_read.read_char = (rc == EL_BUILTIN_GETCFN) ? read_char : rc;
+	return 0;
+}
+
+
+/* el_read_getfn():
+ *	return the current read char function, or EL_BUILTIN_GETCFN
+ *	if it is the default one
+ */
+protected el_rfunc_t
+el_read_getfn(EditLine *el)
+{
+       return el-&gt;el_read.read_char == read_char ?
+	    EL_BUILTIN_GETCFN : el-&gt;el_read.read_char;
+}
+
+
+#ifndef MIN
+#define MIN(A,B) ((A) &lt; (B) ? (A) : (B))
+#endif
+
+#ifdef DEBUG_EDIT
+private void
+read_debug(EditLine *el)
+{
+
+	if (el-&gt;el_line.cursor &gt; el-&gt;el_line.lastchar)
+		(void) fprintf(el-&gt;el_errfile, "cursor &gt; lastchar\r\n");
+	if (el-&gt;el_line.cursor &lt; el-&gt;el_line.buffer)
+		(void) fprintf(el-&gt;el_errfile, "cursor &lt; buffer\r\n");
+	if (el-&gt;el_line.cursor &gt; el-&gt;el_line.limit)
+		(void) fprintf(el-&gt;el_errfile, "cursor &gt; limit\r\n");
+	if (el-&gt;el_line.lastchar &gt; el-&gt;el_line.limit)
+		(void) fprintf(el-&gt;el_errfile, "lastchar &gt; limit\r\n");
+	if (el-&gt;el_line.limit != &amp;el-&gt;el_line.buffer[EL_BUFSIZ - 2])
+		(void) fprintf(el-&gt;el_errfile, "limit != &amp;buffer[EL_BUFSIZ-2]\r\n");
+}
+#endif /* DEBUG_EDIT */
+
+
+/* read__fixio():
+ *	Try to recover from a read error
+ */
+/* ARGSUSED */
+private int
+read__fixio(int fd __attribute__((__unused__)), int e)
+{
+
+	switch (e) {
+	case -1:		/* Make sure that the code is reachable */
+
+#ifdef EWOULDBLOCK
+	case EWOULDBLOCK:
+#ifndef TRY_AGAIN
+#define TRY_AGAIN
+#endif
+#endif /* EWOULDBLOCK */
+
+#if defined(POSIX) &amp;&amp; defined(EAGAIN)
+#if defined(EWOULDBLOCK) &amp;&amp; EWOULDBLOCK != EAGAIN
+	case EAGAIN:
+#ifndef TRY_AGAIN
+#define TRY_AGAIN
+#endif
+#endif /* EWOULDBLOCK &amp;&amp; EWOULDBLOCK != EAGAIN */
+#endif /* POSIX &amp;&amp; EAGAIN */
+
+<span style = "background-color:#fdd">		e = 0;        Dead assignment:Value stored to 'e' is never read</span>
+#ifdef TRY_AGAIN
+#if defined(F_SETFL) &amp;&amp; defined(O_NDELAY)
+		if ((e = fcntl(fd, F_GETFL, 0)) == -1)
+			return -1;
+
+		if (fcntl(fd, F_SETFL, e &amp; ~O_NDELAY) == -1)
+			return -1;
+		else
+			e = 1;
+#endif /* F_SETFL &amp;&amp; O_NDELAY */
+
+#ifdef FIONBIO
+		{
+			int zero = 0;
+
+			if (ioctl(fd, FIONBIO, &amp;zero) == -1)
+				return -1;
+			else
+				e = 1;
+		}
+#endif /* FIONBIO */
+
+#endif /* TRY_AGAIN */
+		return e ? 0 : -1;
+
+	case EINTR:
+		return 0;
+
+	default:
+		return -1;
+	}
+}
+
+
+/* read_preread():
+ *	Try to read the stuff in the input queue;
+ */
+private int
+read_preread(EditLine *el)
+{
+	int chrs = 0;
+
+	if (el-&gt;el_tty.t_mode == ED_IO)
+		return 0;
+
+#ifndef WIDECHAR
+/* FIONREAD attempts to buffer up multiple bytes, and to make that work
+ * properly with partial wide/UTF-8 characters would need some careful work. */
+#ifdef FIONREAD
+	(void) ioctl(el-&gt;el_infd, FIONREAD, &amp;chrs);
+	if (chrs &gt; 0) {
+		char buf[EL_BUFSIZ];
+
+		chrs = read(el-&gt;el_infd, buf,
+		    (size_t) MIN(chrs, EL_BUFSIZ - 1));
+		if (chrs &gt; 0) {
+			buf[chrs] = '\0';
+			el_push(el, buf);
+		}
+	}
+#endif /* FIONREAD */
+#endif
+	return chrs &gt; 0;
+}
+
+
+/* el_push():
+ *	Push a macro
+ */
+public void
+FUN(el,push)(EditLine *el, const Char *str)
+{
+	c_macro_t *ma = &amp;el-&gt;el_chared.c_macro;
+
+	if (str != NULL &amp;&amp; ma-&gt;level + 1 &lt; EL_MAXMACRO) {
+		ma-&gt;level++;
+		if ((ma-&gt;macro[ma-&gt;level] = Strdup(str)) != NULL)
+			return;
+		ma-&gt;level--;
+	}
+	terminal_beep(el);
+	terminal__flush(el);
+}
+
+
+/* read_getcmd():
+ *	Return next command from the input stream.
+ *	Character values &gt; 255 are not looked up in the map, but inserted.
+ */
+private int
+read_getcmd(EditLine *el, el_action_t *cmdnum, Char *ch)
+{
+	el_action_t cmd;
+	int num;
+
+	el-&gt;el_errno = 0;
+	do {
+		if ((num = FUN(el,getc)(el, ch)) != 1) {/* if EOF or error */
+			el-&gt;el_errno = num == 0 ? 0 : errno;
+			return num;
+		}
+
+#ifdef	KANJI
+		if ((*ch &amp; 0200)) {
+			el-&gt;el_state.metanext = 0;
+			cmd = CcViMap[' '];
+			break;
+		} else
+#endif /* KANJI */
+
+		if (el-&gt;el_state.metanext) {
+			el-&gt;el_state.metanext = 0;
+			*ch |= 0200;
+		}
+#ifdef WIDECHAR
+		if (*ch &gt;= N_KEYS)
+			cmd = ED_INSERT;
+		else
+#endif
+			cmd = el-&gt;el_map.current[(unsigned char) *ch];
+		if (cmd == ED_SEQUENCE_LEAD_IN) {
+			keymacro_value_t val;
+			switch (keymacro_get(el, ch, &amp;val)) {
+			case XK_CMD:
+				cmd = val.cmd;
+				break;
+			case XK_STR:
+				FUN(el,push)(el, val.str);
+				break;
+#ifdef notyet
+			case XK_EXE:
+				/* XXX: In the future to run a user function */
+				RunCommand(val.str);
+				break;
+#endif
+			default:
+				EL_ABORT((el-&gt;el_errfile, "Bad XK_ type \n"));
+				break;
+			}
+		}
+		if (el-&gt;el_map.alt == NULL)
+			el-&gt;el_map.current = el-&gt;el_map.key;
+	} while (cmd == ED_SEQUENCE_LEAD_IN);
+	*cmdnum = cmd;
+	return OKCMD;
+}
+
+/* read_char():
+ *	Read a character from the tty.
+ */
+private int
+read_char(EditLine *el, Char *cp)
+{
+	ssize_t num_read;
+	int tried = 0;
+        char cbuf[MB_LEN_MAX];
+        size_t cbp = 0;
+        int bytes = 0;
+
+#ifdef WIDECHAR
+static mbstate_t state, temp_state;
+memset(&amp;state, 0, sizeof(mbstate_t));
+#endif
+
+ again:
+	el-&gt;el_signal-&gt;sig_no = 0;
+	while ((num_read = read(el-&gt;el_infd, cbuf + cbp, (size_t)1)) == -1) {
+		switch (el-&gt;el_signal-&gt;sig_no) {
+		case SIGCONT:
+			FUN(el,set)(el, EL_REFRESH);
+			/*FALLTHROUGH*/
+		case SIGWINCH:
+			sig_set(el);
+			goto again;
+		default:
+			break;
+		}
+		if (!tried &amp;&amp; read__fixio(el-&gt;el_infd, errno) == 0)
+			tried = 1;
+		else {
+			*cp = '\0';
+			return -1;
+		}
+	}
+
+#ifdef WIDECHAR
+        ++cbp;
+        if (cbp &gt; (size_t) MB_CUR_MAX) { /* "shouldn't happen" */
+          *cp = '\0';
+          return (-1);
+        }
+
+        temp_state= state;
+
+        if ((bytes = mbrtowc(cp, cbuf, cbp, &amp;state)) == -2)
+        {
+          /* Incomplete sequence, restore the state and scan more bytes. */
+          state= temp_state;
+          goto again;
+        }
+        else if (bytes == -1)
+        {
+          /* Invalid sequence, reset the state and continue. */
+          cbp= 0;
+          memset(&amp;state, 0, sizeof(mbstate_t));
+          goto again;
+        }
+        /* We successfully read one single or multi-byte character */
+#else
+        *cp = (unsigned char)cbuf[0];
+#endif
+
+#if 0
+	if ((el-&gt;el_flags &amp; IGNORE_EXTCHARS) &amp;&amp; bytes &gt; 1) {
+		cbp = 0; /* skip this character */
+		goto again;
+	}
+#endif
+
+	return (int)num_read;
+}
+
+/* read_pop():
+ *	Pop a macro from the stack
+ */
+private void
+read_pop(c_macro_t *ma)
+{
+	int i;
+
+	el_free(ma-&gt;macro[0]);
+	for (i = 0; i &lt; ma-&gt;level; i++)
+		ma-&gt;macro[i] = ma-&gt;macro[i + 1];
+	ma-&gt;level--;
+	ma-&gt;offset = 0;
+}
+
+/* el_getc():
+ *	Read a character
+ */
+public int
+FUN(el,getc)(EditLine *el, Char *cp)
+{
+	int num_read;
+	c_macro_t *ma = &amp;el-&gt;el_chared.c_macro;
+
+	terminal__flush(el);
+	for (;;) {
+		if (ma-&gt;level &lt; 0) {
+			if (!read_preread(el))
+				break;
+		}
+
+		if (ma-&gt;level &lt; 0)
+			break;
+
+		if (ma-&gt;macro[0][ma-&gt;offset] == '\0') {
+			read_pop(ma);
+			continue;
+		}
+
+		*cp = ma-&gt;macro[0][ma-&gt;offset++];
+
+		if (ma-&gt;macro[0][ma-&gt;offset] == '\0') {
+			/* Needed for QuoteMode On */
+			read_pop(ma);
+		}
+
+		return 1;
+	}
+
+#ifdef DEBUG_READ
+	(void) fprintf(el-&gt;el_errfile, "Turning raw mode on\n");
+#endif /* DEBUG_READ */
+	if (tty_rawmode(el) &lt; 0)/* make sure the tty is set up correctly */
+		return 0;
+
+#ifdef DEBUG_READ
+	(void) fprintf(el-&gt;el_errfile, "Reading a character\n");
+#endif /* DEBUG_READ */
+	num_read = (*el-&gt;el_read.read_char)(el, cp);
+#ifdef WIDECHAR
+	if (el-&gt;el_flags &amp; NARROW_READ)
+		*cp = *(char *)(void *)cp;
+#endif
+#ifdef DEBUG_READ
+	(void) fprintf(el-&gt;el_errfile, "Got it %c\n", *cp);
+#endif /* DEBUG_READ */
+	return num_read;
+}
+
+protected void
+read_prepare(EditLine *el)
+{
+	if (el-&gt;el_flags &amp; HANDLE_SIGNALS)
+		sig_set(el);
+	if (el-&gt;el_flags &amp; NO_TTY)
+		return;
+	if ((el-&gt;el_flags &amp; (UNBUFFERED|EDIT_DISABLED)) == UNBUFFERED)
+		tty_rawmode(el);
+
+	/* This is relatively cheap, and things go terribly wrong if
+	   we have the wrong size. */
+	el_resize(el);
+	re_clear_display(el);	/* reset the display stuff */
+	ch_reset(el, 0);
+	re_refresh(el);		/* print the prompt */
+
+	if (el-&gt;el_flags &amp; UNBUFFERED)
+		terminal__flush(el);
+}
+
+protected void
+read_finish(EditLine *el)
+{
+	if ((el-&gt;el_flags &amp; UNBUFFERED) == 0)
+		(void) tty_cookedmode(el);
+	if (el-&gt;el_flags &amp; HANDLE_SIGNALS)
+		sig_clr(el);
+}
+
+public const Char *
+FUN(el,gets)(EditLine *el, int *nread)
+{
+	int retval;
+	el_action_t cmdnum = 0;
+	int num;		/* how many chars we have read at NL */
+	Char ch, *cp;
+	int crlf = 0;
+	int nrb;
+#ifdef FIONREAD
+	c_macro_t *ma = &amp;el-&gt;el_chared.c_macro;
+#endif /* FIONREAD */
+
+	if (nread == NULL)
+		nread = &amp;nrb;
+	*nread = 0;
+
+	if (el-&gt;el_flags &amp; NO_TTY) {
+		size_t idx;
+
+		cp = el-&gt;el_line.buffer;
+		while ((num = (*el-&gt;el_read.read_char)(el, cp)) == 1) {
+			/* make sure there is space for next character */
+			if (cp + 1 &gt;= el-&gt;el_line.limit) {
+				idx = (size_t)(cp - el-&gt;el_line.buffer);
+				if (!ch_enlargebufs(el, (size_t)2))
+					break;
+				cp = &amp;el-&gt;el_line.buffer[idx];
+			}
+			cp++;
+			if (el-&gt;el_flags &amp; UNBUFFERED)
+				break;
+			if (cp[-1] == '\r' || cp[-1] == '\n')
+				break;
+		}
+		if (num == -1) {
+			if (errno == EINTR)
+				cp = el-&gt;el_line.buffer;
+			el-&gt;el_errno = errno;
+		}
+
+		goto noedit;
+	}
+
+
+#ifdef FIONREAD
+	if (el-&gt;el_tty.t_mode == EX_IO &amp;&amp; ma-&gt;level &lt; 0) {
+		long chrs = 0;
+
+		(void) ioctl(el-&gt;el_infd, FIONREAD, &amp;chrs);
+		if (chrs == 0) {
+			if (tty_rawmode(el) &lt; 0) {
+				errno = 0;
+				*nread = 0;
+				return NULL;
+			}
+		}
+	}
+#endif /* FIONREAD */
+
+	if ((el-&gt;el_flags &amp; UNBUFFERED) == 0)
+		read_prepare(el);
+
+	if (el-&gt;el_flags &amp; EDIT_DISABLED) {
+		size_t idx;
+
+		if ((el-&gt;el_flags &amp; UNBUFFERED) == 0)
+			cp = el-&gt;el_line.buffer;
+		else
+			cp = el-&gt;el_line.lastchar;
+
+		terminal__flush(el);
+
+		while ((num = (*el-&gt;el_read.read_char)(el, cp)) == 1) {
+			/* make sure there is space next character */
+			if (cp + 1 &gt;= el-&gt;el_line.limit) {
+				idx = (size_t)(cp - el-&gt;el_line.buffer);
+				if (!ch_enlargebufs(el, (size_t)2))
+					break;
+				cp = &amp;el-&gt;el_line.buffer[idx];
+			}
+			cp++;
+			crlf = cp[-1] == '\r' || cp[-1] == '\n';
+			if (el-&gt;el_flags &amp; UNBUFFERED)
+				break;
+			if (crlf)
+				break;
+		}
+
+		if (num == -1) {
+			if (errno == EINTR)
+				cp = el-&gt;el_line.buffer;
+			el-&gt;el_errno = errno;
+		}
+
+		goto noedit;
+	}
+
+	for (num = OKCMD; num == OKCMD;) {	/* while still editing this
+						 * line */
+#ifdef DEBUG_EDIT
+		read_debug(el);
+#endif /* DEBUG_EDIT */
+		/* if EOF or error */
+		if ((num = read_getcmd(el, &amp;cmdnum, &amp;ch)) != OKCMD) {
+#ifdef DEBUG_READ
+			(void) fprintf(el-&gt;el_errfile,
+			    "Returning from el_gets %d\n", num);
+#endif /* DEBUG_READ */
+			break;
+		}
+		if (el-&gt;el_errno == EINTR) {
+			el-&gt;el_line.buffer[0] = '\0';
+			el-&gt;el_line.lastchar =
+			    el-&gt;el_line.cursor = el-&gt;el_line.buffer;
+			break;
+		}
+		if ((unsigned int)cmdnum &gt;= (unsigned int)el-&gt;el_map.nfunc) {	/* BUG CHECK command */
+#ifdef DEBUG_EDIT
+			(void) fprintf(el-&gt;el_errfile,
+			    "ERROR: illegal command from key 0%o\r\n", ch);
+#endif /* DEBUG_EDIT */
+			continue;	/* try again */
+		}
+		/* now do the real command */
+#ifdef DEBUG_READ
+		{
+			el_bindings_t *b;
+			for (b = el-&gt;el_map.help; b-&gt;name; b++)
+				if (b-&gt;func == cmdnum)
+					break;
+			if (b-&gt;name)
+				(void) fprintf(el-&gt;el_errfile,
+				    "Executing %s\n", b-&gt;name);
+			else
+				(void) fprintf(el-&gt;el_errfile,
+				    "Error command = %d\n", cmdnum);
+		}
+#endif /* DEBUG_READ */
+		/* vi redo needs these way down the levels... */
+		el-&gt;el_state.thiscmd = cmdnum;
+		el-&gt;el_state.thisch = ch;
+		if (el-&gt;el_map.type == MAP_VI &amp;&amp;
+		    el-&gt;el_map.current == el-&gt;el_map.key &amp;&amp;
+		    el-&gt;el_chared.c_redo.pos &lt; el-&gt;el_chared.c_redo.lim) {
+			if (cmdnum == VI_DELETE_PREV_CHAR &amp;&amp;
+			    el-&gt;el_chared.c_redo.pos != el-&gt;el_chared.c_redo.buf
+<span style = "background-color:#fdd">			    &amp;&amp; Isprint(el-&gt;el_chared.c_redo.pos[-1]))        Out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+				el-&gt;el_chared.c_redo.pos--;
+			else
+				*el-&gt;el_chared.c_redo.pos++ = ch;
+		}
+		retval = (*el-&gt;el_map.func[cmdnum]) (el, ch);
+#ifdef DEBUG_READ
+		(void) fprintf(el-&gt;el_errfile,
+			"Returned state %d\n", retval );
+#endif /* DEBUG_READ */
+
+		/* save the last command here */
+		el-&gt;el_state.lastcmd = cmdnum;
+
+		/* use any return value */
+		switch (retval) {
+		case CC_CURSOR:
+			re_refresh_cursor(el);
+			break;
+
+		case CC_REDISPLAY:
+			re_clear_lines(el);
+			re_clear_display(el);
+			/* FALLTHROUGH */
+
+		case CC_REFRESH:
+			re_refresh(el);
+			break;
+
+		case CC_REFRESH_BEEP:
+			re_refresh(el);
+			terminal_beep(el);
+			break;
+
+		case CC_NORM:	/* normal char */
+			break;
+
+		case CC_ARGHACK:	/* Suggested by Rich Salz */
+			/* &lt;rsalz@pineapple.bbn.com&gt; */
+			continue;	/* keep going... */
+
+		case CC_EOF:	/* end of file typed */
+			if ((el-&gt;el_flags &amp; UNBUFFERED) == 0)
+				num = 0;
+			else if (num == -1) {
+				*el-&gt;el_line.lastchar++ = CONTROL('d');
+				el-&gt;el_line.cursor = el-&gt;el_line.lastchar;
+				num = 1;
+			}
+			break;
+
+		case CC_NEWLINE:	/* normal end of line */
+			num = (int)(el-&gt;el_line.lastchar - el-&gt;el_line.buffer);
+			break;
+
+		case CC_FATAL:	/* fatal error, reset to known state */
+#ifdef DEBUG_READ
+			(void) fprintf(el-&gt;el_errfile,
+			    "*** editor fatal ERROR ***\r\n\n");
+#endif /* DEBUG_READ */
+			/* put (real) cursor in a known place */
+			re_clear_display(el);	/* reset the display stuff */
+			ch_reset(el, 1);	/* reset the input pointers */
+			re_refresh(el); /* print the prompt again */
+			break;
+
+		case CC_ERROR:
+		default:	/* functions we don't know about */
+#ifdef DEBUG_READ
+			(void) fprintf(el-&gt;el_errfile,
+			    "*** editor ERROR ***\r\n\n");
+#endif /* DEBUG_READ */
+			terminal_beep(el);
+			terminal__flush(el);
+			break;
+		}
+		el-&gt;el_state.argument = 1;
+		el-&gt;el_state.doingarg = 0;
+		el-&gt;el_chared.c_vcmd.action = NOP;
+		if (el-&gt;el_flags &amp; UNBUFFERED)
+			break;
+	}
+
+	terminal__flush(el);		/* flush any buffered output */
+	/* make sure the tty is set up correctly */
+	if ((el-&gt;el_flags &amp; UNBUFFERED) == 0) {
+		read_finish(el);
+		*nread = num != -1 ? num : 0;
+	} else {
+		*nread = (int)(el-&gt;el_line.lastchar - el-&gt;el_line.buffer);
+	}
+	goto done;
+noedit:
+	el-&gt;el_line.cursor = el-&gt;el_line.lastchar = cp;
+	*cp = '\0';
+	*nread = (int)(el-&gt;el_line.cursor - el-&gt;el_line.buffer);
+done:
+	if (*nread == 0) {
+		if (num == -1) {
+			*nread = -1;
+			errno = el-&gt;el_errno;
+		}
+		return NULL;
+	} else
+		return el-&gt;el_line.buffer;
+}
+      </pre>
+    </body>
+</html>

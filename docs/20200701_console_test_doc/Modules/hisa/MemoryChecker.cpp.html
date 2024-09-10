@@ -1,0 +1,448 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>MemoryChecker.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "MemoryChecker.h"
+#include "../Logger.h"
+#include &lt;clang/StaticAnalyzer/Core/BugReporter/BugType.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/BugReporter/CommonBugCategories.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h&gt;
+#include &lt;vector&gt;
+// The checker for memory management, check memory leak, use-after-free,
+// double-free, inspired by clang Static Analyzer MallocChecker.
+<span style = "background-color:#dfd">REGISTER_MAP_WITH_PROGRAMSTATE(MappedMemoryState, clang::ento::SymbolRef, MemoryState)</span>
+
+// MemoryChecker
+void MemoryChecker::checkNewAllocator(const clang::CXXNewExpr *new_expr, clang::ento::SVal target,
+                                      clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{
+    if (ctx.wasInlined)</span>
+<span style = "background-color:#fdd">        return;</span>
+<span style = "background-color:#dfd">    if (!new_expr-&gt;isArray())
+        handle_new(ctx, new_expr, target, MemoryState::CXXNew);</span>
+    else
+<span style = "background-color:#dfd">        handle_new(ctx, new_expr, target, MemoryState::CXXNewArray);
+}</span>
+void MemoryChecker::checkLocation(clang::ento::SVal loc, bool is_load, const clang::Stmt *stmt,
+                                  clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{
+    clang::ento::SymbolRef memory = loc.getLocSymbolInBase();
+    if (memory)
+        check_use_after_free(ctx, memory, stmt);
+}</span>
+void MemoryChecker::checkDeadSymbols(clang::ento::SymbolReaper &amp;sym_reaper, clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{</span>
+    // check memory leak
+<span style = "background-color:#dfd">    clang::ento::ProgramStateRef state = ctx.getState();
+    MappedMemoryStateTy ms = state-&gt;get&lt;MappedMemoryState&gt;();
+    MappedMemoryStateTy::Factory &amp;ms_f = state-&gt;get_context&lt;MappedMemoryState&gt;();
+    std::vector&lt;clang::ento::SymbolRef&gt; leak_memory;
+    MappedMemoryStateTy new_ms = ms;
+    for (auto i : new_ms)</span>
+    {
+<span style = "background-color:#dfd">        if (sym_reaper.isDead(i.first))</span>
+        {
+<span style = "background-color:#dfd">            if (i.second.state == MemoryState::Allocated)
+                leak_memory.push_back(i.first);
+            new_ms = ms_f.remove(new_ms, i.first);
+        }
+    }
+    if (new_ms == ms)
+        return;
+    clang::ento::ExplodedNode *node = ctx.getPredecessor();
+    if (!leak_memory.empty())</span>
+    {
+<span style = "background-color:#dfd">        static clang::ento::CheckerProgramPointTag tag("MemoryChecker", "MemoryLeak");
+        node = ctx.generateNonFatalErrorNode(ctx.getState(), &amp;tag);
+        if (node)</span>
+        {
+<span style = "background-color:#dfd">            for (auto &amp;i : leak_memory)</span>
+            {
+<span style = "background-color:#dfd">                report_memory_leak(ctx, i, node);
+            }</span>
+        }
+    }
+<span style = "background-color:#dfd">    ctx.addTransition(state-&gt;set&lt;MappedMemoryState&gt;(new_ms), node);
+}</span>
+void MemoryChecker::checkPreCall(const clang::ento::CallEvent &amp;call, clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{</span>
+    // skip the destructor, since we check delete in postcall
+<span style = "background-color:#dfd">    if (llvm::dyn_cast&lt;clang::ento::CXXDestructorCall&gt;(&amp;call))</span>
+    {
+<span style = "background-color:#dfd">        return;</span>
+    }
+    // check whether call is free call to check double free in post call
+<span style = "background-color:#dfd">    if (const clang::ento::AnyFunctionCall *c = llvm::dyn_cast&lt;clang::ento::AnyFunctionCall&gt;(&amp;call))</span>
+    {
+<span style = "background-color:#dfd">        const clang::FunctionDecl *decl = c-&gt;getDecl();
+        if (!decl)</span>
+<span style = "background-color:#fdd">            return;</span>
+<span style = "background-color:#dfd">        if (deallocate_function_map.lookup(call))</span>
+        {
+<span style = "background-color:#dfd">            return;</span>
+        }
+<span style = "background-color:#dfd">        if (is_new_delete(decl))</span>
+        {
+<span style = "background-color:#dfd">            return;</span>
+        }
+    }
+    // check callee
+<span style = "background-color:#dfd">    if (const clang::ento::CXXInstanceCall *c = llvm::dyn_cast&lt;clang::ento::CXXInstanceCall&gt;(&amp;call))</span>
+    {
+<span style = "background-color:#dfd">        clang::ento::SymbolRef memory = c-&gt;getCXXThisVal().getAsSymbol();
+        if (!memory || check_use_after_free(ctx, memory, c-&gt;getCXXThisExpr()))
+            return;</span>
+    }
+    // check args
+<span style = "background-color:#dfd">    for (auto i = 0; i &lt; call.getNumArgs(); ++i)</span>
+    {
+<span style = "background-color:#dfd">        clang::ento::SVal arg = call.getArgSVal(i);
+        if (arg.getAs&lt;clang::ento::Loc&gt;())</span>
+        {
+<span style = "background-color:#dfd">            clang::ento::SymbolRef memory = arg.getAsSymbol();
+            if (memory &amp;&amp; check_use_after_free(ctx, memory, call.getArgExpr(i)))
+                return;</span>
+        }
+<span style = "background-color:#dfd">    }
+}</span>
+void MemoryChecker::checkPostCall(const clang::ento::CallEvent &amp;call, clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{
+    if (ctx.wasInlined)
+        return;
+    const clang::CallExpr *expr = llvm::dyn_cast_or_null&lt;clang::CallExpr&gt;(call.getOriginExpr());
+    if (!expr)
+        return;
+    const clang::FunctionDecl *decl = ctx.getCalleeDecl(expr);
+    if (!decl)</span>
+<span style = "background-color:#fdd">        return;</span>
+<span style = "background-color:#dfd">    if (const MemoryChecker::CheckFunctionType *func = allocate_function_map.lookup(call))</span>
+    {
+<span style = "background-color:#dfd">        (*func)(this, ctx, expr, ctx.getState());
+        return;</span>
+    }
+<span style = "background-color:#dfd">    if (const MemoryChecker::CheckFunctionType *func = deallocate_function_map.lookup(call))</span>
+    {
+<span style = "background-color:#dfd">        (*func)(this, ctx, expr, ctx.getState());
+        return;</span>
+    }
+    // for new/delete call
+    // e.g. void *p = operator new(sizeof(int));
+    // operator delete(p);
+<span style = "background-color:#dfd">    if (is_new_delete(llvm::cast&lt;clang::FunctionDecl&gt;(call.getDecl())))</span>
+    {
+<span style = "background-color:#dfd">        check_new_delete(ctx, expr, ctx.getState());</span>
+        return;
+    }
+<span style = "background-color:#dfd">}</span>
+void MemoryChecker::checkPostStmt(const clang::CXXNewExpr *new_expr, clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{
+    if (!ctx.getAnalysisManager().getAnalyzerOptions().MayInlineCXXAllocator)</span>
+    {
+<span style = "background-color:#fdd">        if (!new_expr-&gt;isArray())
+            handle_new(ctx, new_expr, ctx.getSVal(new_expr), MemoryState::CXXNew);</span>
+        else
+<span style = "background-color:#fdd">            handle_new(ctx, new_expr, ctx.getSVal(new_expr), MemoryState::CXXNewArray);</span>
+    }
+<span style = "background-color:#dfd">}</span>
+void MemoryChecker::checkPreStmt(const clang::CXXDeleteExpr *delete_expr, clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{
+    if (!is_new_delete(delete_expr-&gt;getOperatorDelete()))</span>
+<span style = "background-color:#fdd">        return;</span>
+
+<span style = "background-color:#dfd">    clang::ento::ProgramStateRef state = ctx.getState();
+    state = handle_deallocation(ctx, delete_expr, delete_expr-&gt;getArgument(), state);
+    ctx.addTransition(state);
+}</span>
+clang::ento::ProgramStateRef MemoryChecker::evalAssume(clang::ento::ProgramStateRef state, clang::ento::SVal cond,
+                                                       bool assumption) const
+<span style = "background-color:#dfd">{</span>
+    // this function used to remove NULL pointer from tracked memory state to reduce false positive of memory leak
+<span style = "background-color:#dfd">    MappedMemoryStateTy memory = state-&gt;get&lt;MappedMemoryState&gt;();
+    clang::ento::ConstraintManager &amp;constraint_mgr = state-&gt;getConstraintManager();
+    for (auto i = memory.begin(); i != memory.end(); ++i)</span>
+    {
+<span style = "background-color:#dfd">        clang::ento::ConditionTruthVal isnull = constraint_mgr.isNull(state, i.getKey());
+        if (isnull.isConstrainedTrue())</span>
+        {
+<span style = "background-color:#dfd">            state = state-&gt;remove&lt;MappedMemoryState&gt;(i.getKey());
+        }
+    }
+    return state;
+}</span>
+void MemoryChecker::checkPreStmt(const clang::ReturnStmt *return_stmt, clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{
+    handle_return(return_stmt, ctx);
+}</span>
+void MemoryChecker::checkEndFunction(const clang::ReturnStmt *return_stmt, clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{
+    handle_return(return_stmt, ctx);
+}</span>
+bool MemoryChecker::is_deallocated(clang::ento::CheckerContext &amp;ctx, clang::ento::SymbolRef memory) const
+<span style = "background-color:#dfd">{
+    const MemoryState *ms = ctx.getState()-&gt;get&lt;MappedMemoryState&gt;(memory);
+    if (ms &amp;&amp; ms-&gt;state == MemoryState::Deallocated)</span>
+    {
+<span style = "background-color:#dfd">        return true;</span>
+    }
+<span style = "background-color:#dfd">    return false;
+}</span>
+bool MemoryChecker::is_new_delete(const clang::FunctionDecl *decl) const
+<span style = "background-color:#dfd">{
+    if (!decl)</span>
+<span style = "background-color:#fdd">        return false;</span>
+<span style = "background-color:#dfd">    clang::OverloadedOperatorKind k = decl-&gt;getOverloadedOperator();
+    if (k != clang::OO_New &amp;&amp; k != clang::OO_Array_New &amp;&amp; k != clang::OO_Delete &amp;&amp; k != clang::OO_Array_Delete)
+        return false;
+    clang::SourceLocation l = decl-&gt;getLocation();
+    return !l.isValid() || decl-&gt;getASTContext().getSourceManager().isInSystemHeader(l);
+}</span>
+
+clang::ento::ProgramStateRef MemoryChecker::register_allocation_memory_state(clang::ento::CheckerContext &amp;ctx,
+                                                                             const clang::Expr *expr,
+                                                                             clang::ento::ProgramStateRef state,
+                                                                             MemoryState::Function alloc_func,
+                                                                             clang::ento::SVal memory) const
+<span style = "background-color:#dfd">{
+    if (!state)</span>
+<span style = "background-color:#fdd">        return nullptr;</span>
+    // not a location
+<span style = "background-color:#dfd">    if (!memory.getAs&lt;clang::ento::Loc&gt;())</span>
+<span style = "background-color:#fdd">        return nullptr;</span>
+    // register it
+<span style = "background-color:#dfd">    return state-&gt;set&lt;MappedMemoryState&gt;(</span>
+        memory.getAsLocSymbol(), MemoryState(MemoryState::Allocated, alloc_func, const_cast&lt;clang::Expr *&gt;(expr)));
+<span style = "background-color:#dfd">}</span>
+clang::ento::ProgramStateRef MemoryChecker::handle_allocation(clang::ento::CheckerContext &amp;ctx,
+                                                              const clang::CallExpr *call_expr,
+                                                              clang::ento::ProgramStateRef state,
+                                                              MemoryState::Function alloc_func) const
+<span style = "background-color:#dfd">{</span>
+    // track the allocation.
+    // invalid state
+<span style = "background-color:#dfd">    if (!state)</span>
+<span style = "background-color:#fdd">        return nullptr;</span>
+    // invalid return value
+<span style = "background-color:#dfd">    if (!clang::ento::Loc::isLocType(call_expr-&gt;getType()))</span>
+<span style = "background-color:#fdd">        return nullptr;</span>
+    // bind effect to the allocation stmt
+    // bind heap region symbolic value.
+<span style = "background-color:#dfd">    clang::ento::SValBuilder &amp;sb = ctx.getSValBuilder();
+    auto loc_ctx = ctx.getPredecessor()-&gt;getLocationContext();</span>
+    clang::ento::DefinedSVal memory =
+<span style = "background-color:#dfd">        sb.getConjuredHeapSymbolVal(call_expr, loc_ctx, ctx.blockCount()).castAs&lt;clang::ento::DefinedSVal&gt;();
+    state = state-&gt;BindExpr(call_expr, ctx.getLocationContext(), memory);
+    return register_allocation_memory_state(ctx, call_expr, state, alloc_func, ctx.getSVal(call_expr));
+}</span>
+clang::ento::ProgramStateRef MemoryChecker::handle_deallocation(clang::ento::CheckerContext &amp;ctx,
+                                                                const clang::Expr *call_expr,
+                                                                const clang::Expr *arg_expr,
+                                                                clang::ento::ProgramStateRef state) const
+<span style = "background-color:#dfd">{
+    if (!state)</span>
+<span style = "background-color:#fdd">        return nullptr;</span>
+<span style = "background-color:#dfd">    clang::ento::SVal pointer = ctx.getSVal(arg_expr);</span>
+    // check region
+<span style = "background-color:#dfd">    const clang::ento::MemRegion *region = pointer.getAsRegion();
+    if (!region)</span>
+<span style = "background-color:#fdd">        return nullptr;</span>
+<span style = "background-color:#dfd">    region = region-&gt;StripCasts();
+    const clang::ento::SymbolicRegion *sym_region =</span>
+        llvm::dyn_cast&lt;clang::ento::SymbolicRegion&gt;(region-&gt;getBaseRegion());
+<span style = "background-color:#dfd">    if (!sym_region)</span>
+<span style = "background-color:#fdd">        return nullptr;</span>
+<span style = "background-color:#dfd">    clang::ento::SymbolRef memory = sym_region-&gt;getSymbol();
+    auto memory_state = state-&gt;get&lt;MappedMemoryState&gt;(memory);
+    if (memory_state)</span>
+    {
+<span style = "background-color:#dfd">        if (memory_state-&gt;state == MemoryState::Deallocated)</span>
+        {
+<span style = "background-color:#dfd">            report_double_free(ctx, call_expr-&gt;getSourceRange(), memory);</span>
+        }
+        else
+        {
+            // TODO MAKE ILLEGAL &lt;ALLOCATION,DEALLOCATION&gt; PAIR AS MEMORY LEAK
+        }
+        // update memory state
+<span style = "background-color:#dfd">        return state-&gt;set&lt;MappedMemoryState&gt;(</span>
+            memory, MemoryState(MemoryState::Deallocated, memory_state-&gt;alloc_func, memory_state-&gt;bind_stmt));
+    }
+<span style = "background-color:#fdd">    return nullptr;</span>
+<span style = "background-color:#dfd">}</span>
+
+void MemoryChecker::handle_new(clang::ento::CheckerContext &amp;ctx, const clang::CXXNewExpr *expr,
+                               clang::ento::SVal memory, MemoryState::Function alloc_func) const
+<span style = "background-color:#dfd">{
+    if (!is_new_delete(expr-&gt;getOperatorNew()))</span>
+<span style = "background-color:#fdd">        return;</span>
+<span style = "background-color:#dfd">    clang::ento::ProgramStateRef state = ctx.getState();
+    state = register_allocation_memory_state(ctx, expr, state, alloc_func, memory);
+    ctx.addTransition(state);
+}</span>
+void MemoryChecker::handle_return(const clang::ReturnStmt *return_stmt, clang::ento::CheckerContext &amp;ctx) const
+<span style = "background-color:#dfd">{</span>
+    // return deallocated memory is use-after-free
+<span style = "background-color:#dfd">    if (!return_stmt)
+        return;
+    const clang::Expr *expr = return_stmt-&gt;getRetValue();
+    if (!expr)
+        return;
+    clang::ento::ProgramStateRef state = ctx.getState();
+    clang::ento::SVal return_value = ctx.getSVal(expr);
+    clang::ento::SymbolRef memory = return_value.getAsSymbol();
+    if (memory)</span>
+    {
+<span style = "background-color:#dfd">        check_use_after_free(ctx, memory, expr);</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+void MemoryChecker::check_malloc(clang::ento::CheckerContext &amp;ctx, const clang::CallExpr *expr,
+                                 clang::ento::ProgramStateRef state) const
+<span style = "background-color:#dfd">{
+    state = handle_allocation(ctx, expr, state, MemoryState::Malloc);
+    ctx.addTransition(state);
+}</span>
+void MemoryChecker::check_free(clang::ento::CheckerContext &amp;ctx, const clang::CallExpr *expr,
+                               clang::ento::ProgramStateRef state) const
+<span style = "background-color:#dfd">{
+    state = handle_deallocation(ctx, expr, expr-&gt;getArg(0), state);
+    ctx.addTransition(state);
+}</span>
+void MemoryChecker::check_new_delete(clang::ento::CheckerContext &amp;ctx, const clang::CallExpr *expr,
+                                     clang::ento::ProgramStateRef state) const
+<span style = "background-color:#dfd">{
+    const clang::FunctionDecl *decl = ctx.getCalleeDecl(expr);
+    switch (decl-&gt;getOverloadedOperator())</span>
+    {
+    case clang::OO_New:
+<span style = "background-color:#dfd">        state = handle_allocation(ctx, expr, state, MemoryState::CXXNew);
+        break;</span>
+    case clang::OO_Array_New:
+<span style = "background-color:#dfd">        state = handle_allocation(ctx, expr, state, MemoryState::CXXNewArray);
+        break;</span>
+    case clang::OO_Delete:
+<span style = "background-color:#dfd">        state = handle_deallocation(ctx, expr, expr-&gt;getArg(0), state);
+        break;</span>
+    case clang::OO_Array_Delete:
+<span style = "background-color:#dfd">        state = handle_deallocation(ctx, expr, expr-&gt;getArg(0), state);</span>
+        break;
+    }
+
+<span style = "background-color:#dfd">    ctx.addTransition(state);
+}</span>
+bool MemoryChecker::check_use_after_free(clang::ento::CheckerContext &amp;ctx, clang::ento::SymbolRef memory,
+                                         const clang::Stmt *stmt) const
+<span style = "background-color:#dfd">{
+    if (is_deallocated(ctx, memory))</span>
+    {
+<span style = "background-color:#dfd">        report_use_after_free(ctx, stmt-&gt;getSourceRange(), memory);
+        return true;</span>
+    }
+<span style = "background-color:#dfd">    return false;
+}</span>
+
+void MemoryChecker::report_memory_leak(clang::ento::CheckerContext &amp;ctx, clang::ento::SymbolRef memory,
+                                       clang::ento::ExplodedNode *node) const
+<span style = "background-color:#dfd">{
+    if (!memory_leak_bug_type)</span>
+    {
+<span style = "background-color:#dfd">        memory_leak_bug_type.reset(new clang::ento::BugType(this, "Memory Leak", clang::ento::categories::MemoryError));</span>
+    }
+    // get leak allocation
+<span style = "background-color:#dfd">    clang::ento::ExplodedNode *alloc_node = node;
+    const clang::ento::MemRegion *region = nullptr;
+    const clang::LocationContext *leak_loc_ctx = node-&gt;getLocationContext();
+    for (auto n = node; n;)</span>
+    {
+<span style = "background-color:#dfd">        clang::ento::ProgramStateRef s = n-&gt;getState();
+        if (!s-&gt;get&lt;MappedMemoryState&gt;(memory))
+            break;
+        if (!region)</span>
+        {
+<span style = "background-color:#dfd">            if (const clang::ento::MemRegion *mem_region = ctx.getLocationRegionIfPostStore(n))</span>
+            {
+<span style = "background-color:#dfd">                if (s-&gt;getSVal(mem_region).getAsLocSymbol() == memory)</span>
+                {
+<span style = "background-color:#dfd">                    const clang::ento::VarRegion *var_region =</span>
+                        mem_region-&gt;getBaseRegion()-&gt;getAs&lt;clang::ento::VarRegion&gt;();
+<span style = "background-color:#dfd">                    if (!var_region || (var_region-&gt;getStackFrame() == leak_loc_ctx-&gt;getStackFrame()))
+                        region = mem_region;</span>
+                }
+            }
+        }
+        // backtracing
+<span style = "background-color:#dfd">        const clang::LocationContext *cur_ctx = n-&gt;getLocationContext();
+        if (cur_ctx == leak_loc_ctx || cur_ctx-&gt;isParentOf(leak_loc_ctx))
+            alloc_node = n;
+        if (n-&gt;pred_empty())</span>
+<span style = "background-color:#fdd">            n = nullptr;</span>
+        else
+<span style = "background-color:#dfd">            n = *(n-&gt;pred_begin());
+    }</span>
+    // report
+<span style = "background-color:#dfd">    clang::ento::PathDiagnosticLocation loc;
+    if (const clang::Stmt *s = alloc_node-&gt;getStmtForDiagnostics())</span>
+    {
+<span style = "background-color:#dfd">        loc = clang::ento::PathDiagnosticLocation::createBegin(s, ctx.getSourceManager(),</span>
+                                                               alloc_node-&gt;getLocationContext());
+    }
+<span style = "background-color:#dfd">    std::string msg;
+    llvm::raw_string_ostream os(msg);
+    os &lt;&lt; "Potential memory leak";
+    if (region &amp;&amp; region-&gt;canPrintPretty())</span>
+    {
+<span style = "background-color:#dfd">        os &lt;&lt; " at pointer ";
+        region-&gt;printPretty(os);
+        std::unique_ptr&lt;clang::ento::PathSensitiveBugReport&gt; report =</span>
+            std::make_unique&lt;clang::ento::PathSensitiveBugReport&gt;(*memory_leak_bug_type, os.str(), node, loc,
+                                                                  alloc_node-&gt;getLocationContext()-&gt;getDecl());
+<span style = "background-color:#dfd">        report-&gt;markInteresting(memory);
+        ctx.emitReport(std::move(report));
+    }
+}</span>
+
+void MemoryChecker::report_double_free(clang::ento::CheckerContext &amp;ctx, clang::SourceRange range,
+                                       clang::ento::SymbolRef memory) const
+<span style = "background-color:#dfd">{
+    if (!double_free_bug_type)</span>
+    {
+<span style = "background-color:#dfd">        double_free_bug_type.reset(new clang::ento::BugType(this, "Double-Free", clang::ento::categories::MemoryError));</span>
+    }
+<span style = "background-color:#dfd">    if (clang::ento::ExplodedNode *node = ctx.generateErrorNode())</span>
+    {
+<span style = "background-color:#dfd">        std::unique_ptr&lt;clang::ento::PathSensitiveBugReport&gt; report =</span>
+            std::make_unique&lt;clang::ento::PathSensitiveBugReport&gt;(*double_free_bug_type,
+                                                                  "Attempt to free released memory", node);
+<span style = "background-color:#dfd">        report-&gt;addRange(range);
+        report-&gt;markInteresting(memory);
+        ctx.emitReport(std::move(report));
+    }
+}</span>
+void MemoryChecker::report_use_after_free(clang::ento::CheckerContext &amp;ctx, clang::SourceRange range,
+                                          clang::ento::SymbolRef memory) const
+<span style = "background-color:#dfd">{
+    if (!use_after_free_bug_type)</span>
+    {
+<span style = "background-color:#dfd">        use_after_free_bug_type.reset(</span>
+            new clang::ento::BugType(this, "Use-After-Free", clang::ento::categories::MemoryError));
+    }
+<span style = "background-color:#dfd">    if (clang::ento::ExplodedNode *node = ctx.generateErrorNode())</span>
+    {
+<span style = "background-color:#dfd">        std::unique_ptr&lt;clang::ento::PathSensitiveBugReport&gt; report =</span>
+            std::make_unique&lt;clang::ento::PathSensitiveBugReport&gt;(*use_after_free_bug_type,
+                                                                  "Attempt to use released memory", node);
+<span style = "background-color:#dfd">        report-&gt;addRange(range);
+        report-&gt;markInteresting(memory);
+        ctx.emitReport(std::move(report));
+    }
+}
+CSA_GENERATE_REGISTER_FUNCTION_DEF(MemoryChecker)</span></pre>
+	</body>
+</html>

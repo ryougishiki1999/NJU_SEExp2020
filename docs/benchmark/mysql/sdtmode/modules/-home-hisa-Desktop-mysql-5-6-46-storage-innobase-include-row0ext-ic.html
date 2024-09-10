@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/include/row0ext.ic</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 2006, 2009, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/**************************************************//**
+@file include/row0ext.ic
+Caching of externally stored column prefixes
+
+Created September 2006 Marko Makela
+*******************************************************/
+
+#include "rem0types.h"
+#include "btr0types.h"
+
+/********************************************************************//**
+Looks up a column prefix of an externally stored column.
+@return column prefix, or NULL if the column is not stored externally,
+or pointer to field_ref_zero if the BLOB pointer is unset */
+UNIV_INLINE
+const byte*
+row_ext_lookup_ith(
+/*===============*/
+	const row_ext_t*	ext,	/*!&lt; in/out: column prefix cache */
+	ulint			i,	/*!&lt; in: index of ext-&gt;ext[] */
+	ulint*			len)	/*!&lt; out: length of prefix, in bytes,
+					at most ext-&gt;max_len */
+{
+	ut_ad(ext);
+	ut_ad(len);
+	ut_ad(i &lt; ext-&gt;n_ext);
+
+<span style = "background-color:#fdd">	*len = ext-&gt;len[i];        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+
+	ut_ad(*len &lt;= ext-&gt;max_len);
+	ut_ad(ext-&gt;max_len &gt; 0);
+
+	if (*len == 0) {
+		/* The BLOB could not be fetched to the cache. */
+		return(field_ref_zero);
+	} else {
+		return(ext-&gt;buf + i * ext-&gt;max_len);
+	}
+}
+
+/********************************************************************//**
+Looks up a column prefix of an externally stored column.
+@return column prefix, or NULL if the column is not stored externally,
+or pointer to field_ref_zero if the BLOB pointer is unset */
+UNIV_INLINE
+const byte*
+row_ext_lookup(
+/*===========*/
+	const row_ext_t*	ext,	/*!&lt; in: column prefix cache */
+	ulint			col,	/*!&lt; in: column number in the InnoDB
+					table object, as reported by
+					dict_col_get_no(); NOT relative to the
+					records in the clustered index */
+	ulint*			len)	/*!&lt; out: length of prefix, in bytes,
+					at most ext-&gt;max_len */
+{
+	ulint	i;
+
+	ut_ad(ext);
+	ut_ad(len);
+
+	for (i = 0; i &lt; ext-&gt;n_ext; i++) {
+		if (col == ext-&gt;ext[i]) {
+			return(row_ext_lookup_ith(ext, i, len));
+		}
+	}
+
+	return(NULL);
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,340 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>StatisticsHelper.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "StatisticsHelper.h"
+
+<span style = "background-color:#dfd">StatsHelper::StatsHelperPtr StatsHelper::_sh = nullptr;</span>
+
+<span style = "background-color:#dfd">std::mutex StatsHelper::_m_mutex;</span>
+
+////////////////////////////////////////////////////////////////////////////////
+//                      class StatsHelper method def
+////////////////////////////////////////////////////////////////////////////////
+
+StatsHelper::StatsHelperPtr StatsHelper::instance()
+<span style = "background-color:#dfd">{
+    if (_sh == nullptr)</span>
+    {
+<span style = "background-color:#dfd">        std::lock_guard&lt;std::mutex&gt; lock(_m_mutex);
+        if (_sh == nullptr)</span>
+        {
+<span style = "background-color:#dfd">            _sh = StatsHelperPtr(new StatsHelper);</span>
+        }
+<span style = "background-color:#dfd">    }
+    return _sh;
+}</span>
+
+void StatsHelper::collect_generate(const std::vector&lt;Diagnostic&gt; &amp;diagnostics, const std::vector&lt;Stats&gt; &amp;stats)
+<span style = "background-color:#dfd">{
+    collect_statistic(diagnostics, stats);
+    generate();
+}</span>
+
+void StatsHelper::clear()
+<span style = "background-color:#dfd">{</span>
+    
+<span style = "background-color:#dfd">    _filename_list.clear();
+    _file_stats_list.clear();
+    _all_bug_type_list.clear();
+    _all_bug_stats_list.clear();
+    _file_stats_map.clear();
+    _all_bug_stats_map.clear();</span>
+    
+<span style = "background-color:#dfd">    _all_bug_num = NULL;
+    _all_bug_type_num = NULL;
+    _all_file_num = NULL;
+    _all_analysis_time = NULL;</span>
+
+<span style = "background-color:#dfd">}</span>
+
+void StatsHelper::collect_statistic(const std::vector&lt;Diagnostic&gt; &amp;diagnostics, const std::vector&lt;Stats&gt; &amp;stats)
+<span style = "background-color:#dfd">{
+    collect_stats(stats);
+    collect_diagnostic(diagnostics);
+}</span>
+
+void StatsHelper::collect_stats(const std::vector&lt;Stats&gt; &amp;stats)
+<span style = "background-color:#dfd">{
+    for (const auto &amp;s : stats)</span>
+    {
+<span style = "background-color:#dfd">        const std::string filename = s.filename;
+        const double analysis_time = s.analysis_time;</span>
+
+<span style = "background-color:#dfd">        if (_file_stats_map.find(filename) == _file_stats_map.end())</span>
+        {
+
+<span style = "background-color:#dfd">            _filename_list.insert(filename);</span>
+
+<span style = "background-color:#dfd">            FileStats file_stats(filename);
+            file_stats.set_analysis_time(analysis_time);</span>
+
+<span style = "background-color:#dfd">            _file_stats_map.insert(std::pair&lt;std::string, FileStats&gt;(filename, file_stats));
+        }</span>
+        else
+        {
+            ;
+        }
+<span style = "background-color:#dfd">    }
+}</span>
+
+void StatsHelper::collect_diagnostic(const std::vector&lt;Diagnostic&gt; &amp;diagnostics)
+<span style = "background-color:#dfd">{
+    for (const auto &amp;d : diagnostics)</span>
+    {
+<span style = "background-color:#dfd">        const std::string filename = d.filename;
+        const std::string bug_type = d.bug_type;
+        const std::string checker_name = d.checker_name;
+        const std::string description = d.description;
+        const unsigned int line_number = d.line_number;
+        const unsigned int column_number = d.column_number;</span>
+
+<span style = "background-color:#dfd">        if (_file_stats_map.find(filename) == _file_stats_map.end())</span>
+        {
+            // _file_stats_map does not contains current file...
+
+<span style = "background-color:#dfd">            _filename_list.insert(filename);</span>
+            // create new file_stats to insert in _file_stats_map...
+<span style = "background-color:#dfd">            FileStats file_stats(filename);</span>
+
+<span style = "background-color:#dfd">            if (file_stats._bug_stats_map.find(bug_type) == file_stats._bug_stats_map.end())</span>
+            {
+                // for file_stats is newly born, its _bug_stats_map should be empty...
+
+<span style = "background-color:#dfd">                _all_bug_type_list.insert(bug_type);</span>
+
+<span style = "background-color:#dfd">                file_stats._bug_type_list.insert(bug_type);
+                BugStats bug_stats(bug_type, 1);</span>
+
+                // add bug detailed description including checkername, description and location....
+<span style = "background-color:#dfd">                BugStatsDesc bug_desc(filename, checker_name, description, line_number, column_number);
+                bug_stats._bug_desc_list.push_back(bug_desc);</span>
+
+<span style = "background-color:#dfd">                file_stats._bug_stats_map.insert(std::pair&lt;std::string, BugStats&gt;(bug_type, bug_stats));
+            }</span>
+            else
+            {
+                // This should not be reachable...
+
+            }
+
+<span style = "background-color:#dfd">            _file_stats_map.insert(std::pair&lt;std::string, FileStats&gt;(filename, file_stats));
+        }</span>
+        else
+        {
+            // _file_stats_map contains current file
+
+<span style = "background-color:#dfd">            if (_file_stats_map[filename]._bug_stats_map.find(bug_type) ==</span>
+                _file_stats_map[filename]._bug_stats_map.end())
+            {
+                //_bug_stats_map of the existing file_stats does not contain current
+                // bug_type, create new bug for its _bug_stats_map...
+
+<span style = "background-color:#dfd">                _all_bug_type_list.insert(bug_type);</span>
+
+<span style = "background-color:#dfd">                _file_stats_map[filename]._bug_type_list.insert(bug_type);
+                BugStats bug_stats(bug_type, 1);</span>
+
+                // add bug detailed description including checkername, description and location....
+<span style = "background-color:#dfd">                BugStatsDesc bug_desc(filename, checker_name, description, line_number, column_number);
+                bug_stats._bug_desc_list.push_back(bug_desc);</span>
+
+<span style = "background-color:#dfd">                _file_stats_map[filename]._bug_stats_map.insert(std::pair&lt;std::string, BugStats&gt;(bug_type, bug_stats));
+            }</span>
+            else
+            {
+                // corresponding _bug_stats_map has current bug_type, Since increase the
+                // num of bug by one...
+
+<span style = "background-color:#dfd">                _file_stats_map[filename]._bug_stats_map[bug_type].num_inc_by_one();</span>
+
+                // add bug detailed description to exsiting bug_stats....
+<span style = "background-color:#dfd">                BugStatsDesc bug_desc(filename, checker_name, description, line_number, column_number);
+                _file_stats_map[filename]._bug_stats_map[bug_type]._bug_desc_list.push_back(bug_desc);
+            }</span>
+        }
+<span style = "background-color:#dfd">    }
+}</span>
+
+void StatsHelper::generate()
+<span style = "background-color:#dfd">{
+    generate_file_stats_list();
+    all_file_stats_generated();
+    generate_all_bug_num();
+    generate_all_file_num();
+    generate_all_bug_type_num();
+    generate_all_bug_stats_list();
+    generate_all_analysis_time();
+}</span>
+
+void StatsHelper::generate_file_stats_list()
+<span style = "background-color:#dfd">{
+    for (auto &amp;filename : _filename_list)</span>
+    {
+<span style = "background-color:#dfd">        _file_stats_list.push_back(get_file_stats(filename));
+    }
+}</span>
+
+const FileStats &amp;StatsHelper::get_file_stats(const std::string &amp;filename) const
+<span style = "background-color:#dfd">{
+    if (_file_stats_map.find(filename) == _file_stats_map.end())</span>
+    {
+        ;
+<span style = "background-color:#fdd">    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        return _file_stats_map.at(filename);</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+void StatsHelper::all_file_stats_generated()
+<span style = "background-color:#dfd">{
+    for (auto &amp;file_stats : _file_stats_list)</span>
+    {
+<span style = "background-color:#dfd">        file_stats.generate();
+    }
+}</span>
+
+void StatsHelper::generate_all_bug_num()
+<span style = "background-color:#dfd">{
+    _all_bug_num = 0;
+    for (auto &amp;file_stats : _file_stats_list)</span>
+    {
+<span style = "background-color:#dfd">        _all_bug_num += file_stats.get_all_bug_num();
+    }
+}</span>
+
+void StatsHelper::generate_all_file_num()
+<span style = "background-color:#dfd">{
+    _all_file_num = _filename_list.size();
+}</span>
+
+void StatsHelper::generate_all_bug_type_num()
+<span style = "background-color:#dfd">{
+    _all_bug_type_num = _all_bug_type_list.size();
+}</span>
+
+void StatsHelper::generate_all_bug_stats_list()
+<span style = "background-color:#dfd">{
+    for (const auto &amp;file_stats : _file_stats_list)</span>
+    {
+<span style = "background-color:#dfd">        for (const auto &amp;bug_stats : file_stats._bug_stats_list)</span>
+        {
+<span style = "background-color:#dfd">            const std::string bug_type = bug_stats._bug_type;
+            const int bug_num = bug_stats._num;
+            const std::vector&lt;BugStatsDesc&gt; bug_desc_list = bug_stats._bug_desc_list;</span>
+
+<span style = "background-color:#dfd">            if (_all_bug_stats_map.find(bug_type) == _all_bug_stats_map.end())</span>
+            {
+<span style = "background-color:#dfd">                BugStats new_bug_stats(bug_type, bug_num);
+                new_bug_stats.set_bug_desc_list(bug_desc_list);</span>
+
+<span style = "background-color:#dfd">                _all_bug_stats_map.insert(std::pair&lt;std::string, BugStats&gt;(bug_type, new_bug_stats));
+            }</span>
+            else
+            {
+<span style = "background-color:#dfd">                _all_bug_stats_map[bug_type].num_inc_by(bug_num);
+                _all_bug_stats_map[bug_type]._bug_desc_list.insert(_all_bug_stats_map[bug_type]._bug_desc_list.end(),</span>
+                                                                   bug_desc_list.begin(), bug_desc_list.end());
+            }
+<span style = "background-color:#dfd">        }
+    }</span>
+
+<span style = "background-color:#dfd">    std::map&lt;std::string, BugStats&gt;::iterator iter = _all_bug_stats_map.begin();</span>
+
+<span style = "background-color:#dfd">    while (iter != _all_bug_stats_map.end())</span>
+    {
+<span style = "background-color:#dfd">        _all_bug_stats_list.push_back(iter-&gt;second);
+        iter++;
+    }
+}</span>
+
+void StatsHelper::generate_all_analysis_time()
+<span style = "background-color:#dfd">{
+    _all_analysis_time = 0;
+    for (const auto &amp;file_stats : _file_stats_list)</span>
+    {
+<span style = "background-color:#dfd">        _all_analysis_time += file_stats.get_analysis_time();
+    }
+}</span>
+
+////////////////////////////////////////////////////////////////////////////////
+//                      class FileStats method def
+////////////////////////////////////////////////////////////////////////////////
+
+void FileStats::clear()
+<span style = "background-color:#fdd">{
+    _bug_type_list.clear();
+    _bug_stats_list.clear();
+    _bug_stats_map.clear();</span>
+
+<span style = "background-color:#fdd">}</span>
+
+void FileStats::generate()
+<span style = "background-color:#dfd">{
+    generate_bug_stats_list();
+    generate_all_bug_num();
+    generate_bug_type_num();
+}</span>
+
+void FileStats::generate_bug_stats_list()
+<span style = "background-color:#dfd">{
+    for (auto &amp;bug_type : _bug_type_list)</span>
+    {
+<span style = "background-color:#dfd">        _bug_stats_list.push_back(get_bug_stats(bug_type));
+    }
+}</span>
+
+const BugStats &amp;FileStats::get_bug_stats(const std::string &amp;bug_type) const
+<span style = "background-color:#dfd">{
+    if (_bug_stats_map.find(bug_type) == _bug_stats_map.end())</span>
+    {
+       ;
+<span style = "background-color:#fdd">    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        return _bug_stats_map.at(bug_type);</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+void FileStats::generate_all_bug_num()
+<span style = "background-color:#dfd">{
+    _all_bug_num = 0;
+    for (const auto &amp;bug_stats : _bug_stats_map)</span>
+    {
+<span style = "background-color:#dfd">        _all_bug_num += bug_stats.second._num;
+    }
+}</span>
+
+void FileStats::generate_bug_type_num()
+<span style = "background-color:#dfd">{
+    _bug_type_num = _bug_type_list.size();
+}</span>
+
+////////////////////////////////////////////////////////////////////////////////
+//                      class BugStats method def
+////////////////////////////////////////////////////////////////////////////////
+
+void BugStats::clear()
+<span style = "background-color:#fdd">{</span>
+
+<span style = "background-color:#fdd">    _bug_desc_list.clear();</span>
+
+<span style = "background-color:#fdd">}</span>
+
+////////////////////////////////////////////////////////////////////////////////
+//                      class BugStatsDesc method def
+////////////////////////////////////////////////////////////////////////////////
+
+void BugStatsDesc::clear()
+<span style = "background-color:#fdd">{
+}</span></pre>
+	</body>
+</html>

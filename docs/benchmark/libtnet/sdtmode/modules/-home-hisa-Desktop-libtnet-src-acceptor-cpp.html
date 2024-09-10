@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/acceptor.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "acceptor.h"
+
+#include &lt;sys/types.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;assert.h&gt;
+#include &lt;unistd.h&gt;
+
+#include &lt;memory&gt;
+#include &lt;functional&gt;
+
+#include "ioloop.h"
+#include "address.h"
+#include "sockutil.h"
+#include "log.h"
+
+namespace tnet
+{
+    int createDummyFd()
+    {
+        return open("/dev/null", O_RDONLY | O_CLOEXEC);    
+    }
+
+    Acceptor::Acceptor(const NewConnCallback_t&amp; callback)
+        : m_loop(0)
+        , m_sockFd(0)
+        , m_dummyFd(createDummyFd())
+        , m_running(false)
+        , m_callback(callback)
+    {
+        
+    }
+
+    Acceptor::~Acceptor()
+    {
+        if(m_sockFd &gt; 0)
+        {
+            close(m_sockFd);
+        }
+        close(m_dummyFd);    
+    }
+
+    int Acceptor::listen(const Address&amp; addr)
+    {
+        int fd = SockUtil::bindAndListen(addr);
+        if(fd &lt; 0)
+        {
+            return fd;    
+        }        
+
+        m_sockFd = fd;
+    
+        return m_sockFd;
+    }
+
+    void Acceptor::start(IOLoop* loop)
+    {
+        assert(m_sockFd &gt; 0);
+
+        if(m_running)
+        {
+            LOG_WARN("acceptor was started");
+            return;    
+        }
+
+        m_loop = loop;
+    
+        m_running = true;
+        
+        m_loop-&gt;addHandler(m_sockFd, TNET_READ,
+            std::bind(&amp;Acceptor::onAccept, this, _1, _2));  
+    }
+
+    void Acceptor::stop()
+    {
+        assert(m_sockFd &gt; 0);
+        if(!m_running)
+        {
+            LOG_WARN("acceptor was stoped");
+            return;    
+        }
+
+        m_running = false;
+
+        LOG_INFO("stop %d", m_sockFd);
+        m_loop-&gt;removeHandler(m_sockFd);    
+    }
+
+    void Acceptor::onAccept(IOLoop* loop, int events)
+    {
+        int sockFd = accept4(m_sockFd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if(sockFd &lt; 0)
+        {
+            int err = errno;
+            if(err == EMFILE || err == ENFILE)
+            {
+                LOG_ERROR("accept error %s", errorMsg(err));
+                close(m_dummyFd);
+                sockFd = accept(m_sockFd, NULL, NULL);
+                close(sockFd);
+                
+                m_dummyFd = createDummyFd();    
+            }    
+            return;
+        }
+        else
+        {
+            LOG_INFO("onAccept %d", sockFd);
+            
+            SockUtil::setNoDelay(sockFd, true);
+
+            m_callback(loop, sockFd);    
+        } 
+    }
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,21 @@
+hisa -help
+
+hisa -checker-list
+
+hisa -g -debug --output-path . --trim-exploded-graph --show-analysis-progress --exploded-graph -compilation-database-path . -enable-checker hisa.MemoryChecker -input double_free.cpp
+
+hisa -compilation-database-path . -output --path . --format html console text json md --info time checker desc stats
+
+hisa abc
+
+hisa -debug --output-path
+
+hisa -compilation-database-path
+
+hisa -input
+
+hisa -output --path
+
+hisa -output --format
+
+hisa -output --info

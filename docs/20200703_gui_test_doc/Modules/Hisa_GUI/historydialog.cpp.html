@@ -1,0 +1,409 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>historydialog.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#include "historydialog.h"
+#include &lt;QtWidgets/QHeaderView&gt;
+#include &lt;QtWidgets/QLabel&gt;
+#include &lt;QtWidgets/QTableView&gt;
+#include&lt;QMessageBox&gt;
+#include&lt;QString&gt;
+#include"QStandardItemModel"
+
+/*****************************************************************************
+This is source coode of HistoryDialog.
+HistoryDialog shows the analyse history records.
+Each record contains the input address,output address,analyse time and check mode,
+This file contains the initialization of all the members of HistoryDialog
+and the implementation of all of its functions
+******************************************************************************/
+
+// const value of HistoryDialog
+const int DETAILED_DIALOG_WIDH=500;
+const int DETAILED_DIALOG_HEIGHT=380;
+const int WIDGET_X=20;
+const int WIDGET_Y=20;
+const int WIDGET_WIDH=480;
+const int WIDGET_HEIGHT=340;
+const int CONTENT_MARGIN=0;
+
+//class detailed information dialog
+DetailInfoDialog::DetailInfoDialog(item his_item,Language l,QWidget *parent) :
+<span style = "background-color:#dfd">    QDialog(parent)
+{
+    this-&gt;lan=l;
+    Qt::WindowFlags flags=Qt::Dialog;flags |=Qt::WindowCloseButtonHint;setWindowFlags(flags);
+    this-&gt;setWindowFlags(flags);
+    this-&gt;setFixedSize(DETAILED_DIALOG_WIDH, DETAILED_DIALOG_HEIGHT);</span>
+
+    //initialize central widget
+<span style = "background-color:#dfd">    widget = new QWidget(this);
+    widget-&gt;setObjectName(QStringLiteral("widget"));
+    widget-&gt;setGeometry(QRect(WIDGET_X, WIDGET_Y, WIDGET_WIDH, WIDGET_HEIGHT));</span>
+    
+    ////initialize  global Layout
+<span style = "background-color:#dfd">    gridLayout = new QGridLayout(widget);
+    gridLayout-&gt;setObjectName(QStringLiteral("gridLayout"));
+    gridLayout-&gt;setContentsMargins(CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN);</span>
+
+    //initialize input address label
+<span style = "background-color:#dfd">    in_addr_label = new QLabel(widget);
+    in_addr_label-&gt;setObjectName(QStringLiteral("in_addr_label"));
+    gridLayout-&gt;addWidget(in_addr_label, 1, 0, 1, 1);</span>
+
+    //initialize output address label
+<span style = "background-color:#dfd">    out_addr_label = new QLabel(widget);
+    out_addr_label-&gt;setObjectName(QStringLiteral("out_addr_label"));
+    gridLayout-&gt;addWidget(out_addr_label, 3, 0, 1, 1);</span>
+
+    //initialize time label
+<span style = "background-color:#dfd">    time_label = new QLabel(widget);
+    time_label-&gt;setObjectName(QStringLiteral("time_label"));
+    gridLayout-&gt;addWidget(time_label, 5, 0, 1, 1);</span>
+
+    //initialize mode label
+<span style = "background-color:#dfd">    mode_label = new QLabel(widget);
+    mode_label-&gt;setObjectName(QStringLiteral("mode_label"));
+    gridLayout-&gt;addWidget(mode_label, 7, 0, 1, 1);</span>
+
+    //initialize input address textBrowser
+<span style = "background-color:#dfd">    in_addr_textBrowser = new QTextBrowser(widget);
+    in_addr_textBrowser-&gt;setObjectName(QStringLiteral("in_addr_textBrowser"));
+    gridLayout-&gt;addWidget(in_addr_textBrowser, 1, 2, 1, 1);</span>
+
+    //initialize output address textBrowser
+<span style = "background-color:#dfd">    out_addr_textBrowser = new QTextBrowser(widget);
+    out_addr_textBrowser-&gt;setObjectName(QStringLiteral("out_addr_textBrowser"));
+    gridLayout-&gt;addWidget(out_addr_textBrowser, 3, 2, 1, 1);</span>
+
+    //initialize analysis time textBrowser
+<span style = "background-color:#dfd">    time_textBrowser = new QTextBrowser(widget);
+    time_textBrowser-&gt;setObjectName(QStringLiteral("time_textBrowser"));
+    gridLayout-&gt;addWidget(time_textBrowser, 5, 2, 1, 1);</span>
+
+    //initialize analysis moe textBrowser
+<span style = "background-color:#dfd">    mode_textBrowser = new QTextBrowser(widget);
+    mode_textBrowser-&gt;setObjectName(QStringLiteral("mode_textBrowser"));
+    gridLayout-&gt;addWidget(mode_textBrowser, 7, 2, 1, 1);</span>
+
+    //set vertical spacer items for layout
+<span style = "background-color:#dfd">    verticalSpacer_1 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    gridLayout-&gt;addItem(verticalSpacer_1, 6, 2, 1, 1);
+    verticalSpacer_2 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    gridLayout-&gt;addItem(verticalSpacer_2, 4, 2, 1, 1);
+    verticalSpacer_3 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    gridLayout-&gt;addItem(verticalSpacer_3, 2, 2, 1, 1);
+    verticalSpacer_4 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    gridLayout-&gt;addItem(verticalSpacer_4, 8, 2, 1, 1);
+    verticalSpacer_5 = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    gridLayout-&gt;addItem(verticalSpacer_5, 0, 2, 1, 1);</span>
+
+    //set horizontal spacer items for layout
+<span style = "background-color:#dfd">    horizontalSpacer_1 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    gridLayout-&gt;addItem(horizontalSpacer_1, 3, 3, 1, 1);
+    horizontalSpacer_2 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    gridLayout-&gt;addItem(horizontalSpacer_2, 5, 3, 1, 1);
+    horizontalSpacer_3 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    gridLayout-&gt;addItem(horizontalSpacer_3, 7, 3, 1, 1);
+    horizontalSpacer_4 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    gridLayout-&gt;addItem(horizontalSpacer_4, 1, 3, 1, 1);
+    horizontalSpacer_5 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    gridLayout-&gt;addItem(horizontalSpacer_5, 7, 1, 1, 1);
+    horizontalSpacer_6 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    gridLayout-&gt;addItem(horizontalSpacer_6, 5, 1, 1, 1);
+    horizontalSpacer_7 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    gridLayout-&gt;addItem(horizontalSpacer_7, 3, 1, 1, 1);
+    horizontalSpacer_8 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+    gridLayout-&gt;addItem(horizontalSpacer_8, 1, 1, 1, 1);</span>
+
+<span style = "background-color:#dfd">    in_addr_textBrowser-&gt;setText(QString(his_item.in_addr.c_str()));
+    out_addr_textBrowser-&gt;setText(QString(his_item.out_addr.c_str()));
+    time_textBrowser-&gt;setText(QString(his_item.time.c_str()));
+    switch(lan)</span>
+    {
+    case Chinese:
+<span style = "background-color:#dfd">        this-&gt;setWindowTitle(QStringLiteral("åå²è®°å½è¯¦ç»ä¿¡æ¯"));
+        in_addr_label-&gt;setText(QStringLiteral("è¾å¥å°å:"));
+        time_label-&gt;setText(QStringLiteral("æ£æµæ¶é´:"));
+        mode_label-&gt;setText(QStringLiteral("æ£æµæ¨¡å¼:"));
+        out_addr_label-&gt;setText(QStringLiteral("è¾åºå°å:"));
+        if(his_item.is_godmode)
+            mode_textBrowser-&gt;setText(QStringLiteral("ä¸å®¶æ¨¡å¼"));</span>
+        else
+<span style = "background-color:#dfd">            mode_textBrowser-&gt;setText(QStringLiteral("å­¦çæ¨¡å¼"));
+        break;</span>
+    case English:
+<span style = "background-color:#dfd">        this-&gt;setWindowTitle(QStringLiteral("History Detail"));
+        in_addr_label-&gt;setText(QStringLiteral("Input Address:"));
+        time_label-&gt;setText(QStringLiteral("Analyze Time:"));
+        mode_label-&gt;setText(QStringLiteral("Analyze Mode:"));
+        out_addr_label-&gt;setText(QStringLiteral("Output Address:"));
+        if(his_item.is_godmode)</span>
+<span style = "background-color:#fdd">            mode_textBrowser-&gt;setText(QStringLiteral("god mode"));</span>
+        else
+<span style = "background-color:#dfd">            mode_textBrowser-&gt;setText(QStringLiteral("studet mode"));</span>
+        break;
+    }
+<span style = "background-color:#dfd">}</span>
+
+DetailInfoDialog::~DetailInfoDialog()
+<span style = "background-color:#dfd">{
+}</span>
+
+//const values of class history dialog
+const int DIALOG_WIDTH=900;
+const int DIALOG_HEIHGT=800;
+
+const int TITLE_X_COORD=0;
+const int TITLE_Y_COORD=0;
+const int TITLE_WIDTH=DIALOG_WIDTH;
+const int TITLE_HEIGHT=70;
+
+const int TABLE_VIEW_X_COORD=30;
+const int TABLE_VIEW_Y_COORD=75;
+const int TABLE_VIEW_WIDTH=840;
+const int TABLE_VIEW_HEIGHT=660;
+
+const int CLEAR_BUTTON_WIDTH=140;
+const int CLEAR_BUTTON_HEIGHT=45;
+const int CLEAR_BUTTON_X_COORD=(DIALOG_WIDTH-CLEAR_BUTTON_WIDTH)/2;
+const int CLEAR_BUTTON_Y_COORD=TABLE_VIEW_Y_COORD+TABLE_VIEW_HEIGHT+10;
+
+const int DEFAULT_CHOSEN_INDEX=0;
+
+// class history dialog
+HistoryDialog::HistoryDialog(Language l,QWidget *parent) :
+<span style = "background-color:#dfd">    QDialog(parent)
+{
+    this-&gt;lan=l;</span>
+
+<span style = "background-color:#dfd">    this-&gt;setFixedSize(DIALOG_WIDTH,DIALOG_HEIHGT);
+    Qt::WindowFlags flags=Qt::Dialog;flags |=Qt::WindowCloseButtonHint;setWindowFlags(flags);
+    this-&gt;setWindowFlags(flags);</span>
+
+    //initialize the taitle label
+<span style = "background-color:#dfd">    title_label = new QLabel(this);
+    title_label-&gt;setObjectName(QStringLiteral("label"));
+    title_label-&gt;setGeometry(QRect(TITLE_X_COORD, TITLE_Y_COORD,</span>
+                                   TITLE_WIDTH, TITLE_HEIGHT));
+    //initialize the taitle label font
+<span style = "background-color:#dfd">    QFont font;
+    font.setFamily(QStringLiteral("Arial"));
+    font.setPointSize(18);
+    title_label-&gt;setFont(font);
+    title_label-&gt;setAlignment(Qt::AlignCenter);</span>
+
+    //initialize the table view
+<span style = "background-color:#dfd">    history_table_view = new QTableView(this);
+    history_table_view-&gt;setObjectName(QStringLiteral("tableView"));
+    history_table_view-&gt;setGeometry(QRect(TABLE_VIEW_X_COORD, TABLE_VIEW_Y_COORD,</span>
+                                          TABLE_VIEW_WIDTH, TABLE_VIEW_HEIGHT));
+
+    //initialize the clear button
+<span style = "background-color:#dfd">    clear_button=new QPushButton(this);
+    clear_button-&gt;setObjectName(QStringLiteral("clear_button"));
+    clear_button-&gt;setGeometry(CLEAR_BUTTON_X_COORD,CLEAR_BUTTON_Y_COORD,</span>
+                              CLEAR_BUTTON_WIDTH,CLEAR_BUTTON_HEIGHT);
+<span style = "background-color:#dfd">    connect(clear_button,SIGNAL(clicked(bool)),this,SLOT(confirm_clear()));</span>
+
+    //initialize actions
+<span style = "background-color:#dfd">    delete_his_item_action = new QAction(this);
+    delete_his_item_action-&gt;setObjectName(QStringLiteral("delete_his_item_action"));
+    detailed_info_action = new QAction(this);</span>
+
+    //initialize table_menu
+<span style = "background-color:#dfd">    table_menu=new QMenu(this);
+    table_menu-&gt;setObjectName(QStringLiteral("table_menu"));
+    table_menu-&gt;addAction(delete_his_item_action);
+    table_menu-&gt;addSeparator();
+    table_menu-&gt;addAction(detailed_info_action);</span>
+
+<span style = "background-color:#dfd">    connect( delete_his_item_action, SIGNAL(triggered(bool)),this,SLOT(delete_item()));
+    connect( detailed_info_action,SIGNAL(triggered(bool)),this,SLOT(show_detail_info()));
+    this-&gt;history_table_view-&gt;setContextMenuPolicy(Qt::CustomContextMenu);</span>
+
+    //initialize the history table
+<span style = "background-color:#dfd">    data_model=new QStandardItemModel;
+    data_model-&gt;setObjectName(QStringLiteral("data_model"));
+    data_model-&gt;setColumnCount(ATTR_NUM);
+    QString headers[4];
+    switch(this-&gt;lan)</span>
+    {
+    case Chinese:
+<span style = "background-color:#dfd">        headers[0]=QStringLiteral("è¾å¥å°å");
+        headers[1]=QStringLiteral("è¾åºå°å");
+        headers[2]=QStringLiteral("æ¶é´");
+        headers[3]=QStringLiteral("æ£æµæ¨¡å¼");
+        this-&gt;setWindowTitle(QStringLiteral("æ£æµåå²"));
+        title_label-&gt;setText(QStringLiteral("åå²"));
+        clear_button-&gt;setText(QStringLiteral("æ¸ç©ºåå²è®°å½"));
+        delete_his_item_action-&gt;setText(QStringLiteral("å é¤éä¸­åå²è®°å½"));
+        detailed_info_action-&gt;setText(QStringLiteral("æ¥çè¯¦ç»ä¿¡æ¯"));
+        break;</span>
+    case English:
+<span style = "background-color:#dfd">        headers[0]=QStringLiteral("input address");
+        headers[1]=QStringLiteral("output address");
+        headers[2]=QStringLiteral("time");
+        headers[3]=QStringLiteral("mode");
+        this-&gt;setWindowTitle(QStringLiteral("Aanlysis History"));
+        title_label-&gt;setText(QStringLiteral("History"));
+        clear_button-&gt;setText(QStringLiteral("Clear History"));
+        delete_his_item_action-&gt;setText(QStringLiteral("delete this item"));
+        detailed_info_action-&gt;setText(QStringLiteral("detailed information"));</span>
+        break;
+    }
+
+<span style = "background-color:#dfd">    for (int i = 0; i &lt; ATTR_NUM; i++)</span>
+    {
+<span style = "background-color:#dfd">         data_model-&gt;setHeaderData(i, Qt::Horizontal, headers[i]);
+    }
+    history_table_view-&gt;setModel(data_model);</span>
+    //Set the column width to be adaptive
+<span style = "background-color:#dfd">    history_table_view-&gt;horizontalHeader()-&gt;setSectionResizeMode(QHeaderView::Stretch);</span>
+
+    //load history file and bind data with view
+<span style = "background-color:#dfd">    h.load_history();
+    data_model-&gt;setRowCount(h.size());
+    for(int i=0;i&lt;h.size();i++)</span>
+    {
+<span style = "background-color:#dfd">        item his_temp=h.get(i);
+        data_model-&gt;setItem(i,0,new QStandardItem(QString(his_temp.in_addr.c_str())));
+        data_model-&gt;setItem(i,1,new QStandardItem(QString(his_temp.out_addr.c_str())));
+        data_model-&gt;setItem(i,2,new QStandardItem(QString(his_temp.time.c_str())));
+        if(his_temp.is_godmode)</span>
+        {
+<span style = "background-color:#dfd">            if(lan==Chinese)</span>
+            {
+<span style = "background-color:#dfd">                data_model-&gt;setItem(i,3,new QStandardItem(QStringLiteral("ä¸å®¶æ¨¡å¼")));
+            }</span>
+<span style = "background-color:#fdd">            else if(lan==English)</span>
+            {
+<span style = "background-color:#fdd">                data_model-&gt;setItem(i,3,new QStandardItem(QStringLiteral("god mode")));</span>
+            }
+<span style = "background-color:#dfd">        }else</span>
+        {
+<span style = "background-color:#dfd">            if(lan==Chinese)</span>
+            {
+<span style = "background-color:#dfd">                data_model-&gt;setItem(i,3,new QStandardItem(QStringLiteral("å­¦çæ¨¡å¼")));
+            }
+            else if(lan==English)</span>
+            {
+<span style = "background-color:#dfd">                data_model-&gt;setItem(i,3,new QStandardItem(QStringLiteral("student mode")));</span>
+            }
+        }
+<span style = "background-color:#dfd">        data_model-&gt;item(i, 3)-&gt;setTextAlignment(Qt::AlignCenter);
+    }</span>
+
+    //Set properties of the table view
+<span style = "background-color:#dfd">    history_table_view-&gt;setSelectionBehavior(QAbstractItemView::SelectRows);
+    history_table_view-&gt;setEditTriggers(QAbstractItemView::NoEditTriggers);
+    history_table_view-&gt;setAlternatingRowColors(true);
+    history_table_view-&gt;setSelectionMode(QAbstractItemView::SingleSelection);
+    if(h.size()&gt;0){
+    history_table_view-&gt;selectRow(DEFAULT_CHOSEN_INDEX);</span>
+    }
+<span style = "background-color:#dfd">    connect(history_table_view,SIGNAL(customContextMenuRequested(QPoint)),this,SLOT(show_table_menu(QPoint)));
+}</span>
+
+//show MessageBox to user to confirm if he really wants to clear all the history records
+void HistoryDialog::confirm_clear()
+<span style = "background-color:#dfd">{</span>
+   int r;
+<span style = "background-color:#dfd">   QString yes_ans;
+   if(!h.empty())</span>
+   {
+<span style = "background-color:#dfd">    switch (lan)</span>
+    {
+        case Chinese:
+<span style = "background-color:#dfd">            r=QMessageBox::information(this,QStringLiteral("ç¡®è®¤"),
+                            QStringLiteral("æ¨ç¡®è®¤è¦æ¸ç©ºå¨é¨åå²è®°å½åï¼"),
+                                         QStringLiteral("ç¡®è®¤"), QStringLiteral("åæ¶"));
+            yes_ans=QStringLiteral("ç¡®è®¤");
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            r = QMessageBox::information(this, QStringLiteral("Confirm"), 
+                            QStringLiteral("Are you sure you to clear the history?"),
+                                         QStringLiteral("Yes"), QStringLiteral("No"));
+            yes_ans = QStringLiteral("Yes");</span>
+   }
+<span style = "background-color:#dfd">    if(r ==yes_ans.toInt())</span>
+    {
+<span style = "background-color:#dfd">        clear_history();
+    }else return;</span>
+  }
+<span style = "background-color:#dfd">}</span>
+
+//clear dialog and clear history.txt
+void HistoryDialog::clear_history()
+<span style = "background-color:#dfd">{
+    data_model-&gt;clear();
+    h.clear_history();
+}</span>
+
+// show user the detailed Information of the history record selected
+void HistoryDialog::show_detail_info()
+<span style = "background-color:#dfd">{
+    int row_index=history_table_view-&gt;currentIndex().row();
+    item temp;
+    if(row_index==-1)return ;</span>
+    else 
+    {
+<span style = "background-color:#dfd">        QModelIndex index = data_model-&gt;index(row_index,0);
+        temp.in_addr= data_model-&gt;data(index).toString().toStdString();</span>
+
+<span style = "background-color:#dfd">        index = data_model-&gt;index(row_index,1);
+        temp.out_addr = data_model-&gt;data(index).toString().toStdString();</span>
+
+<span style = "background-color:#dfd">        index = data_model-&gt;index(row_index,2);
+        temp.time = data_model-&gt;data(index).toString().toStdString();</span>
+
+<span style = "background-color:#dfd">        index = data_model-&gt;index(row_index,3);
+        if(data_model-&gt;data(index).toString()==QStringLiteral("god mode") ||
+              data_model-&gt;data(index).toString()==QStringLiteral("ä¸å®¶æ¨¡å¼")  )
+        temp.is_godmode=true;
+        else temp.is_godmode=false;</span>
+    }
+<span style = "background-color:#dfd">    DetailInfoDialog did(temp,this-&gt;lan);
+    did.exec();
+}</span>
+
+//check if there is a item being selected
+//then delete it
+void HistoryDialog::delete_item()
+<span style = "background-color:#dfd">{
+    int row_index=history_table_view-&gt;currentIndex().row();
+    if(row_index==-1|| !h.delete_his_by_index(row_index))</span>
+    {
+<span style = "background-color:#fdd">        switch (lan)</span>
+        {
+         case Chinese:
+<span style = "background-color:#fdd">            QMessageBox::warning(this,QStringLiteral("å¤±è´¥"),
+                                 QStringLiteral("å é¤å¤±è´¥!"));
+            break;</span>
+         default:
+<span style = "background-color:#fdd">             QMessageBox::warning(this, QStringLiteral("Failure"), 
+                                QStringLiteral("Fail To Delete!"));</span>
+        }
+<span style = "background-color:#fdd">    }</span>
+<span style = "background-color:#dfd">    else data_model-&gt;removeRow(row_index);
+}</span>
+
+void HistoryDialog::show_table_menu(const QPoint &amp;pos)
+<span style = "background-color:#dfd">{
+    if(history_table_view-&gt;currentIndex().row()!=-1&amp;&amp; !h.empty())</span>
+    {
+<span style = "background-color:#dfd">        table_menu-&gt;exec(QCursor::pos());</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+<span style = "background-color:#dfd">HistoryDialog::~HistoryDialog(){
+}</span></pre>
+	</body>
+</html>

@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/extra/libevent/bufferevent.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*
+ * Copyright (c) 2002-2007 Niels Provos &lt;provos@citi.umich.edu&gt;
+ * Copyright (c) 2007-2012 Niels Provos, Nick Mathewson
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "event2/event-config.h"
+#include "evconfig-private.h"
+
+#include &lt;sys/types.h&gt;
+
+#ifdef EVENT__HAVE_SYS_TIME_H
+#include &lt;sys/time.h&gt;
+#endif
+
+#include &lt;errno.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#ifdef EVENT__HAVE_STDARG_H
+#include &lt;stdarg.h&gt;
+#endif
+
+#ifdef _WIN32
+#include &lt;winsock2.h&gt;
+#endif
+
+#include "event2/util.h"
+#include "event2/buffer.h"
+#include "event2/buffer_compat.h"
+#include "event2/bufferevent.h"
+#include "event2/bufferevent_struct.h"
+#include "event2/bufferevent_compat.h"
+#include "event2/event.h"
+#include "event-internal.h"
+#include "log-internal.h"
+#include "mm-internal.h"
+#include "bufferevent-internal.h"
+#include "evbuffer-internal.h"
+#include "util-internal.h"
+
+static void bufferevent_cancel_all_(struct bufferevent *bev);
+static void bufferevent_finalize_cb_(struct event_callback *evcb, void *arg_);
+
+void
+bufferevent_suspend_read_(struct bufferevent *bufev, bufferevent_suspend_flags what)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	BEV_LOCK(bufev);
+	if (!bufev_private-&gt;read_suspended)
+		bufev-&gt;be_ops-&gt;disable(bufev, EV_READ);
+	bufev_private-&gt;read_suspended |= what;
+	BEV_UNLOCK(bufev);
+}
+
+void
+bufferevent_unsuspend_read_(struct bufferevent *bufev, bufferevent_suspend_flags what)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	BEV_LOCK(bufev);
+	bufev_private-&gt;read_suspended &amp;= ~what;
+	if (!bufev_private-&gt;read_suspended &amp;&amp; (bufev-&gt;enabled &amp; EV_READ))
+		bufev-&gt;be_ops-&gt;enable(bufev, EV_READ);
+	BEV_UNLOCK(bufev);
+}
+
+void
+bufferevent_suspend_write_(struct bufferevent *bufev, bufferevent_suspend_flags what)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	BEV_LOCK(bufev);
+	if (!bufev_private-&gt;write_suspended)
+		bufev-&gt;be_ops-&gt;disable(bufev, EV_WRITE);
+	bufev_private-&gt;write_suspended |= what;
+	BEV_UNLOCK(bufev);
+}
+
+void
+bufferevent_unsuspend_write_(struct bufferevent *bufev, bufferevent_suspend_flags what)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	BEV_LOCK(bufev);
+	bufev_private-&gt;write_suspended &amp;= ~what;
+	if (!bufev_private-&gt;write_suspended &amp;&amp; (bufev-&gt;enabled &amp; EV_WRITE))
+		bufev-&gt;be_ops-&gt;enable(bufev, EV_WRITE);
+	BEV_UNLOCK(bufev);
+}
+
+
+/* Callback to implement watermarks on the input buffer.  Only enabled
+ * if the watermark is set. */
+static void
+bufferevent_inbuf_wm_cb(struct evbuffer *buf,
+    const struct evbuffer_cb_info *cbinfo,
+    void *arg)
+{
+	struct bufferevent *bufev = arg;
+	size_t size;
+
+	size = evbuffer_get_length(buf);
+
+	if (size &gt;= bufev-&gt;wm_read.high)
+		bufferevent_wm_suspend_read(bufev);
+	else
+		bufferevent_wm_unsuspend_read(bufev);
+}
+
+static void
+bufferevent_run_deferred_callbacks_locked(struct event_callback *cb, void *arg)
+{
+	struct bufferevent_private *bufev_private = arg;
+	struct bufferevent *bufev = &amp;bufev_private-&gt;bev;
+
+	BEV_LOCK(bufev);
+	if ((bufev_private-&gt;eventcb_pending &amp; BEV_EVENT_CONNECTED) &amp;&amp;
+	    bufev-&gt;errorcb) {
+		/* The "connected" happened before any reads or writes, so
+		   send it first. */
+		bufev_private-&gt;eventcb_pending &amp;= ~BEV_EVENT_CONNECTED;
+		bufev-&gt;errorcb(bufev, BEV_EVENT_CONNECTED, bufev-&gt;cbarg);
+	}
+	if (bufev_private-&gt;readcb_pending &amp;&amp; bufev-&gt;readcb) {
+		bufev_private-&gt;readcb_pending = 0;
+		bufev-&gt;readcb(bufev, bufev-&gt;cbarg);
+	}
+	if (bufev_private-&gt;writecb_pending &amp;&amp; bufev-&gt;writecb) {
+		bufev_private-&gt;writecb_pending = 0;
+		bufev-&gt;writecb(bufev, bufev-&gt;cbarg);
+	}
+	if (bufev_private-&gt;eventcb_pending &amp;&amp; bufev-&gt;errorcb) {
+		short what = bufev_private-&gt;eventcb_pending;
+		int err = bufev_private-&gt;errno_pending;
+		bufev_private-&gt;eventcb_pending = 0;
+		bufev_private-&gt;errno_pending = 0;
+		EVUTIL_SET_SOCKET_ERROR(err);
+		bufev-&gt;errorcb(bufev, what, bufev-&gt;cbarg);
+	}
+	bufferevent_decref_and_unlock_(bufev);
+}
+
+static void
+bufferevent_run_deferred_callbacks_unlocked(struct event_callback *cb, void *arg)
+{
+	struct bufferevent_private *bufev_private = arg;
+	struct bufferevent *bufev = &amp;bufev_private-&gt;bev;
+
+	BEV_LOCK(bufev);
+#define UNLOCKED(stmt) \
+	do { BEV_UNLOCK(bufev); stmt; BEV_LOCK(bufev); } while(0)
+
+	if ((bufev_private-&gt;eventcb_pending &amp; BEV_EVENT_CONNECTED) &amp;&amp;
+	    bufev-&gt;errorcb) {
+		/* The "connected" happened before any reads or writes, so
+		   send it first. */
+		bufferevent_event_cb errorcb = bufev-&gt;errorcb;
+		void *cbarg = bufev-&gt;cbarg;
+		bufev_private-&gt;eventcb_pending &amp;= ~BEV_EVENT_CONNECTED;
+		UNLOCKED(errorcb(bufev, BEV_EVENT_CONNECTED, cbarg));
+	}
+	if (bufev_private-&gt;readcb_pending &amp;&amp; bufev-&gt;readcb) {
+		bufferevent_data_cb readcb = bufev-&gt;readcb;
+		void *cbarg = bufev-&gt;cbarg;
+		bufev_private-&gt;readcb_pending = 0;
+		UNLOCKED(readcb(bufev, cbarg));
+	}
+	if (bufev_private-&gt;writecb_pending &amp;&amp; bufev-&gt;writecb) {
+		bufferevent_data_cb writecb = bufev-&gt;writecb;
+		void *cbarg = bufev-&gt;cbarg;
+		bufev_private-&gt;writecb_pending = 0;
+		UNLOCKED(writecb(bufev, cbarg));
+	}
+	if (bufev_private-&gt;eventcb_pending &amp;&amp; bufev-&gt;errorcb) {
+		bufferevent_event_cb errorcb = bufev-&gt;errorcb;
+		void *cbarg = bufev-&gt;cbarg;
+		short what = bufev_private-&gt;eventcb_pending;
+		int err = bufev_private-&gt;errno_pending;
+		bufev_private-&gt;eventcb_pending = 0;
+		bufev_private-&gt;errno_pending = 0;
+		EVUTIL_SET_SOCKET_ERROR(err);
+		UNLOCKED(errorcb(bufev,what,cbarg));
+	}
+	bufferevent_decref_and_unlock_(bufev);
+#undef UNLOCKED
+}
+
+#define SCHEDULE_DEFERRED(bevp)						\
+	do {								\
+		if (event_deferred_cb_schedule_(			\
+			    (bevp)-&gt;bev.ev_base,			\
+			&amp;(bevp)-&gt;deferred))				\
+			bufferevent_incref_(&amp;(bevp)-&gt;bev);		\
+	} while (0)
+
+
+void
+bufferevent_run_readcb_(struct bufferevent *bufev, int options)
+{
+	/* Requires that we hold the lock and a reference */
+	struct bufferevent_private *p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	if (bufev-&gt;readcb == NULL)
+		return;
+	if ((p-&gt;options|options) &amp; BEV_OPT_DEFER_CALLBACKS) {
+		p-&gt;readcb_pending = 1;
+		SCHEDULE_DEFERRED(p);
+	} else {
+		bufev-&gt;readcb(bufev, bufev-&gt;cbarg);
+	}
+}
+
+void
+bufferevent_run_writecb_(struct bufferevent *bufev, int options)
+{
+	/* Requires that we hold the lock and a reference */
+	struct bufferevent_private *p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	if (bufev-&gt;writecb == NULL)
+		return;
+	if ((p-&gt;options|options) &amp; BEV_OPT_DEFER_CALLBACKS) {
+		p-&gt;writecb_pending = 1;
+		SCHEDULE_DEFERRED(p);
+	} else {
+		bufev-&gt;writecb(bufev, bufev-&gt;cbarg);
+	}
+}
+
+#define BEV_TRIG_ALL_OPTS (			\
+		BEV_TRIG_IGNORE_WATERMARKS|	\
+		BEV_TRIG_DEFER_CALLBACKS	\
+	)
+
+void
+bufferevent_trigger(struct bufferevent *bufev, short iotype, int options)
+{
+	bufferevent_incref_and_lock_(bufev);
+	bufferevent_trigger_nolock_(bufev, iotype, options&amp;BEV_TRIG_ALL_OPTS);
+	bufferevent_decref_and_unlock_(bufev);
+}
+
+void
+bufferevent_run_eventcb_(struct bufferevent *bufev, short what, int options)
+{
+	/* Requires that we hold the lock and a reference */
+	struct bufferevent_private *p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	if (bufev-&gt;errorcb == NULL)
+		return;
+	if ((p-&gt;options|options) &amp; BEV_OPT_DEFER_CALLBACKS) {
+		p-&gt;eventcb_pending |= what;
+		p-&gt;errno_pending = EVUTIL_SOCKET_ERROR();
+		SCHEDULE_DEFERRED(p);
+	} else {
+		bufev-&gt;errorcb(bufev, what, bufev-&gt;cbarg);
+	}
+}
+
+void
+bufferevent_trigger_event(struct bufferevent *bufev, short what, int options)
+{
+	bufferevent_incref_and_lock_(bufev);
+	bufferevent_run_eventcb_(bufev, what, options&amp;BEV_TRIG_ALL_OPTS);
+	bufferevent_decref_and_unlock_(bufev);
+}
+
+int
+bufferevent_init_common_(struct bufferevent_private *bufev_private,
+    struct event_base *base,
+    const struct bufferevent_ops *ops,
+    enum bufferevent_options options)
+{
+	struct bufferevent *bufev = &amp;bufev_private-&gt;bev;
+
+	if (!bufev-&gt;input) {
+		if ((bufev-&gt;input = evbuffer_new()) == NULL)
+			return -1;
+	}
+
+	if (!bufev-&gt;output) {
+		if ((bufev-&gt;output = evbuffer_new()) == NULL) {
+			evbuffer_free(bufev-&gt;input);
+			return -1;
+		}
+	}
+
+	bufev_private-&gt;refcnt = 1;
+	bufev-&gt;ev_base = base;
+
+	/* Disable timeouts. */
+	evutil_timerclear(&amp;bufev-&gt;timeout_read);
+	evutil_timerclear(&amp;bufev-&gt;timeout_write);
+
+	bufev-&gt;be_ops = ops;
+
+	bufferevent_ratelim_init_(bufev_private);
+
+	/*
+	 * Set to EV_WRITE so that using bufferevent_write is going to
+	 * trigger a callback.  Reading needs to be explicitly enabled
+	 * because otherwise no data will be available.
+	 */
+	bufev-&gt;enabled = EV_WRITE;
+
+#ifndef EVENT__DISABLE_THREAD_SUPPORT
+	if (options &amp; BEV_OPT_THREADSAFE) {
+		if (bufferevent_enable_locking_(bufev, NULL) &lt; 0) {
+			/* cleanup */
+			evbuffer_free(bufev-&gt;input);
+			evbuffer_free(bufev-&gt;output);
+			bufev-&gt;input = NULL;
+			bufev-&gt;output = NULL;
+			return -1;
+		}
+	}
+#endif
+	if ((options &amp; (BEV_OPT_DEFER_CALLBACKS|BEV_OPT_UNLOCK_CALLBACKS))
+	    == BEV_OPT_UNLOCK_CALLBACKS) {
+		event_warnx("UNLOCK_CALLBACKS requires DEFER_CALLBACKS");
+		return -1;
+	}
+	if (options &amp; BEV_OPT_UNLOCK_CALLBACKS)
+		event_deferred_cb_init_(
+		    &amp;bufev_private-&gt;deferred,
+		    event_base_get_npriorities(base) / 2,
+		    bufferevent_run_deferred_callbacks_unlocked,
+		    bufev_private);
+	else
+		event_deferred_cb_init_(
+		    &amp;bufev_private-&gt;deferred,
+		    event_base_get_npriorities(base) / 2,
+		    bufferevent_run_deferred_callbacks_locked,
+		    bufev_private);
+
+	bufev_private-&gt;options = options;
+
+	evbuffer_set_parent_(bufev-&gt;input, bufev);
+	evbuffer_set_parent_(bufev-&gt;output, bufev);
+
+	return 0;
+}
+
+void
+bufferevent_setcb(struct bufferevent *bufev,
+    bufferevent_data_cb readcb, bufferevent_data_cb writecb,
+    bufferevent_event_cb eventcb, void *cbarg)
+{
+	BEV_LOCK(bufev);
+
+	bufev-&gt;readcb = readcb;
+	bufev-&gt;writecb = writecb;
+	bufev-&gt;errorcb = eventcb;
+
+	bufev-&gt;cbarg = cbarg;
+	BEV_UNLOCK(bufev);
+}
+
+void
+bufferevent_getcb(struct bufferevent *bufev,
+    bufferevent_data_cb *readcb_ptr,
+    bufferevent_data_cb *writecb_ptr,
+    bufferevent_event_cb *eventcb_ptr,
+    void **cbarg_ptr)
+{
+	BEV_LOCK(bufev);
+	if (readcb_ptr)
+		*readcb_ptr = bufev-&gt;readcb;
+	if (writecb_ptr)
+		*writecb_ptr = bufev-&gt;writecb;
+	if (eventcb_ptr)
+		*eventcb_ptr = bufev-&gt;errorcb;
+	if (cbarg_ptr)
+		*cbarg_ptr = bufev-&gt;cbarg;
+
+	BEV_UNLOCK(bufev);
+}
+
+struct evbuffer *
+bufferevent_get_input(struct bufferevent *bufev)
+{
+	return bufev-&gt;input;
+}
+
+struct evbuffer *
+bufferevent_get_output(struct bufferevent *bufev)
+{
+	return bufev-&gt;output;
+}
+
+struct event_base *
+bufferevent_get_base(struct bufferevent *bufev)
+{
+	return bufev-&gt;ev_base;
+}
+
+int
+bufferevent_get_priority(const struct bufferevent *bufev)
+{
+	if (event_initialized(&amp;bufev-&gt;ev_read)) {
+		return event_get_priority(&amp;bufev-&gt;ev_read);
+	} else {
+		return event_base_get_npriorities(bufev-&gt;ev_base) / 2;
+	}
+}
+
+int
+bufferevent_write(struct bufferevent *bufev, const void *data, size_t size)
+{
+	if (evbuffer_add(bufev-&gt;output, data, size) == -1)
+		return (-1);
+
+	return 0;
+}
+
+int
+bufferevent_write_buffer(struct bufferevent *bufev, struct evbuffer *buf)
+{
+	if (evbuffer_add_buffer(bufev-&gt;output, buf) == -1)
+		return (-1);
+
+	return 0;
+}
+
+size_t
+bufferevent_read(struct bufferevent *bufev, void *data, size_t size)
+{
+	return (evbuffer_remove(bufev-&gt;input, data, size));
+}
+
+int
+bufferevent_read_buffer(struct bufferevent *bufev, struct evbuffer *buf)
+{
+	return (evbuffer_add_buffer(buf, bufev-&gt;input));
+}
+
+int
+bufferevent_enable(struct bufferevent *bufev, short event)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	short impl_events = event;
+	int r = 0;
+
+	bufferevent_incref_and_lock_(bufev);
+	if (bufev_private-&gt;read_suspended)
+		impl_events &amp;= ~EV_READ;
+	if (bufev_private-&gt;write_suspended)
+		impl_events &amp;= ~EV_WRITE;
+
+	bufev-&gt;enabled |= event;
+
+	if (impl_events &amp;&amp; bufev-&gt;be_ops-&gt;enable(bufev, impl_events) &lt; 0)
+		r = -1;
+
+	bufferevent_decref_and_unlock_(bufev);
+	return r;
+}
+
+int
+bufferevent_set_timeouts(struct bufferevent *bufev,
+			 const struct timeval *tv_read,
+			 const struct timeval *tv_write)
+{
+	int r = 0;
+	BEV_LOCK(bufev);
+	if (tv_read) {
+		bufev-&gt;timeout_read = *tv_read;
+	} else {
+		evutil_timerclear(&amp;bufev-&gt;timeout_read);
+	}
+	if (tv_write) {
+		bufev-&gt;timeout_write = *tv_write;
+	} else {
+		evutil_timerclear(&amp;bufev-&gt;timeout_write);
+	}
+
+	if (bufev-&gt;be_ops-&gt;adj_timeouts)
+		r = bufev-&gt;be_ops-&gt;adj_timeouts(bufev);
+	BEV_UNLOCK(bufev);
+
+	return r;
+}
+
+
+/* Obsolete; use bufferevent_set_timeouts */
+void
+bufferevent_settimeout(struct bufferevent *bufev,
+		       int timeout_read, int timeout_write)
+{
+	struct timeval tv_read, tv_write;
+	struct timeval *ptv_read = NULL, *ptv_write = NULL;
+
+	memset(&amp;tv_read, 0, sizeof(tv_read));
+	memset(&amp;tv_write, 0, sizeof(tv_write));
+
+	if (timeout_read) {
+		tv_read.tv_sec = timeout_read;
+		ptv_read = &amp;tv_read;
+	}
+	if (timeout_write) {
+		tv_write.tv_sec = timeout_write;
+		ptv_write = &amp;tv_write;
+	}
+
+	bufferevent_set_timeouts(bufev, ptv_read, ptv_write);
+}
+
+
+int
+bufferevent_disable_hard_(struct bufferevent *bufev, short event)
+{
+	int r = 0;
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+
+	BEV_LOCK(bufev);
+	bufev-&gt;enabled &amp;= ~event;
+
+	bufev_private-&gt;connecting = 0;
+	if (bufev-&gt;be_ops-&gt;disable(bufev, event) &lt; 0)
+		r = -1;
+
+	BEV_UNLOCK(bufev);
+	return r;
+}
+
+int
+bufferevent_disable(struct bufferevent *bufev, short event)
+{
+	int r = 0;
+
+	BEV_LOCK(bufev);
+	bufev-&gt;enabled &amp;= ~event;
+
+	if (bufev-&gt;be_ops-&gt;disable(bufev, event) &lt; 0)
+		r = -1;
+
+	BEV_UNLOCK(bufev);
+	return r;
+}
+
+/*
+ * Sets the water marks
+ */
+
+void
+bufferevent_setwatermark(struct bufferevent *bufev, short events,
+    size_t lowmark, size_t highmark)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+
+	BEV_LOCK(bufev);
+	if (events &amp; EV_WRITE) {
+		bufev-&gt;wm_write.low = lowmark;
+		bufev-&gt;wm_write.high = highmark;
+	}
+
+	if (events &amp; EV_READ) {
+		bufev-&gt;wm_read.low = lowmark;
+		bufev-&gt;wm_read.high = highmark;
+
+		if (highmark) {
+			/* There is now a new high-water mark for read.
+			   enable the callback if needed, and see if we should
+			   suspend/bufferevent_wm_unsuspend. */
+
+			if (bufev_private-&gt;read_watermarks_cb == NULL) {
+				bufev_private-&gt;read_watermarks_cb =
+				    evbuffer_add_cb(bufev-&gt;input,
+						    bufferevent_inbuf_wm_cb,
+						    bufev);
+			}
+			evbuffer_cb_set_flags(bufev-&gt;input,
+				      bufev_private-&gt;read_watermarks_cb,
+				      EVBUFFER_CB_ENABLED|EVBUFFER_CB_NODEFER);
+
+			if (evbuffer_get_length(bufev-&gt;input) &gt;= highmark)
+				bufferevent_wm_suspend_read(bufev);
+			else if (evbuffer_get_length(bufev-&gt;input) &lt; highmark)
+				bufferevent_wm_unsuspend_read(bufev);
+		} else {
+			/* There is now no high-water mark for read. */
+			if (bufev_private-&gt;read_watermarks_cb)
+				evbuffer_cb_clear_flags(bufev-&gt;input,
+				    bufev_private-&gt;read_watermarks_cb,
+				    EVBUFFER_CB_ENABLED);
+			bufferevent_wm_unsuspend_read(bufev);
+		}
+	}
+	BEV_UNLOCK(bufev);
+}
+
+int
+bufferevent_getwatermark(struct bufferevent *bufev, short events,
+    size_t *lowmark, size_t *highmark)
+{
+	if (events == EV_WRITE) {
+		BEV_LOCK(bufev);
+		if (lowmark)
+			*lowmark = bufev-&gt;wm_write.low;
+		if (highmark)
+			*highmark = bufev-&gt;wm_write.high;
+		BEV_UNLOCK(bufev);
+		return 0;
+	}
+
+	if (events == EV_READ) {
+		BEV_LOCK(bufev);
+		if (lowmark)
+			*lowmark = bufev-&gt;wm_read.low;
+		if (highmark)
+			*highmark = bufev-&gt;wm_read.high;
+		BEV_UNLOCK(bufev);
+		return 0;
+	}
+	return -1;
+}
+
+int
+bufferevent_flush(struct bufferevent *bufev,
+    short iotype,
+    enum bufferevent_flush_mode mode)
+{
+	int r = -1;
+	BEV_LOCK(bufev);
+	if (bufev-&gt;be_ops-&gt;flush)
+		r = bufev-&gt;be_ops-&gt;flush(bufev, iotype, mode);
+	BEV_UNLOCK(bufev);
+	return r;
+}
+
+void
+bufferevent_incref_and_lock_(struct bufferevent *bufev)
+{
+	struct bufferevent_private *bufev_private =
+	    BEV_UPCAST(bufev);
+	BEV_LOCK(bufev);
+	++bufev_private-&gt;refcnt;
+}
+
+#if 0
+static void
+bufferevent_transfer_lock_ownership_(struct bufferevent *donor,
+    struct bufferevent *recipient)
+{
+	struct bufferevent_private *d = BEV_UPCAST(donor);
+	struct bufferevent_private *r = BEV_UPCAST(recipient);
+	if (d-&gt;lock != r-&gt;lock)
+		return;
+	if (r-&gt;own_lock)
+		return;
+	if (d-&gt;own_lock) {
+		d-&gt;own_lock = 0;
+		r-&gt;own_lock = 1;
+	}
+}
+#endif
+
+int
+bufferevent_decref_and_unlock_(struct bufferevent *bufev)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	int n_cbs = 0;
+#define MAX_CBS 16
+	struct event_callback *cbs[MAX_CBS];
+
+	EVUTIL_ASSERT(bufev_private-&gt;refcnt &gt; 0);
+
+	if (--bufev_private-&gt;refcnt) {
+		BEV_UNLOCK(bufev);
+		return 0;
+	}
+
+	if (bufev-&gt;be_ops-&gt;unlink)
+		bufev-&gt;be_ops-&gt;unlink(bufev);
+
+	/* Okay, we're out of references. Let's finalize this once all the
+	 * callbacks are done running. */
+	cbs[0] = &amp;bufev-&gt;ev_read.ev_evcallback;
+	cbs[1] = &amp;bufev-&gt;ev_write.ev_evcallback;
+	cbs[2] = &amp;bufev_private-&gt;deferred;
+	n_cbs = 3;
+	if (bufev_private-&gt;rate_limiting) {
+		struct event *e = &amp;bufev_private-&gt;rate_limiting-&gt;refill_bucket_event;
+		if (event_initialized(e))
+			cbs[n_cbs++] = &amp;e-&gt;ev_evcallback;
+	}
+	n_cbs += evbuffer_get_callbacks_(bufev-&gt;input, cbs+n_cbs, MAX_CBS-n_cbs);
+	n_cbs += evbuffer_get_callbacks_(bufev-&gt;output, cbs+n_cbs, MAX_CBS-n_cbs);
+
+	event_callback_finalize_many_(bufev-&gt;ev_base, n_cbs, cbs,
+	    bufferevent_finalize_cb_);
+
+#undef MAX_CBS
+	BEV_UNLOCK(bufev);
+
+	return 1;
+}
+
+static void
+bufferevent_finalize_cb_(struct event_callback *evcb, void *arg_)
+{
+	struct bufferevent *bufev = arg_;
+	struct bufferevent *underlying;
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+
+	BEV_LOCK(bufev);
+	underlying = bufferevent_get_underlying(bufev);
+
+	/* Clean up the shared info */
+	if (bufev-&gt;be_ops-&gt;destruct)
+		bufev-&gt;be_ops-&gt;destruct(bufev);
+
+	/* XXX what happens if refcnt for these buffers is &gt; 1?
+	 * The buffers can share a lock with this bufferevent object,
+	 * but the lock might be destroyed below. */
+	/* evbuffer will free the callbacks */
+	evbuffer_free(bufev-&gt;input);
+	evbuffer_free(bufev-&gt;output);
+
+	if (bufev_private-&gt;rate_limiting) {
+		if (bufev_private-&gt;rate_limiting-&gt;group)
+			bufferevent_remove_from_rate_limit_group_internal_(bufev,0);
+		mm_free(bufev_private-&gt;rate_limiting);
+		bufev_private-&gt;rate_limiting = NULL;
+	}
+
+
+	BEV_UNLOCK(bufev);
+
+	if (bufev_private-&gt;own_lock)
+		EVTHREAD_FREE_LOCK(bufev_private-&gt;lock,
+		    EVTHREAD_LOCKTYPE_RECURSIVE);
+
+	/* Free the actual allocated memory. */
+	mm_free(((char*)bufev) - bufev-&gt;be_ops-&gt;mem_offset);
+
+	/* Release the reference to underlying now that we no longer need the
+	 * reference to it.  We wait this long mainly in case our lock is
+	 * shared with underlying.
+	 *
+	 * The 'destruct' function will also drop a reference to underlying
+	 * if BEV_OPT_CLOSE_ON_FREE is set.
+	 *
+	 * XXX Should we/can we just refcount evbuffer/bufferevent locks?
+	 * It would probably save us some headaches.
+	 */
+	if (underlying)
+		bufferevent_decref_(underlying);
+}
+
+int
+bufferevent_decref(struct bufferevent *bufev)
+{
+	BEV_LOCK(bufev);
+	return bufferevent_decref_and_unlock_(bufev);
+}
+
+void
+bufferevent_free(struct bufferevent *bufev)
+{
+	BEV_LOCK(bufev);
+	bufferevent_setcb(bufev, NULL, NULL, NULL, NULL);
+	bufferevent_cancel_all_(bufev);
+	bufferevent_decref_and_unlock_(bufev);
+}
+
+void
+bufferevent_incref(struct bufferevent *bufev)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+
+	/* XXX: now that this function is public, we might want to
+	 * - return the count from this function
+	 * - create a new function to atomically grab the current refcount
+	 */
+	BEV_LOCK(bufev);
+	++bufev_private-&gt;refcnt;
+	BEV_UNLOCK(bufev);
+}
+
+int
+bufferevent_enable_locking_(struct bufferevent *bufev, void *lock)
+{
+#ifdef EVENT__DISABLE_THREAD_SUPPORT
+	return -1;
+#else
+	struct bufferevent *underlying;
+
+	if (BEV_UPCAST(bufev)-&gt;lock)
+		return -1;
+	underlying = bufferevent_get_underlying(bufev);
+
+	if (!lock &amp;&amp; underlying &amp;&amp; BEV_UPCAST(underlying)-&gt;lock) {
+		lock = BEV_UPCAST(underlying)-&gt;lock;
+		BEV_UPCAST(bufev)-&gt;lock = lock;
+		BEV_UPCAST(bufev)-&gt;own_lock = 0;
+	} else if (!lock) {
+		EVTHREAD_ALLOC_LOCK(lock, EVTHREAD_LOCKTYPE_RECURSIVE);
+		if (!lock)
+			return -1;
+		BEV_UPCAST(bufev)-&gt;lock = lock;
+		BEV_UPCAST(bufev)-&gt;own_lock = 1;
+	} else {
+		BEV_UPCAST(bufev)-&gt;lock = lock;
+		BEV_UPCAST(bufev)-&gt;own_lock = 0;
+	}
+	evbuffer_enable_locking(bufev-&gt;input, lock);
+	evbuffer_enable_locking(bufev-&gt;output, lock);
+
+	if (underlying &amp;&amp; !BEV_UPCAST(underlying)-&gt;lock)
+		bufferevent_enable_locking_(underlying, lock);
+
+	return 0;
+#endif
+}
+
+int
+bufferevent_setfd(struct bufferevent *bev, evutil_socket_t fd)
+{
+	union bufferevent_ctrl_data d;
+	int res = -1;
+	d.fd = fd;
+	BEV_LOCK(bev);
+	if (bev-&gt;be_ops-&gt;ctrl)
+		res = bev-&gt;be_ops-&gt;ctrl(bev, BEV_CTRL_SET_FD, &amp;d);
+	BEV_UNLOCK(bev);
+	return res;
+}
+
+evutil_socket_t
+bufferevent_getfd(struct bufferevent *bev)
+{
+	union bufferevent_ctrl_data d;
+	int res = -1;
+	d.fd = -1;
+	BEV_LOCK(bev);
+	if (bev-&gt;be_ops-&gt;ctrl)
+		res = bev-&gt;be_ops-&gt;ctrl(bev, BEV_CTRL_GET_FD, &amp;d);
+	BEV_UNLOCK(bev);
+	return (res&lt;0) ? -1 : d.fd;
+}
+
+enum bufferevent_options
+bufferevent_get_options_(struct bufferevent *bev)
+{
+	struct bufferevent_private *bev_p =
+	    EVUTIL_UPCAST(bev, struct bufferevent_private, bev);
+	enum bufferevent_options options;
+
+	BEV_LOCK(bev);
+	options = bev_p-&gt;options;
+	BEV_UNLOCK(bev);
+	return options;
+}
+
+
+static void
+bufferevent_cancel_all_(struct bufferevent *bev)
+{
+	union bufferevent_ctrl_data d;
+	memset(&amp;d, 0, sizeof(d));
+	BEV_LOCK(bev);
+	if (bev-&gt;be_ops-&gt;ctrl)
+		bev-&gt;be_ops-&gt;ctrl(bev, BEV_CTRL_CANCEL_ALL, &amp;d);
+	BEV_UNLOCK(bev);
+}
+
+short
+bufferevent_get_enabled(struct bufferevent *bufev)
+{
+	short r;
+	BEV_LOCK(bufev);
+	r = bufev-&gt;enabled;
+	BEV_UNLOCK(bufev);
+	return r;
+}
+
+struct bufferevent *
+bufferevent_get_underlying(struct bufferevent *bev)
+{
+	union bufferevent_ctrl_data d;
+	int res = -1;
+	d.ptr = NULL;
+	BEV_LOCK(bev);
+	if (bev-&gt;be_ops-&gt;ctrl)
+		res = bev-&gt;be_ops-&gt;ctrl(bev, BEV_CTRL_GET_UNDERLYING, &amp;d);
+	BEV_UNLOCK(bev);
+	return (res&lt;0) ? NULL : d.ptr;
+}
+
+static void
+bufferevent_generic_read_timeout_cb(evutil_socket_t fd, short event, void *ctx)
+{
+	struct bufferevent *bev = ctx;
+	bufferevent_incref_and_lock_(bev);
+	bufferevent_disable(bev, EV_READ);
+	bufferevent_run_eventcb_(bev, BEV_EVENT_TIMEOUT|BEV_EVENT_READING, 0);
+	bufferevent_decref_and_unlock_(bev);
+}
+static void
+bufferevent_generic_write_timeout_cb(evutil_socket_t fd, short event, void *ctx)
+{
+	struct bufferevent *bev = ctx;
+	bufferevent_incref_and_lock_(bev);
+	bufferevent_disable(bev, EV_WRITE);
+	bufferevent_run_eventcb_(bev, BEV_EVENT_TIMEOUT|BEV_EVENT_WRITING, 0);
+	bufferevent_decref_and_unlock_(bev);
+}
+
+void
+bufferevent_init_generic_timeout_cbs_(struct bufferevent *bev)
+{
+	event_assign(&amp;bev-&gt;ev_read, bev-&gt;ev_base, -1, EV_FINALIZE,
+	    bufferevent_generic_read_timeout_cb, bev);
+	event_assign(&amp;bev-&gt;ev_write, bev-&gt;ev_base, -1, EV_FINALIZE,
+	    bufferevent_generic_write_timeout_cb, bev);
+}
+
+int
+bufferevent_generic_adj_timeouts_(struct bufferevent *bev)
+{
+	const short enabled = bev-&gt;enabled;
+	struct bufferevent_private *bev_p =
+	    EVUTIL_UPCAST(bev, struct bufferevent_private, bev);
+	int r1=0, r2=0;
+	if ((enabled &amp; EV_READ) &amp;&amp; !bev_p-&gt;read_suspended &amp;&amp;
+	    evutil_timerisset(&amp;bev-&gt;timeout_read))
+		r1 = event_add(&amp;bev-&gt;ev_read, &amp;bev-&gt;timeout_read);
+	else
+		r1 = event_del(&amp;bev-&gt;ev_read);
+
+	if ((enabled &amp; EV_WRITE) &amp;&amp; !bev_p-&gt;write_suspended &amp;&amp;
+	    evutil_timerisset(&amp;bev-&gt;timeout_write) &amp;&amp;
+	    evbuffer_get_length(bev-&gt;output))
+		r2 = event_add(&amp;bev-&gt;ev_write, &amp;bev-&gt;timeout_write);
+	else
+		r2 = event_del(&amp;bev-&gt;ev_write);
+	if (r1 &lt; 0 || r2 &lt; 0)
+		return -1;
+	return 0;
+}
+
+int
+bufferevent_generic_adj_existing_timeouts_(struct bufferevent *bev)
+{
+	int r = 0;
+	if (event_pending(&amp;bev-&gt;ev_read, EV_READ, NULL)) {
+		if (evutil_timerisset(&amp;bev-&gt;timeout_read)) {
+			    if (bufferevent_add_event_(&amp;bev-&gt;ev_read, &amp;bev-&gt;timeout_read) &lt; 0)
+				    r = -1;
+		} else {
+			event_remove_timer(&amp;bev-&gt;ev_read);
+		}
+	}
+	if (event_pending(&amp;bev-&gt;ev_write, EV_WRITE, NULL)) {
+		if (evutil_timerisset(&amp;bev-&gt;timeout_write)) {
+			if (bufferevent_add_event_(&amp;bev-&gt;ev_write, &amp;bev-&gt;timeout_write) &lt; 0)
+				r = -1;
+		} else {
+			event_remove_timer(&amp;bev-&gt;ev_write);
+		}
+	}
+	return r;
+}
+
+int
+bufferevent_add_event_(struct event *ev, const struct timeval *tv)
+{
+	if (!evutil_timerisset(tv))
+		return event_add(ev, NULL);
+	else
+		return event_add(ev, tv);
+}
+
+/* For use by user programs only; internally, we should be calling
+   either bufferevent_incref_and_lock_(), or BEV_LOCK. */
+void
+bufferevent_lock(struct bufferevent *bev)
+{
+	bufferevent_incref_and_lock_(bev);
+}
+
+void
+bufferevent_unlock(struct bufferevent *bev)
+{
+	bufferevent_decref_and_unlock_(bev);
+}
+      </pre>
+    </body>
+</html>

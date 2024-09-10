@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/test/wsserver_test.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "tnet_http.h"
+#include "httpserver.h"
+#include "tcpserver.h"
+
+#include "log.h"
+#include "address.h"
+#include "connection.h"
+#include "wsconnection.h"
+
+using namespace std;
+using namespace tnet;
+
+void onWsCallback(const WsConnectionPtr_t&amp; conn, WsEvent event, const void* context)
+{
+    switch(event)
+    {
+        case Ws_OpenEvent:
+            LOG_INFO("websocket open");
+            break;    
+        case Ws_CloseEvent:
+            LOG_INFO("websocket close");
+            break;
+        case Ws_MessageEvent:
+            {
+                const string&amp; str = *(const string*)context;
+                LOG_INFO("websocket message %s", str.c_str());
+                conn-&gt;send("hello " + str);
+            }
+            break;
+        case Ws_PongEvent:
+            LOG_INFO("websocket pong");
+            break;
+        case Ws_ErrorEvent:
+            LOG_INFO("websocket error");
+            break;
+    }
+}
+
+int main()
+{
+    TcpServer s;
+    
+    HttpServer httpd(&amp;s);
+    
+    httpd.setWsCallback("/push/ws", std::bind(&amp;onWsCallback, _1, _2, _3));    
+
+    httpd.listen(Address(11181));
+
+    s.start();
+    
+    return 0; 
+}
+
+      </pre>
+    </body>
+</html>

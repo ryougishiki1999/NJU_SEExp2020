@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/myisam/ft_nlq_search.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2001, 2016, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+/* Written by Sergei A. Golubchik, who has a shared copyright to this code */
+
+#define FT_CORE
+#include "ftdefs.h"
+
+/* search with natural language queries */
+
+typedef struct ft_doc_rec
+{
+  my_off_t  dpos;
+  double    weight;
+} FT_DOC;
+
+struct st_ft_info
+{
+  struct _ft_vft *please;
+  MI_INFO  *info;
+  int       ndocs;
+  int       curdoc;
+  FT_DOC    doc[1];
+};
+
+typedef struct st_all_in_one
+{
+  MI_INFO    *info;
+  uint	      keynr;
+  const CHARSET_INFO *charset;
+  uchar      *keybuff;
+  TREE	      dtree;
+} ALL_IN_ONE;
+
+typedef struct st_ft_superdoc
+{
+    FT_DOC   doc;
+    FT_WORD *word_ptr;
+    double   tmp_weight;
+} FT_SUPERDOC;
+
+static int FT_SUPERDOC_cmp(void* cmp_arg MY_ATTRIBUTE((unused)),
+			   FT_SUPERDOC *p1, FT_SUPERDOC *p2)
+{
+  if (p1-&gt;doc.dpos &lt; p2-&gt;doc.dpos)
+    return -1;
+  if (p1-&gt;doc.dpos == p2-&gt;doc.dpos)
+    return 0;
+  return 1;
+}
+
+static int walk_and_match(FT_WORD *word, uint32 count, ALL_IN_ONE *aio)
+{
+<span style = "background-color:#fdd">  int	       UNINIT_VAR(subkeys), r;        Assigned value is garbage or undefined:Assigned value is garbage or undefined</span>
+  uint	       keylen, doc_cnt;
+  FT_SUPERDOC  sdoc, *sptr;
+  TREE_ELEMENT *selem;
+  double       gweight=1;
+  MI_INFO      *info=aio-&gt;info;
+  MYISAM_SHARE *share= info-&gt;s;
+  uchar        *keybuff=aio-&gt;keybuff;
+  MI_KEYDEF    *keyinfo=info-&gt;s-&gt;keyinfo+aio-&gt;keynr;
+  my_off_t     key_root;
+  uint         extra= HA_FT_WLEN + info-&gt;s-&gt;rec_reflength;
+#if HA_FT_WTYPE == HA_KEYTYPE_FLOAT
+  float tmp_weight;
+#else
+#error
+#endif
+
+  DBUG_ENTER("walk_and_match");
+
+  word-&gt;weight=LWS_FOR_QUERY;
+
+  keylen=_ft_make_key(info,aio-&gt;keynr,keybuff,word,0);
+  keylen-=HA_FT_WLEN;
+  doc_cnt=0;
+
+  if (share-&gt;concurrent_insert)
+    mysql_rwlock_rdlock(&amp;share-&gt;key_root_lock[aio-&gt;keynr]);
+
+  key_root= share-&gt;state.key_root[aio-&gt;keynr];
+
+  /* Skip rows inserted by current inserted */
+  for (r=_mi_search(info, keyinfo, keybuff, keylen, SEARCH_FIND, key_root) ;
+       !r &amp;&amp;
+         (subkeys=ft_sintXkorr(info-&gt;lastkey+info-&gt;lastkey_length-extra)) &gt; 0 &amp;&amp;
+         info-&gt;lastpos &gt;= info-&gt;state-&gt;data_file_length ;
+       r= _mi_search_next(info, keyinfo, info-&gt;lastkey,
+                          info-&gt;lastkey_length, SEARCH_BIGGER, key_root))
+    ;
+
+  if (share-&gt;concurrent_insert)
+    mysql_rwlock_unlock(&amp;share-&gt;key_root_lock[aio-&gt;keynr]);
+
+  info-&gt;update|= HA_STATE_AKTIV;              /* for _mi_test_if_changed() */
+
+  /* The following should be safe, even if we compare doubles */
+  while (!r &amp;&amp; gweight)
+  {
+
+    if (keylen &amp;&amp;
+        ha_compare_text(aio-&gt;charset,info-&gt;lastkey+1,
+                        info-&gt;lastkey_length-extra-1, keybuff+1,keylen-1,0,0))
+     break;
+
+    if (subkeys&lt;0)
+    {
+      if (doc_cnt)
+        DBUG_RETURN(1); /* index is corrupted */
+      /*
+        TODO here: unsafe optimization, should this word
+        be skipped (based on subkeys) ?
+      */
+      keybuff+=keylen;
+      keyinfo=&amp; info-&gt;s-&gt;ft2_keyinfo;
+      key_root=info-&gt;lastpos;
+      keylen=0;
+      if (share-&gt;concurrent_insert)
+        mysql_rwlock_rdlock(&amp;share-&gt;key_root_lock[aio-&gt;keynr]);
+      r=_mi_search_first(info, keyinfo, key_root);
+      goto do_skip;
+    }
+#if HA_FT_WTYPE == HA_KEYTYPE_FLOAT
+    ft_floatXget(tmp_weight, info-&gt;lastkey+info-&gt;lastkey_length-extra);
+#else
+#error
+#endif
+  /* The following should be safe, even if we compare doubles */
+    if (tmp_weight==0)
+      DBUG_RETURN(doc_cnt); /* stopword, doc_cnt should be 0 */
+
+    sdoc.doc.dpos=info-&gt;lastpos;
+
+    /* saving document matched into dtree */
+    if (!(selem=tree_insert(&amp;aio-&gt;dtree, &amp;sdoc, 0, aio-&gt;dtree.custom_arg)))
+      DBUG_RETURN(1);
+
+    sptr=(FT_SUPERDOC *)ELEMENT_KEY((&amp;aio-&gt;dtree), selem);
+
+    if (selem-&gt;count==1) /* document's first match */
+      sptr-&gt;doc.weight=0;
+    else
+      sptr-&gt;doc.weight+=sptr-&gt;tmp_weight*sptr-&gt;word_ptr-&gt;weight;
+
+    sptr-&gt;word_ptr=word;
+    sptr-&gt;tmp_weight=tmp_weight;
+
+    doc_cnt++;
+
+    gweight=word-&gt;weight*GWS_IN_USE;
+    if (gweight &lt; 0 || doc_cnt &gt; 2000000)
+      gweight=0;
+
+    if (share-&gt;concurrent_insert)
+      mysql_rwlock_rdlock(&amp;share-&gt;key_root_lock[aio-&gt;keynr]);
+
+    if (_mi_test_if_changed(info) == 0)
+	r=_mi_search_next(info, keyinfo, info-&gt;lastkey, info-&gt;lastkey_length,
+                          SEARCH_BIGGER, key_root);
+    else
+	r=_mi_search(info, keyinfo, info-&gt;lastkey, info-&gt;lastkey_length,
+                     SEARCH_BIGGER, key_root);
+do_skip:
+    while ((subkeys=ft_sintXkorr(info-&gt;lastkey+info-&gt;lastkey_length-extra)) &gt; 0 &amp;&amp;
+           !r &amp;&amp; info-&gt;lastpos &gt;= info-&gt;state-&gt;data_file_length)
+      r= _mi_search_next(info, keyinfo, info-&gt;lastkey, info-&gt;lastkey_length,
+                         SEARCH_BIGGER, key_root);
+
+    if (share-&gt;concurrent_insert)
+      mysql_rwlock_unlock(&amp;share-&gt;key_root_lock[aio-&gt;keynr]);
+  }
+  word-&gt;weight=gweight;
+
+  DBUG_RETURN(0);
+}
+
+
+static int walk_and_copy(FT_SUPERDOC *from,
+			 uint32 count MY_ATTRIBUTE((unused)), FT_DOC **to)
+{
+  DBUG_ENTER("walk_and_copy");
+  from-&gt;doc.weight+=from-&gt;tmp_weight*from-&gt;word_ptr-&gt;weight;
+  (*to)-&gt;dpos=from-&gt;doc.dpos;
+  (*to)-&gt;weight=from-&gt;doc.weight;
+  (*to)++;
+  DBUG_RETURN(0);
+}
+
+static int walk_and_push(FT_SUPERDOC *from,
+			 uint32 count MY_ATTRIBUTE((unused)), QUEUE *best)
+{
+  DBUG_ENTER("walk_and_copy");
+  from-&gt;doc.weight+=from-&gt;tmp_weight*from-&gt;word_ptr-&gt;weight;
+  set_if_smaller(best-&gt;elements, ft_query_expansion_limit-1);
+  queue_insert(best, (uchar *)&amp; from-&gt;doc);
+  DBUG_RETURN(0);
+}
+
+
+static int FT_DOC_cmp(void *unused MY_ATTRIBUTE((unused)),
+                      FT_DOC *a, FT_DOC *b)
+{
+  double c= b-&gt;weight - a-&gt;weight;
+  return ((c &lt; 0) ? -1 : (c &gt; 0) ? 1 : 0);
+}
+
+
+FT_INFO *ft_init_nlq_search(MI_INFO *info, uint keynr, uchar *query,
+			    uint query_len, uint flags, uchar *record)
+{
+  TREE	      wtree;
+  ALL_IN_ONE  aio;
+  FT_DOC     *dptr;
+  FT_INFO    *dlist=NULL;
+  my_off_t    saved_lastpos=info-&gt;lastpos;
+  struct st_mysql_ftparser *parser;
+  MYSQL_FTPARSER_PARAM *ftparser_param;
+  DBUG_ENTER("ft_init_nlq_search");
+
+/* black magic ON */
+  if ((int) (keynr = _mi_check_index(info,keynr)) &lt; 0)
+    DBUG_RETURN(NULL);
+  if (_mi_readinfo(info,F_RDLCK,1))
+    DBUG_RETURN(NULL);
+/* black magic OFF */
+
+  aio.info=info;
+  aio.keynr=keynr;
+  aio.charset=info-&gt;s-&gt;keyinfo[keynr].seg-&gt;charset;
+  aio.keybuff=info-&gt;lastkey+info-&gt;s-&gt;base.max_key_length;
+  parser= info-&gt;s-&gt;keyinfo[keynr].parser;
+  if (! (ftparser_param= ftparser_call_initializer(info, keynr, 0)))
+    goto err;
+
+  memset(&amp;wtree, 0, sizeof(wtree));
+
+  init_tree(&amp;aio.dtree,0,0,sizeof(FT_SUPERDOC),(qsort_cmp2)&amp;FT_SUPERDOC_cmp,0,
+            NULL, NULL);
+
+  ft_parse_init(&amp;wtree, aio.charset);
+  ftparser_param-&gt;flags= 0;
+  if (ft_parse(&amp;wtree, query, query_len, parser, ftparser_param,
+               &amp;wtree.mem_root))
+    goto err;
+
+  if (tree_walk(&amp;wtree, (tree_walk_action)&amp;walk_and_match, &amp;aio,
+		left_root_right))
+    goto err;
+
+  if (flags &amp; FT_EXPAND &amp;&amp; ft_query_expansion_limit)
+  {
+    QUEUE best;
+    init_queue(&amp;best,ft_query_expansion_limit,0,0, (queue_compare) &amp;FT_DOC_cmp,
+	       0);
+    tree_walk(&amp;aio.dtree, (tree_walk_action) &amp;walk_and_push,
+              &amp;best, left_root_right);
+    while (best.elements)
+    {
+      my_off_t docid=((FT_DOC *)queue_remove(&amp; best, 0))-&gt;dpos;
+      if (!(*info-&gt;read_record)(info,docid,record))
+      {
+        info-&gt;update|= HA_STATE_AKTIV;
+        ftparser_param-&gt;flags= MYSQL_FTFLAGS_NEED_COPY;
+        if (unlikely(_mi_ft_parse(&amp;wtree, info, keynr, record, ftparser_param,
+                                  &amp;wtree.mem_root)))
+        {
+          delete_queue(&amp;best);
+          goto err;
+        }
+      }
+    }
+    delete_queue(&amp;best);
+    reset_tree(&amp;aio.dtree);
+    if (tree_walk(&amp;wtree, (tree_walk_action)&amp;walk_and_match, &amp;aio,
+                  left_root_right))
+      goto err;
+
+  }
+
+  /*
+    If ndocs == 0, this will not allocate RAM for FT_INFO.doc[],
+    so if ndocs == 0, FT_INFO.doc[] must not be accessed.
+   */
+  dlist=(FT_INFO *)my_malloc(sizeof(FT_INFO)+
+			     sizeof(FT_DOC)*
+			     (int)(aio.dtree.elements_in_tree-1),
+			     MYF(0));
+  if (!dlist)
+    goto err;
+
+  dlist-&gt;please= (struct _ft_vft *) &amp; _ft_vft_nlq;
+  dlist-&gt;ndocs=aio.dtree.elements_in_tree;
+  dlist-&gt;curdoc=-1;
+  dlist-&gt;info=aio.info;
+  dptr=dlist-&gt;doc;
+
+  tree_walk(&amp;aio.dtree, (tree_walk_action) &amp;walk_and_copy,
+	    &amp;dptr, left_root_right);
+
+  if (flags &amp; FT_SORTED)
+    my_qsort2(dlist-&gt;doc, dlist-&gt;ndocs, sizeof(FT_DOC), (qsort2_cmp)&amp;FT_DOC_cmp,
+              0);
+
+err:
+  delete_tree(&amp;aio.dtree);
+  delete_tree(&amp;wtree);
+  info-&gt;lastpos=saved_lastpos;
+  DBUG_RETURN(dlist);
+}
+
+
+int ft_nlq_read_next(FT_INFO *handler, char *record)
+{
+  MI_INFO *info= (MI_INFO *) handler-&gt;info;
+
+  if (++handler-&gt;curdoc &gt;= handler-&gt;ndocs)
+  {
+    --handler-&gt;curdoc;
+    return HA_ERR_END_OF_FILE;
+  }
+
+  info-&gt;update&amp;= (HA_STATE_CHANGED | HA_STATE_ROW_CHANGED);
+
+  info-&gt;lastpos=handler-&gt;doc[handler-&gt;curdoc].dpos;
+  if (!(*info-&gt;read_record)(info,info-&gt;lastpos,(uchar*) record))
+  {
+    info-&gt;update|= HA_STATE_AKTIV;		/* Record is read */
+    return 0;
+  }
+  return my_errno;
+}
+
+
+float ft_nlq_find_relevance(FT_INFO *handler,
+			    uchar *record MY_ATTRIBUTE((unused)),
+			    uint length MY_ATTRIBUTE((unused)))
+{
+  int a,b,c;
+  FT_DOC  *docs=handler-&gt;doc;
+  my_off_t docid=handler-&gt;info-&gt;lastpos;
+
+  if (docid == HA_POS_ERROR)
+    return -5.0;
+
+  /* Assuming docs[] is sorted by dpos... */
+
+  for (a=0, b=handler-&gt;ndocs, c=(a+b)/2; b-a&gt;1; c=(a+b)/2)
+  {
+    if (docs[c].dpos &gt; docid)
+      b=c;
+    else
+      a=c;
+  }
+  /* bounds check to avoid accessing unallocated handler-&gt;doc  */
+  if (a &lt; handler-&gt;ndocs &amp;&amp; docs[a].dpos == docid)
+    return (float) docs[a].weight;
+  else
+    return 0.0;
+}
+
+
+void ft_nlq_close_search(FT_INFO *handler)
+{
+  my_free(handler);
+}
+
+
+float ft_nlq_get_relevance(FT_INFO *handler)
+{
+  return (float) handler-&gt;doc[handler-&gt;curdoc].weight;
+}
+
+
+void ft_nlq_reinit_search(FT_INFO *handler)
+{
+  handler-&gt;curdoc=-1;
+}
+
+      </pre>
+    </body>
+</html>

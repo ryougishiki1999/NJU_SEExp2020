@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/include/ut0rnd.ic</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 1994, 2009, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/**************************************************************//**
+@file include/ut0rnd.ic
+Random numbers and hashing
+
+Created 5/30/1994 Heikki Tuuri
+*******************************************************************/
+
+#define UT_HASH_RANDOM_MASK	1463735687
+#define UT_HASH_RANDOM_MASK2	1653893711
+
+#ifndef UNIV_INNOCHECKSUM
+
+#define UT_RND1			151117737
+#define UT_RND2			119785373
+#define UT_RND3			 85689495
+#define UT_RND4			 76595339
+#define UT_SUM_RND2		 98781234
+#define UT_SUM_RND3		126792457
+#define UT_SUM_RND4		 63498502
+#define UT_XOR_RND1		187678878
+#define UT_XOR_RND2		143537923
+
+/** Seed value of ut_rnd_gen_ulint() */
+extern	ulint	 ut_rnd_ulint_counter;
+
+/********************************************************//**
+This is used to set the random number seed. */
+UNIV_INLINE
+void
+ut_rnd_set_seed(
+/*============*/
+	ulint	 seed)		 /*!&lt; in: seed */
+{
+	ut_rnd_ulint_counter = seed;
+}
+
+/********************************************************//**
+The following function generates a series of 'random' ulint integers.
+@return	the next 'random' number */
+UNIV_INLINE
+ulint
+ut_rnd_gen_next_ulint(
+/*==================*/
+	ulint	rnd)	/*!&lt; in: the previous random number value */
+{
+	ulint	n_bits;
+
+	n_bits = 8 * sizeof(ulint);
+
+	rnd = UT_RND2 * rnd + UT_SUM_RND3;
+	rnd = UT_XOR_RND1 ^ rnd;
+	rnd = (rnd &lt;&lt; 20) + (rnd &gt;&gt; (n_bits - 20));
+	rnd = UT_RND3 * rnd + UT_SUM_RND4;
+	rnd = UT_XOR_RND2 ^ rnd;
+	rnd = (rnd &lt;&lt; 20) + (rnd &gt;&gt; (n_bits - 20));
+	rnd = UT_RND1 * rnd + UT_SUM_RND2;
+
+	return(rnd);
+}
+
+/********************************************************//**
+The following function generates 'random' ulint integers which
+enumerate the value space of ulint integers in a pseudo random
+fashion. Note that the same integer is repeated always after
+2 to power 32 calls to the generator (if ulint is 32-bit).
+@return	the 'random' number */
+UNIV_INLINE
+ulint
+ut_rnd_gen_ulint(void)
+/*==================*/
+{
+	ulint	rnd;
+
+	ut_rnd_ulint_counter = UT_RND1 * ut_rnd_ulint_counter + UT_RND2;
+
+	rnd = ut_rnd_gen_next_ulint(ut_rnd_ulint_counter);
+
+	return(rnd);
+}
+
+/********************************************************//**
+Generates a random integer from a given interval.
+@return	the 'random' number */
+UNIV_INLINE
+ulint
+ut_rnd_interval(
+/*============*/
+	ulint	low,	/*!&lt; in: low limit; can generate also this value */
+	ulint	high)	/*!&lt; in: high limit; can generate also this value */
+{
+	ulint	rnd;
+
+	ut_ad(high &gt;= low);
+
+	if (low == high) {
+
+		return(low);
+	}
+
+	rnd = ut_rnd_gen_ulint();
+
+	return(low + (rnd % (high - low)));
+}
+
+/*********************************************************//**
+Generates a random iboolean value.
+@return	the random value */
+UNIV_INLINE
+ibool
+ut_rnd_gen_ibool(void)
+/*=================*/
+{
+	ulint	 x;
+
+	x = ut_rnd_gen_ulint();
+
+	if (((x &gt;&gt; 20) + (x &gt;&gt; 15)) &amp; 1) {
+
+		return(TRUE);
+	}
+
+	return(FALSE);
+}
+
+/*******************************************************//**
+The following function generates a hash value for a ulint integer
+to a hash table of size table_size, which should be a prime
+or some random number for the hash table to work reliably.
+@return	hash value */
+UNIV_INLINE
+ulint
+ut_hash_ulint(
+/*==========*/
+	ulint	 key,		/*!&lt; in: value to be hashed */
+	ulint	 table_size)	/*!&lt; in: hash table size */
+{
+	ut_ad(table_size);
+	key = key ^ UT_HASH_RANDOM_MASK2;
+
+	return(key % table_size);
+}
+
+/*************************************************************//**
+Folds a 64-bit integer.
+@return	folded value */
+UNIV_INLINE
+ulint
+ut_fold_ull(
+/*========*/
+	ib_uint64_t	d)	/*!&lt; in: 64-bit integer */
+{
+	return(ut_fold_ulint_pair((ulint) d &amp; ULINT32_MASK,
+				  (ulint) (d &gt;&gt; 32)));
+}
+
+/*************************************************************//**
+Folds a character string ending in the null character.
+@return	folded value */
+UNIV_INLINE
+ulint
+ut_fold_string(
+/*===========*/
+	const char*	str)	/*!&lt; in: null-terminated string */
+{
+	ulint	fold = 0;
+
+	ut_ad(str);
+
+	while (*str != '\0') {
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str));
+		str++;
+	}
+
+	return(fold);
+}
+
+#endif /* !UNIV_INNOCHECKSUM */
+
+/*************************************************************//**
+Folds a pair of ulints.
+@return	folded value */
+UNIV_INLINE
+ulint
+ut_fold_ulint_pair(
+/*===============*/
+	ulint	n1,	/*!&lt; in: ulint */
+	ulint	n2)	/*!&lt; in: ulint */
+{
+	return(((((n1 ^ n2 ^ UT_HASH_RANDOM_MASK2) &lt;&lt; 8) + n1)
+		^ UT_HASH_RANDOM_MASK) + n2);
+}
+
+/*************************************************************//**
+Folds a binary string.
+@return	folded value */
+UNIV_INLINE
+ulint
+ut_fold_binary(
+/*===========*/
+	const byte*	str,	/*!&lt; in: string of bytes */
+	ulint		len)	/*!&lt; in: length */
+{
+	ulint		fold = 0;
+	const byte*	str_end	= str + (len &amp; 0xFFFFFFF8);
+
+	ut_ad(str || !len);
+
+	while (str &lt; str_end) {
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));
+		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));
+	}
+
+	switch (len &amp; 0x7) {
+	case 7:
+<span style = "background-color:#fdd">		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));        Null-Pointer-Dereferenced:Dereference of null pointer</span>
+	case 6:
+<span style = "background-color:#fdd">		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));        Null-Pointer-Dereferenced:Dereference of null pointer</span>
+	case 5:
+<span style = "background-color:#fdd">		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));        Null-Pointer-Dereferenced:Dereference of null pointer</span>
+	case 4:
+<span style = "background-color:#fdd">		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));        Null-Pointer-Dereferenced:Dereference of null pointer</span>
+	case 3:
+<span style = "background-color:#fdd">		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));        Null-Pointer-Dereferenced:Dereference of null pointer</span>
+	case 2:
+<span style = "background-color:#fdd">		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));        Null-Pointer-Dereferenced:Dereference of null pointer</span>
+	case 1:
+<span style = "background-color:#fdd">		fold = ut_fold_ulint_pair(fold, (ulint)(*str++));        Null-Pointer-Dereferenced:Dereference of null pointer</span>
+	}
+
+	return(fold);
+}
+      </pre>
+    </body>
+</html>

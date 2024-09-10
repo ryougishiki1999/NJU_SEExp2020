@@ -1,0 +1,55 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>ResultCollector.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "ResultCollector.h"
+
+/////////////////////////////////////
+// Diagnostic
+/////////////////////////////////////
+Diagnostic::Diagnostic(const std::string &amp;chker_name, const std::string &amp;bt, const std::string &amp;fn,
+                       const std::string &amp;desc, unsigned int lno, unsigned cno)
+<span style = "background-color:#dfd">    : checker_name(chker_name), bug_type(bt), filename(fn), description(desc), line_number(lno), column_number(cno)
+{
+}</span>
+
+/////////////////////////////////////
+// Stats
+/////////////////////////////////////
+<span style = "background-color:#dfd">Stats::Stats(const std::string &amp;fn, double at) : filename(fn), analysis_time(at)
+{
+}</span>
+/////////////////////////////////////
+// ResultCollector
+/////////////////////////////////////
+ResultCollector &amp;ResultCollector::instance()
+<span style = "background-color:#dfd">{
+    static ResultCollector rc;
+    return rc;
+}</span>
+
+void ResultCollector::add_diagnostic(Diagnostic &amp;&amp;diag)
+<span style = "background-color:#dfd">{
+    diagnostics.push_back(std::move(diag));
+}</span>
+void ResultCollector::add_stats(Stats &amp;&amp;s)
+<span style = "background-color:#dfd">{
+    stats.push_back(std::move(s));
+}</span>
+void ResultCollector::clear_diagnostics()
+<span style = "background-color:#dfd">{
+    diagnostics.clear();
+}</span>
+void ResultCollector::clear_stats()
+<span style = "background-color:#dfd">{
+    stats.clear();
+}</span></pre>
+	</body>
+</html>

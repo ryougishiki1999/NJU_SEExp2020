@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/row/row0ext.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 2006, 2013, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/**************************************************//**
+@file row/row0ext.cc
+Caching of externally stored column prefixes
+
+Created September 2006 Marko Makela
+*******************************************************/
+
+#include "row0ext.h"
+
+#ifdef UNIV_NONINL
+#include "row0ext.ic"
+#endif
+
+#include "btr0cur.h"
+
+/********************************************************************//**
+Fills the column prefix cache of an externally stored column. */
+static
+void
+row_ext_cache_fill(
+/*===============*/
+	row_ext_t*	ext,	/*!&lt; in/out: column prefix cache */
+	ulint		i,	/*!&lt; in: index of ext-&gt;ext[] */
+	ulint		zip_size,/*!&lt; compressed page size in bytes, or 0 */
+	const dfield_t*	dfield)	/*!&lt; in: data field */
+{
+	const byte*	field	= static_cast&lt;const byte*&gt;(
+					dfield_get_data(dfield));
+	ulint		f_len	= dfield_get_len(dfield);
+	byte*		buf	= ext-&gt;buf + i * ext-&gt;max_len;
+
+	ut_ad(ext-&gt;max_len &gt; 0);
+	ut_ad(i &lt; ext-&gt;n_ext);
+	ut_ad(dfield_is_ext(dfield));
+	ut_a(f_len &gt;= BTR_EXTERN_FIELD_REF_SIZE);
+
+	if (UNIV_UNLIKELY(!memcmp(field_ref_zero,
+				  field + f_len - BTR_EXTERN_FIELD_REF_SIZE,
+				  BTR_EXTERN_FIELD_REF_SIZE))) {
+		/* The BLOB pointer is not set: we cannot fetch it */
+<span style = "background-color:#fdd">		ext-&gt;len[i] = 0;        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+	} else {
+		if (ext-&gt;max_len == REC_VERSION_56_MAX_INDEX_COL_LEN
+		    &amp;&amp; f_len &gt; BTR_EXTERN_FIELD_REF_SIZE) {
+			/* In this case, the field is in B format or beyond,
+			(refer to the definition of row_ext_t.max_len)
+			and the field is already fill with prefix, otherwise
+			f_len would be BTR_EXTERN_FIELD_REF_SIZE.
+			So there is no need to re-read the prefix externally,
+			but just copy the local prefix to buf. Please note
+			if the ext-&gt;len[i] is zero, it means an error
+			as above. */
+			memcpy(buf, field, f_len - BTR_EXTERN_FIELD_REF_SIZE);
+<span style = "background-color:#fdd">			ext-&gt;len[i] = f_len - BTR_EXTERN_FIELD_REF_SIZE;        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+		} else {
+			/* Fetch at most ext-&gt;max_len of the column.
+			The column should be non-empty.  However,
+			trx_rollback_or_clean_all_recovered() may try to
+			access a half-deleted BLOB if the server previously
+			crashed during the execution of
+			btr_free_externally_stored_field(). */
+<span style = "background-color:#fdd">			ext-&gt;len[i] = btr_copy_externally_stored_field_prefix(        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+				buf, ext-&gt;max_len, zip_size, field, f_len);
+		}
+	}
+}
+
+/********************************************************************//**
+Creates a cache of column prefixes of externally stored columns.
+@return	own: column prefix cache */
+UNIV_INTERN
+row_ext_t*
+row_ext_create(
+/*===========*/
+	ulint		n_ext,	/*!&lt; in: number of externally stored columns */
+	const ulint*	ext,	/*!&lt; in: col_no's of externally stored columns
+				in the InnoDB table object, as reported by
+				dict_col_get_no(); NOT relative to the records
+				in the clustered index */
+	ulint		flags,	/*!&lt; in: table-&gt;flags */
+	const dtuple_t*	tuple,	/*!&lt; in: data tuple containing the field
+				references of the externally stored
+				columns; must be indexed by col_no;
+				the clustered index record must be
+				covered by a lock or a page latch
+				to prevent deletion (rollback or purge). */
+	mem_heap_t*	heap)	/*!&lt; in: heap where created */
+{
+	ulint		i;
+	ulint		zip_size = dict_tf_get_zip_size(flags);
+
+	row_ext_t*	ret;
+
+	ut_ad(n_ext &gt; 0);
+
+	ret = static_cast&lt;row_ext_t*&gt;(
+		mem_heap_alloc(heap,
+			       (sizeof *ret) + (n_ext - 1) * sizeof ret-&gt;len));
+
+	ut_ad(ut_is_2pow(zip_size));
+	ut_ad(zip_size &lt;= UNIV_ZIP_SIZE_MAX);
+
+	ret-&gt;n_ext = n_ext;
+	ret-&gt;ext = ext;
+	ret-&gt;max_len = DICT_MAX_FIELD_LEN_BY_FORMAT_FLAG(flags);
+
+	ret-&gt;buf = static_cast&lt;byte*&gt;(
+		mem_heap_alloc(heap, n_ext * ret-&gt;max_len));
+
+#ifdef UNIV_DEBUG
+	memset(ret-&gt;buf, 0xaa, n_ext * ret-&gt;max_len);
+	UNIV_MEM_ALLOC(ret-&gt;buf, n_ext * ret-&gt;max_len);
+#endif
+
+	/* Fetch the BLOB prefixes */
+	for (i = 0; i &lt; n_ext; i++) {
+		const dfield_t*	dfield;
+
+		dfield = dtuple_get_nth_field(tuple, ext[i]);
+		row_ext_cache_fill(ret, i, zip_size, dfield);
+	}
+
+	return(ret);
+}
+      </pre>
+    </body>
+</html>

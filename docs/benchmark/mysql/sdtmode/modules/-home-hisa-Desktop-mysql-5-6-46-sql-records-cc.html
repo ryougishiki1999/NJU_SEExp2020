@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/sql/records.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2017, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software Foundation,
+   51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
+
+/**
+  @file
+
+  @brief
+  Functions for easy reading of records, possible through a cache
+*/
+
+#include "records.h"
+#include "sql_priv.h"
+#include "records.h"
+#include "sql_list.h"
+#include "filesort.h"            // filesort_free_buffers
+#include "opt_range.h"                          // SQL_SELECT
+#include "sql_class.h"                          // THD
+#include "sql_select.h"          // JOIN_TAB
+
+
+static int rr_quick(READ_RECORD *info);
+int rr_sequential(READ_RECORD *info);
+static int rr_from_tempfile(READ_RECORD *info);
+static int rr_unpack_from_tempfile(READ_RECORD *info);
+static int rr_unpack_from_buffer(READ_RECORD *info);
+static int rr_from_pointers(READ_RECORD *info);
+static int rr_from_cache(READ_RECORD *info);
+static int init_rr_cache(THD *thd, READ_RECORD *info);
+static int rr_index_first(READ_RECORD *info);
+static int rr_index_last(READ_RECORD *info);
+static int rr_index(READ_RECORD *info);
+static int rr_index_desc(READ_RECORD *info);
+
+
+/**
+  Initialize READ_RECORD structure to perform full index scan in desired 
+  direction using read_record.read_record() interface
+
+    This function has been added at late stage and is used only by
+    UPDATE/DELETE. Other statements perform index scans using
+    join_read_first/next functions.
+
+  @param info         READ_RECORD structure to initialize.
+  @param thd          Thread handle
+  @param table        Table to be accessed
+  @param print_error  If true, call table-&gt;file-&gt;print_error() if an error
+                      occurs (except for end-of-records error)
+  @param idx          index to scan
+  @param reverse      Scan in the reverse direction
+
+  @retval true   error
+  @retval false  success
+*/
+
+bool init_read_record_idx(READ_RECORD *info, THD *thd, TABLE *table,
+                          bool print_error, uint idx, bool reverse)
+{
+  int error;
+  empty_record(table);
+  memset(info, 0, sizeof(*info));
+  info-&gt;thd= thd;
+  info-&gt;table= table;
+  info-&gt;record= table-&gt;record[0];
+  info-&gt;print_error= print_error;
+  info-&gt;unlock_row= rr_unlock_row;
+
+  table-&gt;status=0;			/* And it's always found */
+  if (!table-&gt;file-&gt;inited &amp;&amp;
+      (error= table-&gt;file-&gt;ha_index_init(idx, 1)))
+  {
+    if (print_error)
+      table-&gt;file-&gt;print_error(error, MYF(0));
+    return true;
+  }
+
+  /* read_record will be changed to rr_index in rr_index_first */
+  info-&gt;read_record= reverse ? rr_index_last : rr_index_first;
+  return false;
+}
+
+
+/*
+  init_read_record is used to scan by using a number of different methods.
+  Which method to use is set-up in this call so that later calls to
+  the info-&gt;read_record will call the appropriate method using a function
+  pointer.
+
+  There are five methods that relate completely to the sort function
+  filesort. The result of a filesort is retrieved using read_record
+  calls. The other two methods are used for normal table access.
+
+  The filesort will produce references to the records sorted, these
+  references can be stored in memory or in a temporary file.
+
+  The temporary file is normally used when the references doesn't fit into
+  a properly sized memory buffer. For most small queries the references
+  are stored in the memory buffer.
+  SYNOPSIS
+    init_read_record()
+      info              OUT read structure
+      thd               Thread handle
+      table             Table the data [originally] comes from.
+      select            SQL_SELECT structure. We may select-&gt;quick or 
+                        select-&gt;file as data source
+      use_record_cache  Call file-&gt;extra_opt(HA_EXTRA_CACHE,...)
+                        if we're going to do sequential read and some
+                        additional conditions are satisfied.
+      print_error       Copy this to info-&gt;print_error
+      disable_rr_cache  Don't use rr_from_cache (used by sort-union
+                        index-merge which produces rowid sequences that 
+                        are already ordered)
+
+  DESCRIPTION
+    This function sets up reading data via one of the methods:
+
+  The temporary file is also used when performing an update where a key is
+  modified.
+
+  Methods used when ref's are in memory (using rr_from_pointers):
+    rr_unpack_from_buffer:
+    ----------------------
+      This method is used when table-&gt;sort.addon_field is allocated.
+      This is allocated for most SELECT queries not involving any BLOB's.
+      In this case the records are fetched from a memory buffer.
+    rr_from_pointers:
+    -----------------
+      Used when the above is not true, UPDATE, DELETE and so forth and
+      SELECT's involving BLOB's. It is also used when the addon_field
+      buffer is not allocated due to that its size was bigger than the
+      session variable max_length_for_sort_data.
+      In this case the record data is fetched from the handler using the
+      saved reference using the rnd_pos handler call.
+
+  Methods used when ref's are in a temporary file (using rr_from_tempfile)
+    rr_unpack_from_tempfile:
+    ------------------------
+      Same as rr_unpack_from_buffer except that references are fetched from
+      temporary file. Should obviously not really happen other than in
+      strange configurations.
+
+    rr_from_tempfile:
+    -----------------
+      Same as rr_from_pointers except that references are fetched from
+      temporary file instead of from 
+    rr_from_cache:
+    --------------
+      This is a special variant of rr_from_tempfile that can be used for
+      handlers that is not using the HA_FAST_KEY_READ table flag. Instead
+      of reading the references one by one from the temporary file it reads
+      a set of them, sorts them and reads all of them into a buffer which
+      is then used for a number of subsequent calls to rr_from_cache.
+      It is only used for SELECT queries and a number of other conditions
+      on table size.
+
+  All other accesses use either index access methods (rr_quick) or a full
+  table scan (rr_sequential).
+  rr_quick:
+  ---------
+    rr_quick uses one of the QUICK_SELECT classes in opt_range.cc to
+    perform an index scan. There are loads of functionality hidden
+    in these quick classes. It handles all index scans of various kinds.
+  rr_sequential:
+  --------------
+    This is the most basic access method of a table using rnd_init,
+    ha_rnd_next and rnd_end. No indexes are used.
+
+  @retval true   error
+  @retval false  success
+*/
+bool init_read_record(READ_RECORD *info,THD *thd, TABLE *table,
+		      SQL_SELECT *select,
+		      int use_record_cache, bool print_error, 
+                      bool disable_rr_cache)
+{
+  int error= 0;
+  IO_CACHE *tempfile;
+  DBUG_ENTER("init_read_record");
+
+  memset(info, 0, sizeof(*info));
+  info-&gt;thd=thd;
+  info-&gt;table=table;
+  info-&gt;forms= &amp;info-&gt;table;		/* Only one table */
+  
+  if (table-&gt;s-&gt;tmp_table == NON_TRANSACTIONAL_TMP_TABLE &amp;&amp;
+      !table-&gt;sort.addon_field)
+    (void) table-&gt;file-&gt;extra(HA_EXTRA_MMAP);
+  
+  if (table-&gt;sort.addon_field)
+  {
+    info-&gt;rec_buf= table-&gt;sort.addon_buf;
+    info-&gt;ref_length= table-&gt;sort.addon_length;
+  }
+  else
+  {
+    empty_record(table);
+    info-&gt;record= table-&gt;record[0];
+    info-&gt;ref_length= table-&gt;file-&gt;ref_length;
+  }
+  info-&gt;select=select;
+  info-&gt;print_error=print_error;
+  info-&gt;unlock_row= rr_unlock_row;
+  info-&gt;ignore_not_found_rows= 0;
+  table-&gt;status=0;			/* And it's always found */
+
+  if (select &amp;&amp; my_b_inited(&amp;select-&gt;file))
+    tempfile= &amp;select-&gt;file;
+  else if (select &amp;&amp; select-&gt;quick &amp;&amp; select-&gt;quick-&gt;clustered_pk_range())
+  {
+    /*
+      In case of QUICK_INDEX_MERGE_SELECT with clustered pk range we have to
+      use its own access method(i.e QUICK_INDEX_MERGE_SELECT::get_next()) as
+      sort file does not contain rowids which satisfy clustered pk range.
+    */
+    tempfile= 0;
+  }
+  else
+    tempfile= table-&gt;sort.io_cache;
+  if (tempfile &amp;&amp; my_b_inited(tempfile)) // Test if ref-records was used
+  {
+    DBUG_PRINT("info",("using rr_from_tempfile"));
+    info-&gt;read_record= (table-&gt;sort.addon_field ?
+                        rr_unpack_from_tempfile : rr_from_tempfile);
+    info-&gt;io_cache=tempfile;
+    reinit_io_cache(info-&gt;io_cache,READ_CACHE,0L,0,0);
+    info-&gt;ref_pos=table-&gt;file-&gt;ref;
+    if (!table-&gt;file-&gt;inited &amp;&amp;
+        (error= table-&gt;file-&gt;ha_rnd_init(0)))
+      goto err;
+
+    /*
+      table-&gt;sort.addon_field is checked because if we use addon fields,
+      it doesn't make sense to use cache - we don't read from the table
+      and table-&gt;sort.io_cache is read sequentially
+    */
+    if (!disable_rr_cache &amp;&amp;
+        !table-&gt;sort.addon_field &amp;&amp;
+	thd-&gt;variables.read_rnd_buff_size &amp;&amp;
+	!(table-&gt;file-&gt;ha_table_flags() &amp; HA_FAST_KEY_READ) &amp;&amp;
+	(table-&gt;db_stat &amp; HA_READ_ONLY ||
+	 table-&gt;reginfo.lock_type &lt;= TL_READ_NO_INSERT) &amp;&amp;
+	(ulonglong) table-&gt;s-&gt;reclength* (table-&gt;file-&gt;stats.records+
+                                          table-&gt;file-&gt;stats.deleted) &gt;
+	(ulonglong) MIN_FILE_LENGTH_TO_USE_ROW_CACHE &amp;&amp;
+	info-&gt;io_cache-&gt;end_of_file/info-&gt;ref_length * table-&gt;s-&gt;reclength &gt;
+	(my_off_t) MIN_ROWS_TO_USE_TABLE_CACHE &amp;&amp;
+	!table-&gt;s-&gt;blob_fields &amp;&amp;
+        info-&gt;ref_length &lt;= MAX_REFLENGTH)
+    {
+      if (init_rr_cache(thd, info))
+        goto skip_caching;
+      DBUG_PRINT("info",("using rr_from_cache"));
+      info-&gt;read_record=rr_from_cache;
+    }
+  }
+  else if (select &amp;&amp; select-&gt;quick)
+  {
+    DBUG_PRINT("info",("using rr_quick"));
+    info-&gt;read_record=rr_quick;
+  }
+  else if (table-&gt;sort.record_pointers)
+  {
+    DBUG_PRINT("info",("using record_pointers"));
+    if ((error= table-&gt;file-&gt;ha_rnd_init(0)))
+      goto err;
+    info-&gt;cache_pos=table-&gt;sort.record_pointers;
+    info-&gt;cache_end=info-&gt;cache_pos+ 
+                    table-&gt;sort.found_records*info-&gt;ref_length;
+    info-&gt;read_record= (table-&gt;sort.addon_field ?
+                        rr_unpack_from_buffer : rr_from_pointers);
+  }
+  else
+  {
+    DBUG_PRINT("info",("using rr_sequential"));
+    info-&gt;read_record=rr_sequential;
+    if ((error= table-&gt;file-&gt;ha_rnd_init(1)))
+      goto err;
+    /* We can use record cache if we don't update dynamic length tables */
+    if (!table-&gt;no_cache &amp;&amp;
+	(use_record_cache &gt; 0 ||
+	 (int) table-&gt;reginfo.lock_type &lt;= (int) TL_READ_HIGH_PRIORITY ||
+	 !(table-&gt;s-&gt;db_options_in_use &amp; HA_OPTION_PACK_RECORD) ||
+	 (use_record_cache &lt; 0 &amp;&amp;
+	  !(table-&gt;file-&gt;ha_table_flags() &amp; HA_NOT_DELETE_WITH_CACHE))))
+      (void) table-&gt;file-&gt;extra_opt(HA_EXTRA_CACHE,
+				  thd-&gt;variables.read_buff_size);
+  }
+
+skip_caching:
+  /* 
+    Do condition pushdown for UPDATE/DELETE.
+    TODO: Remove this from here as it causes two condition pushdown calls 
+    when we're running a SELECT and the condition cannot be pushed down.
+  */
+  if (thd-&gt;optimizer_switch_flag(OPTIMIZER_SWITCH_ENGINE_CONDITION_PUSHDOWN) &amp;&amp;
+      select &amp;&amp; select-&gt;cond &amp;&amp; 
+      (select-&gt;cond-&gt;used_tables() &amp; table-&gt;map) &amp;&amp;
+      !table-&gt;file-&gt;pushed_cond)
+    table-&gt;file-&gt;cond_push(select-&gt;cond);
+
+  DBUG_RETURN(false);
+
+err:
+  if (print_error)
+    table-&gt;file-&gt;print_error(error, MYF(0));     
+  DBUG_RETURN(true);
+} /* init_read_record */
+
+
+
+void end_read_record(READ_RECORD *info)
+{                   /* free cache if used */
+  if (info-&gt;cache)
+  {
+    my_free_lock(info-&gt;cache);
+    info-&gt;cache=0;
+  }
+  if (info-&gt;table &amp;&amp; info-&gt;table-&gt;key_read)
+  {
+    info-&gt;table-&gt;set_keyread(FALSE);
+  }
+  if (info-&gt;table &amp;&amp; info-&gt;table-&gt;is_created())
+  {
+    filesort_free_buffers(info-&gt;table,0);
+    (void) info-&gt;table-&gt;file-&gt;extra(HA_EXTRA_NO_CACHE);
+    if (info-&gt;read_record != rr_quick) // otherwise quick_range does it
+      (void) info-&gt;table-&gt;file-&gt;ha_index_or_rnd_end();
+    info-&gt;table=0;
+  }
+}
+
+static int rr_handle_error(READ_RECORD *info, int error)
+{
+  if (info-&gt;thd-&gt;killed)
+  {
+    info-&gt;thd-&gt;send_kill_message();
+    return 1;
+  }
+
+  if (error == HA_ERR_END_OF_FILE)
+    error= -1;
+  else
+  {
+    if (info-&gt;print_error)
+      info-&gt;table-&gt;file-&gt;print_error(error, MYF(0));
+    if (error &lt; 0)                            // Fix negative BDB errno
+      error= 1;
+  }
+  return error;
+}
+
+
+/** Read a record from head-database. */
+
+static int rr_quick(READ_RECORD *info)
+{
+  int tmp;
+  while ((tmp= info-&gt;select-&gt;quick-&gt;get_next()))
+  {
+    if (info-&gt;thd-&gt;killed || (tmp != HA_ERR_RECORD_DELETED))
+    {
+      tmp= rr_handle_error(info, tmp);
+      break;
+    }
+  }
+  return tmp;
+}
+
+
+/**
+  Reads first row in an index scan.
+
+  @param info  	Scan info
+
+  @retval
+    0   Ok
+  @retval
+    -1   End of records
+  @retval
+    1   Error
+*/
+
+static int rr_index_first(READ_RECORD *info)
+{
+  int tmp= info-&gt;table-&gt;file-&gt;ha_index_first(info-&gt;record);
+  info-&gt;read_record= rr_index;
+  if (tmp)
+    tmp= rr_handle_error(info, tmp);
+  return tmp;
+}
+
+
+/**
+  Reads last row in an index scan.
+
+  @param info  	Scan info
+
+  @retval
+    0   Ok
+  @retval
+    -1   End of records
+  @retval
+    1   Error
+*/
+
+static int rr_index_last(READ_RECORD *info)
+{
+  int tmp= info-&gt;table-&gt;file-&gt;ha_index_last(info-&gt;record);
+  info-&gt;read_record= rr_index_desc;
+  if (tmp)
+    tmp= rr_handle_error(info, tmp);
+  return tmp;
+}
+
+
+/**
+  Reads index sequentially after first row.
+
+  Read the next index record (in forward direction) and translate return
+  value.
+
+  @param info  Scan info
+
+  @retval
+    0   Ok
+  @retval
+    -1   End of records
+  @retval
+    1   Error
+*/
+
+static int rr_index(READ_RECORD *info)
+{
+  int tmp= info-&gt;table-&gt;file-&gt;ha_index_next(info-&gt;record);
+  if (tmp)
+    tmp= rr_handle_error(info, tmp);
+  return tmp;
+}
+
+
+/**
+  Reads index sequentially from the last row to the first.
+
+  Read the prev index record (in backward direction) and translate return
+  value.
+
+  @param info  Scan info
+
+  @retval
+    0   Ok
+  @retval
+    -1   End of records
+  @retval
+    1   Error
+*/
+
+static int rr_index_desc(READ_RECORD *info)
+{
+  int tmp= info-&gt;table-&gt;file-&gt;ha_index_prev(info-&gt;record);
+  if (tmp)
+    tmp= rr_handle_error(info, tmp);
+  return tmp;
+}
+
+
+int rr_sequential(READ_RECORD *info)
+{
+  int tmp;
+  while ((tmp=info-&gt;table-&gt;file-&gt;ha_rnd_next(info-&gt;record)))
+  {
+    /*
+      ha_rnd_next can return RECORD_DELETED for MyISAM when one thread is
+      reading and another deleting without locks.
+    */
+    if (info-&gt;thd-&gt;killed || (tmp != HA_ERR_RECORD_DELETED))
+    {
+      tmp= rr_handle_error(info, tmp);
+      break;
+    }
+  }
+  return tmp;
+}
+
+
+static int rr_from_tempfile(READ_RECORD *info)
+{
+  int tmp;
+  for (;;)
+  {
+    if (my_b_read(info-&gt;io_cache,info-&gt;ref_pos,info-&gt;ref_length))
+      return -1;					/* End of file */
+    if (!(tmp=info-&gt;table-&gt;file-&gt;ha_rnd_pos(info-&gt;record,info-&gt;ref_pos)))
+      break;
+    /* The following is extremely unlikely to happen */
+    if (tmp == HA_ERR_RECORD_DELETED ||
+        (tmp == HA_ERR_KEY_NOT_FOUND &amp;&amp; info-&gt;ignore_not_found_rows))
+      continue;
+    tmp= rr_handle_error(info, tmp);
+    break;
+  }
+  return tmp;
+} /* rr_from_tempfile */
+
+
+/**
+  Read a result set record from a temporary file after sorting.
+
+  The function first reads the next sorted record from the temporary file.
+  into a buffer. If a success it calls a callback function that unpacks 
+  the fields values use in the result set from this buffer into their
+  positions in the regular record buffer.
+
+  @param info          Reference to the context including record descriptors
+
+  @retval
+    0   Record successfully read.
+  @retval
+    -1   There is no record to be read anymore.
+*/
+
+static int rr_unpack_from_tempfile(READ_RECORD *info)
+{
+  if (my_b_read(info-&gt;io_cache, info-&gt;rec_buf, info-&gt;ref_length))
+    return -1;
+  TABLE *table= info-&gt;table;
+  (*table-&gt;sort.unpack)(table-&gt;sort.addon_field, info-&gt;rec_buf);
+
+  return 0;
+}
+
+static int rr_from_pointers(READ_RECORD *info)
+{
+  int tmp;
+  uchar *cache_pos;
+
+  for (;;)
+  {
+    if (info-&gt;cache_pos == info-&gt;cache_end)
+      return -1;					/* End of file */
+    cache_pos= info-&gt;cache_pos;
+    info-&gt;cache_pos+= info-&gt;ref_length;
+
+    if (!(tmp=info-&gt;table-&gt;file-&gt;ha_rnd_pos(info-&gt;record,cache_pos)))
+      break;
+
+    /* The following is extremely unlikely to happen */
+    if (tmp == HA_ERR_RECORD_DELETED ||
+        (tmp == HA_ERR_KEY_NOT_FOUND &amp;&amp; info-&gt;ignore_not_found_rows))
+      continue;
+    tmp= rr_handle_error(info, tmp);
+    break;
+  }
+  return tmp;
+}
+
+/**
+  Read a result set record from a buffer after sorting.
+
+  The function first reads the next sorted record from the sort buffer.
+  If a success it calls a callback function that unpacks 
+  the fields values use in the result set from this buffer into their
+  positions in the regular record buffer.
+
+  @param info          Reference to the context including record descriptors
+
+  @retval
+    0   Record successfully read.
+  @retval
+    -1   There is no record to be read anymore.
+*/
+
+static int rr_unpack_from_buffer(READ_RECORD *info)
+{
+  if (info-&gt;cache_pos == info-&gt;cache_end)
+    return -1;                      /* End of buffer */
+  TABLE *table= info-&gt;table;
+  (*table-&gt;sort.unpack)(table-&gt;sort.addon_field, info-&gt;cache_pos);
+  info-&gt;cache_pos+= info-&gt;ref_length;
+
+  return 0;
+}
+	/* cacheing of records from a database */
+
+/**
+  Initialize caching of records from temporary file.
+  
+  @retval
+    0 OK, use caching.
+    1 Buffer is too small, or cannot be allocated.
+      Skip caching, and read records directly from temporary file.
+ */
+static int init_rr_cache(THD *thd, READ_RECORD *info)
+{
+  uint rec_cache_size;
+  DBUG_ENTER("init_rr_cache");
+
+  READ_RECORD info_copy= *info;
+  info-&gt;struct_length= 3+MAX_REFLENGTH;
+  info-&gt;reclength= ALIGN_SIZE(info-&gt;table-&gt;s-&gt;reclength+1);
+  if (info-&gt;reclength &lt; info-&gt;struct_length)
+    info-&gt;reclength= ALIGN_SIZE(info-&gt;struct_length);
+
+  info-&gt;error_offset= info-&gt;table-&gt;s-&gt;reclength;
+  info-&gt;cache_records= (thd-&gt;variables.read_rnd_buff_size /
+                        (info-&gt;reclength+info-&gt;struct_length));
+  rec_cache_size= info-&gt;cache_records*info-&gt;reclength;
+  info-&gt;rec_cache_size= info-&gt;cache_records*info-&gt;ref_length;
+
+  if (info-&gt;cache_records &lt;= 2 ||
+      !(info-&gt;cache=(uchar*) my_malloc_lock(rec_cache_size+info-&gt;cache_records*
+					   info-&gt;struct_length,
+					   MYF(0))))
+  {
+    *info= info_copy;
+    DBUG_RETURN(1);
+  }
+  DBUG_PRINT("info",("Allocated buffert for %d records",info-&gt;cache_records));
+  info-&gt;read_positions=info-&gt;cache+rec_cache_size;
+  info-&gt;cache_pos=info-&gt;cache_end=info-&gt;cache;
+  DBUG_RETURN(0);
+} /* init_rr_cache */
+
+
+static int rr_cmp(const void *p_ref_length, const void *a, const void *b)
+{
+  size_t ref_length= *(static_cast&lt;size_t*&gt;(const_cast&lt;void*&gt;(p_ref_length)));
+  DBUG_ASSERT(ref_length &lt;= MAX_REFLENGTH);
+  return memcmp(a, b, ref_length);
+}
+
+
+static int rr_from_cache(READ_RECORD *info)
+{
+  reg1 uint i;
+  ulong length;
+  my_off_t rest_of_file;
+  int16 error;
+  uchar *position,*ref_position,*record_pos;
+  ulong record;
+
+  for (;;)
+  {
+    if (info-&gt;cache_pos != info-&gt;cache_end)
+    {
+      if (info-&gt;cache_pos[info-&gt;error_offset])
+      {
+	shortget(error,info-&gt;cache_pos);
+	if (info-&gt;print_error)
+	  info-&gt;table-&gt;file-&gt;print_error(error,MYF(0));
+      }
+      else
+      {
+	error=0;
+	memcpy(info-&gt;record,info-&gt;cache_pos,
+               (size_t) info-&gt;table-&gt;s-&gt;reclength);
+      }
+      info-&gt;cache_pos+=info-&gt;reclength;
+      return ((int) error);
+    }
+    length=info-&gt;rec_cache_size;
+    rest_of_file=info-&gt;io_cache-&gt;end_of_file - my_b_tell(info-&gt;io_cache);
+    if ((my_off_t) length &gt; rest_of_file)
+      length= (ulong) rest_of_file;
+    if (!length || my_b_read(info-&gt;io_cache,info-&gt;cache,length))
+    {
+      DBUG_PRINT("info",("Found end of file"));
+      return -1;			/* End of file */
+    }
+
+    length/=info-&gt;ref_length;
+    position=info-&gt;cache;
+    ref_position=info-&gt;read_positions;
+    for (i=0 ; i &lt; length ; i++,position+=info-&gt;ref_length)
+    {
+      memcpy(ref_position,position,(size_t) info-&gt;ref_length);
+      ref_position+=MAX_REFLENGTH;
+      int3store(ref_position,(long) i);
+      ref_position+=3;
+    }
+    size_t ref_length= info-&gt;ref_length;
+    my_qsort2(info-&gt;read_positions, length, info-&gt;struct_length,
+              rr_cmp, &amp;ref_length);
+
+    position=info-&gt;read_positions;
+    for (i=0 ; i &lt; length ; i++)
+    {
+      memcpy(info-&gt;ref_pos,position,(size_t) info-&gt;ref_length);
+      position+=MAX_REFLENGTH;
+      record=uint3korr(position);
+      position+=3;
+      record_pos=info-&gt;cache+record*info-&gt;reclength;
+      error= (int16) info-&gt;table-&gt;file-&gt;ha_rnd_pos(record_pos, info-&gt;ref_pos);
+      if (error)
+      {
+	record_pos[info-&gt;error_offset]=1;
+	shortstore(record_pos,error);
+	DBUG_PRINT("error",("Got error: %d:%d when reading row",
+			    my_errno, (int) error));
+      }
+      else
+	record_pos[info-&gt;error_offset]=0;
+    }
+    info-&gt;cache_end=(info-&gt;cache_pos=info-&gt;cache)+length*info-&gt;reclength;
+  }
+} /* rr_from_cache */
+
+
+/**
+  The default implementation of unlock-row method of READ_RECORD,
+  used in all access methods.
+*/
+
+void rr_unlock_row(st_join_table *tab)
+{
+  READ_RECORD *info= &amp;tab-&gt;read_record;
+  info-&gt;table-&gt;file-&gt;unlock_row();
+}
+
+
+      </pre>
+    </body>
+</html>

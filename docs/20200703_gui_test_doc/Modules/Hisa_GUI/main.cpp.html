@@ -1,0 +1,31 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>main.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "MainWindow/mainwindow.h"
+#include &lt;QApplication&gt;
+
+/*****************************************************************************
+This is source coode of Gui Module of HiSA(Higlhly intelligent Static Analyzer). 
+Gui consists of 7 child modules
+Thay are MainWindow,ExplanationDialog,DirTreeDialog,History,HistoryDialog,(Programmmed by Ke Cheng)
+Preprocessor and FileSyetem.(Programmmed by Ruoheng Zhou)
+******************************************************************************/
+
+int main(int argc, char *argv[])
+<span style = "background-color:#dfd">{
+    QApplication a(argc, argv);</span>
+    bool is_successful;
+<span style = "background-color:#dfd">    MainWindow w(is_successful);
+    if (is_successful)w.show();
+    return a.exec();
+}</span></pre>
+	</body>
+</html>

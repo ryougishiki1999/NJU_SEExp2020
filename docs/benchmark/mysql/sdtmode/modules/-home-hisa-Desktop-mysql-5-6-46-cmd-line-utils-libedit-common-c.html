@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/cmd-line-utils/libedit/common.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*	$NetBSD: common.c,v 1.28 2011/07/29 20:58:07 christos Exp $	*/
+
+/*-
+ * Copyright (c) 1992, 1993
+ *	The Regents of the University of California.  All rights reserved.
+ *
+ * This code is derived from software contributed to Berkeley by
+ * Christos Zoulas of Cornell University.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+#include "config.h"
+#if !defined(lint) &amp;&amp; !defined(SCCSID)
+#if 0
+static char sccsid[] = "@(#)common.c	8.1 (Berkeley) 6/4/93";
+#else
+#endif
+#endif /* not lint &amp;&amp; not SCCSID */
+
+/*
+ * common.c: Common Editor functions
+ */
+#include "el.h"
+
+/* ed_end_of_file():
+ *	Indicate end of file
+ *	[^D]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_end_of_file(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	re_goto_bottom(el);
+	*el-&gt;el_line.lastchar = '\0';
+	return CC_EOF;
+}
+
+
+/* ed_insert():
+ *	Add character to the line
+ *	Insert a character [bound to all insert keys]
+ */
+protected el_action_t
+ed_insert(EditLine *el, Int c)
+{
+	int count = el-&gt;el_state.argument;
+
+	if (c == '\0')
+		return CC_ERROR;
+
+	if (el-&gt;el_line.lastchar + el-&gt;el_state.argument &gt;=
+	    el-&gt;el_line.limit) {
+		/* end of buffer space, try to allocate more */
+		if (!ch_enlargebufs(el, (size_t) count))
+			return CC_ERROR;	/* error allocating more */
+	}
+
+	if (count == 1) {
+		if (el-&gt;el_state.inputmode == MODE_INSERT
+		    || el-&gt;el_line.cursor &gt;= el-&gt;el_line.lastchar)
+			c_insert(el, 1);
+
+		*el-&gt;el_line.cursor++ = c;
+		re_fastaddc(el);		/* fast refresh for one char. */
+	} else {
+		if (el-&gt;el_state.inputmode != MODE_REPLACE_1)
+			c_insert(el, el-&gt;el_state.argument);
+
+		while (count-- &amp;&amp; el-&gt;el_line.cursor &lt; el-&gt;el_line.lastchar)
+			*el-&gt;el_line.cursor++ = c;
+		re_refresh(el);
+	}
+
+	if (el-&gt;el_state.inputmode == MODE_REPLACE_1)
+		return vi_command_mode(el, 0);
+
+	return CC_NORM;
+}
+
+
+/* ed_delete_prev_word():
+ *	Delete from beginning of current word to cursor
+ *	[M-^?] [^W]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_delete_prev_word(EditLine *el, Int c __attribute__((__unused__)))
+{
+	Char *cp, *p, *kp;
+
+	if (el-&gt;el_line.cursor == el-&gt;el_line.buffer)
+		return CC_ERROR;
+
+	cp = c__prev_word(el-&gt;el_line.cursor, el-&gt;el_line.buffer,
+	    el-&gt;el_state.argument, ce__isword);
+
+	for (p = cp, kp = el-&gt;el_chared.c_kill.buf; p &lt; el-&gt;el_line.cursor; p++)
+		*kp++ = *p;
+	el-&gt;el_chared.c_kill.last = kp;
+
+	c_delbefore(el, (int)(el-&gt;el_line.cursor - cp));/* delete before dot */
+	el-&gt;el_line.cursor = cp;
+	if (el-&gt;el_line.cursor &lt; el-&gt;el_line.buffer)
+		el-&gt;el_line.cursor = el-&gt;el_line.buffer; /* bounds check */
+	return CC_REFRESH;
+}
+
+
+/* ed_delete_next_char():
+ *	Delete character under cursor
+ *	[^D] [x]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_delete_next_char(EditLine *el, Int c __attribute__((__unused__)))
+{
+#ifdef DEBUG_EDIT
+#define	EL	el-&gt;el_line
+	(void) fprintf(el-&gt;el_errlfile,
+	    "\nD(b: %x(%s)  c: %x(%s) last: %x(%s) limit: %x(%s)\n",
+	    EL.buffer, EL.buffer, EL.cursor, EL.cursor, EL.lastchar,
+	    EL.lastchar, EL.limit, EL.limit);
+#endif
+	if (el-&gt;el_line.cursor == el-&gt;el_line.lastchar) {
+			/* if I'm at the end */
+		if (el-&gt;el_map.type == MAP_VI) {
+			if (el-&gt;el_line.cursor == el-&gt;el_line.buffer) {
+				/* if I'm also at the beginning */
+#ifdef KSHVI
+				return CC_ERROR;
+#else
+				/* then do an EOF */
+				terminal_writec(el, c);
+				return CC_EOF;
+#endif
+			} else {
+#ifdef KSHVI
+				el-&gt;el_line.cursor--;
+#else
+				return CC_ERROR;
+#endif
+			}
+		} else {
+			if (el-&gt;el_line.cursor != el-&gt;el_line.buffer)
+				el-&gt;el_line.cursor--;
+			else
+				return CC_ERROR;
+		}
+	}
+	c_delafter(el, el-&gt;el_state.argument);	/* delete after dot */
+	if (el-&gt;el_line.cursor &gt;= el-&gt;el_line.lastchar &amp;&amp;
+	    el-&gt;el_line.cursor &gt; el-&gt;el_line.buffer)
+			/* bounds check */
+		el-&gt;el_line.cursor = el-&gt;el_line.lastchar - 1;
+	return CC_REFRESH;
+}
+
+
+/* ed_kill_line():
+ *	Cut to the end of line
+ *	[^K] [^K]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_kill_line(EditLine *el, Int c __attribute__((__unused__)))
+{
+	Char *kp, *cp;
+
+	cp = el-&gt;el_line.cursor;
+	kp = el-&gt;el_chared.c_kill.buf;
+	while (cp &lt; el-&gt;el_line.lastchar)
+		*kp++ = *cp++;	/* copy it */
+	el-&gt;el_chared.c_kill.last = kp;
+			/* zap! -- delete to end */
+	el-&gt;el_line.lastchar = el-&gt;el_line.cursor;
+	return CC_REFRESH;
+}
+
+
+/* ed_move_to_end():
+ *	Move cursor to the end of line
+ *	[^E] [^E]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_move_to_end(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	el-&gt;el_line.cursor = el-&gt;el_line.lastchar;
+	if (el-&gt;el_map.type == MAP_VI) {
+		if (el-&gt;el_chared.c_vcmd.action != NOP) {
+			cv_delfini(el);
+			return CC_REFRESH;
+		}
+#ifdef VI_MOVE
+		el-&gt;el_line.cursor--;
+#endif
+	}
+	return CC_CURSOR;
+}
+
+
+/* ed_move_to_beg():
+ *	Move cursor to the beginning of line
+ *	[^A] [^A]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_move_to_beg(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	el-&gt;el_line.cursor = el-&gt;el_line.buffer;
+
+	if (el-&gt;el_map.type == MAP_VI) {
+			/* We want FIRST non space character */
+		while (Isspace(*el-&gt;el_line.cursor))
+			el-&gt;el_line.cursor++;
+		if (el-&gt;el_chared.c_vcmd.action != NOP) {
+			cv_delfini(el);
+			return CC_REFRESH;
+		}
+	}
+	return CC_CURSOR;
+}
+
+
+/* ed_transpose_chars():
+ *	Exchange the character to the left of the cursor with the one under it
+ *	[^T] [^T]
+ */
+protected el_action_t
+ed_transpose_chars(EditLine *el, Int c)
+{
+
+	if (el-&gt;el_line.cursor &lt; el-&gt;el_line.lastchar) {
+		if (el-&gt;el_line.lastchar &lt;= &amp;el-&gt;el_line.buffer[1])
+			return CC_ERROR;
+		else
+			el-&gt;el_line.cursor++;
+	}
+	if (el-&gt;el_line.cursor &gt; &amp;el-&gt;el_line.buffer[1]) {
+		/* must have at least two chars entered */
+<span style = "background-color:#fdd">		c = el-&gt;el_line.cursor[-2];        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+<span style = "background-color:#fdd">		el-&gt;el_line.cursor[-2] = el-&gt;el_line.cursor[-1];        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+		el-&gt;el_line.cursor[-1] = c;
+		return CC_REFRESH;
+	} else
+		return CC_ERROR;
+}
+
+
+/* ed_next_char():
+ *	Move to the right one character
+ *	[^F] [^F]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_next_char(EditLine *el, Int c __attribute__((__unused__)))
+{
+	Char *lim = el-&gt;el_line.lastchar;
+
+	if (el-&gt;el_line.cursor &gt;= lim ||
+	    (el-&gt;el_line.cursor == lim - 1 &amp;&amp;
+	    el-&gt;el_map.type == MAP_VI &amp;&amp;
+	    el-&gt;el_chared.c_vcmd.action == NOP))
+		return CC_ERROR;
+
+	el-&gt;el_line.cursor += el-&gt;el_state.argument;
+	if (el-&gt;el_line.cursor &gt; lim)
+		el-&gt;el_line.cursor = lim;
+
+	if (el-&gt;el_map.type == MAP_VI)
+		if (el-&gt;el_chared.c_vcmd.action != NOP) {
+			cv_delfini(el);
+			return CC_REFRESH;
+		}
+	return CC_CURSOR;
+}
+
+
+/* ed_prev_word():
+ *	Move to the beginning of the current word
+ *	[M-b] [b]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_prev_word(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	if (el-&gt;el_line.cursor == el-&gt;el_line.buffer)
+		return CC_ERROR;
+
+	el-&gt;el_line.cursor = c__prev_word(el-&gt;el_line.cursor,
+	    el-&gt;el_line.buffer,
+	    el-&gt;el_state.argument,
+	    ce__isword);
+
+	if (el-&gt;el_map.type == MAP_VI)
+		if (el-&gt;el_chared.c_vcmd.action != NOP) {
+			cv_delfini(el);
+			return CC_REFRESH;
+		}
+	return CC_CURSOR;
+}
+
+
+/* ed_prev_char():
+ *	Move to the left one character
+ *	[^B] [^B]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_prev_char(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	if (el-&gt;el_line.cursor &gt; el-&gt;el_line.buffer) {
+		el-&gt;el_line.cursor -= el-&gt;el_state.argument;
+		if (el-&gt;el_line.cursor &lt; el-&gt;el_line.buffer)
+			el-&gt;el_line.cursor = el-&gt;el_line.buffer;
+
+		if (el-&gt;el_map.type == MAP_VI)
+			if (el-&gt;el_chared.c_vcmd.action != NOP) {
+				cv_delfini(el);
+				return CC_REFRESH;
+			}
+		return CC_CURSOR;
+	} else
+		return CC_ERROR;
+}
+
+
+/* ed_quoted_insert():
+ *	Add the next character typed verbatim
+ *	[^V] [^V]
+ */
+protected el_action_t
+ed_quoted_insert(EditLine *el, Int c)
+{
+	int num;
+	Char tc;
+
+	tty_quotemode(el);
+	num = FUN(el,getc)(el, &amp;tc);
+	c = tc;
+	tty_noquotemode(el);
+	if (num == 1)
+		return ed_insert(el, c);
+	else
+		return ed_end_of_file(el, 0);
+}
+
+
+/* ed_digit():
+ *	Adds to argument or enters a digit
+ */
+protected el_action_t
+ed_digit(EditLine *el, Int c)
+{
+
+	if (!Isdigit(c))
+		return CC_ERROR;
+
+	if (el-&gt;el_state.doingarg) {
+			/* if doing an arg, add this in... */
+		if (el-&gt;el_state.lastcmd == EM_UNIVERSAL_ARGUMENT)
+			el-&gt;el_state.argument = c - '0';
+		else {
+			if (el-&gt;el_state.argument &gt; 1000000)
+				return CC_ERROR;
+			el-&gt;el_state.argument =
+			    (el-&gt;el_state.argument * 10) + (c - '0');
+		}
+		return CC_ARGHACK;
+	}
+
+	return ed_insert(el, c);
+}
+
+
+/* ed_argument_digit():
+ *	Digit that starts argument
+ *	For ESC-n
+ */
+protected el_action_t
+ed_argument_digit(EditLine *el, Int c)
+{
+
+	if (!Isdigit(c))
+		return CC_ERROR;
+
+	if (el-&gt;el_state.doingarg) {
+		if (el-&gt;el_state.argument &gt; 1000000)
+			return CC_ERROR;
+		el-&gt;el_state.argument = (el-&gt;el_state.argument * 10) +
+		    (c - '0');
+	} else {		/* else starting an argument */
+		el-&gt;el_state.argument = c - '0';
+		el-&gt;el_state.doingarg = 1;
+	}
+	return CC_ARGHACK;
+}
+
+
+/* ed_unassigned():
+ *	Indicates unbound character
+ *	Bound to keys that are not assigned
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_unassigned(EditLine *el __attribute__((__unused__)),
+    Int c __attribute__((__unused__)))
+{
+
+	return CC_ERROR;
+}
+
+
+/**
+ ** TTY key handling.
+ **/
+
+/* ed_tty_sigint():
+ *	Tty interrupt character
+ *	[^C]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_tty_sigint(EditLine *el __attribute__((__unused__)), 
+	      Int c __attribute__((__unused__)))
+{
+
+	return CC_NORM;
+}
+
+
+/* ed_tty_dsusp():
+ *	Tty delayed suspend character
+ *	[^Y]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_tty_dsusp(EditLine *el __attribute__((__unused__)), 
+	     Int c __attribute__((__unused__)))
+{
+
+	return CC_NORM;
+}
+
+
+/* ed_tty_flush_output():
+ *	Tty flush output characters
+ *	[^O]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_tty_flush_output(EditLine *el __attribute__((__unused__)), 
+		    Int c __attribute__((__unused__)))
+{
+
+	return CC_NORM;
+}
+
+
+/* ed_tty_sigquit():
+ *	Tty quit character
+ *	[^\]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_tty_sigquit(EditLine *el __attribute__((__unused__)), 
+	       Int c __attribute__((__unused__)))
+{
+
+	return CC_NORM;
+}
+
+
+/* ed_tty_sigtstp():
+ *	Tty suspend character
+ *	[^Z]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_tty_sigtstp(EditLine *el __attribute__((__unused__)), 
+	       Int c __attribute__((__unused__)))
+{
+
+	return CC_NORM;
+}
+
+
+/* ed_tty_stop_output():
+ *	Tty disallow output characters
+ *	[^S]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_tty_stop_output(EditLine *el __attribute__((__unused__)), 
+		   Int c __attribute__((__unused__)))
+{
+
+	return CC_NORM;
+}
+
+
+/* ed_tty_start_output():
+ *	Tty allow output characters
+ *	[^Q]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_tty_start_output(EditLine *el __attribute__((__unused__)), 
+		    Int c __attribute__((__unused__)))
+{
+
+	return CC_NORM;
+}
+
+
+/* ed_newline():
+ *	Execute command
+ *	[^J]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_newline(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	re_goto_bottom(el);
+	*el-&gt;el_line.lastchar++ = '\n';
+	*el-&gt;el_line.lastchar = '\0';
+	return CC_NEWLINE;
+}
+
+
+/* ed_delete_prev_char():
+ *	Delete the character to the left of the cursor
+ *	[^?]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_delete_prev_char(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	if (el-&gt;el_line.cursor &lt;= el-&gt;el_line.buffer)
+		return CC_ERROR;
+
+	c_delbefore(el, el-&gt;el_state.argument);
+	el-&gt;el_line.cursor -= el-&gt;el_state.argument;
+	if (el-&gt;el_line.cursor &lt; el-&gt;el_line.buffer)
+		el-&gt;el_line.cursor = el-&gt;el_line.buffer;
+	return CC_REFRESH;
+}
+
+
+/* ed_clear_screen():
+ *	Clear screen leaving current line at the top
+ *	[^L]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_clear_screen(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	terminal_clear_screen(el);	/* clear the whole real screen */
+	re_clear_display(el);	/* reset everything */
+	return CC_REFRESH;
+}
+
+
+/* ed_redisplay():
+ *	Redisplay everything
+ *	^R
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_redisplay(EditLine *el __attribute__((__unused__)), 
+	     Int c __attribute__((__unused__)))
+{
+
+	return CC_REDISPLAY;
+}
+
+
+/* ed_start_over():
+ *	Erase current line and start from scratch
+ *	[^G]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_start_over(EditLine *el, Int c __attribute__((__unused__)))
+{
+
+	ch_reset(el, 0);
+	return CC_REFRESH;
+}
+
+
+/* ed_sequence_lead_in():
+ *	First character in a bound sequence
+ *	Placeholder for external keys
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_sequence_lead_in(EditLine *el __attribute__((__unused__)), 
+		    Int c __attribute__((__unused__)))
+{
+
+	return CC_NORM;
+}
+
+
+/* ed_prev_history():
+ *	Move to the previous history line
+ *	[^P] [k]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_prev_history(EditLine *el, Int c __attribute__((__unused__)))
+{
+	char beep = 0;
+	int sv_event = el-&gt;el_history.eventno;
+
+	el-&gt;el_chared.c_undo.len = -1;
+	*el-&gt;el_line.lastchar = '\0';		/* just in case */
+
+	if (el-&gt;el_history.eventno == 0) {	/* save the current buffer
+						 * away */
+		(void) Strncpy(el-&gt;el_history.buf, el-&gt;el_line.buffer,
+		    EL_BUFSIZ);
+		el-&gt;el_history.last = el-&gt;el_history.buf +
+		    (el-&gt;el_line.lastchar - el-&gt;el_line.buffer);
+	}
+	el-&gt;el_history.eventno += el-&gt;el_state.argument;
+
+	if (hist_get(el) == CC_ERROR) {
+		if (el-&gt;el_map.type == MAP_VI) {
+			el-&gt;el_history.eventno = sv_event;
+			
+		}
+		beep = 1;
+		/* el-&gt;el_history.eventno was fixed by first call */
+		(void) hist_get(el);
+	}
+	if (beep)
+		return CC_REFRESH_BEEP;
+	return CC_REFRESH;
+}
+
+
+/* ed_next_history():
+ *	Move to the next history line
+ *	[^N] [j]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_next_history(EditLine *el, Int c __attribute__((__unused__)))
+{
+	el_action_t beep = CC_REFRESH, rval;
+
+	el-&gt;el_chared.c_undo.len = -1;
+	*el-&gt;el_line.lastchar = '\0';	/* just in case */
+
+	el-&gt;el_history.eventno -= el-&gt;el_state.argument;
+
+	if (el-&gt;el_history.eventno &lt; 0) {
+		el-&gt;el_history.eventno = 0;
+		beep = CC_REFRESH_BEEP;
+	}
+	rval = hist_get(el);
+	if (rval == CC_REFRESH)
+		return beep;
+	return rval;
+
+}
+
+
+/* ed_search_prev_history():
+ *	Search previous in history for a line matching the current
+ *	next search history [M-P] [K]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_search_prev_history(EditLine *el, Int c __attribute__((__unused__)))
+{
+	const Char *hp;
+	int h;
+	bool_t found = 0;
+
+	el-&gt;el_chared.c_vcmd.action = NOP;
+	el-&gt;el_chared.c_undo.len = -1;
+	*el-&gt;el_line.lastchar = '\0';	/* just in case */
+	if (el-&gt;el_history.eventno &lt; 0) {
+#ifdef DEBUG_EDIT
+		(void) fprintf(el-&gt;el_errfile,
+		    "e_prev_search_hist(): eventno &lt; 0;\n");
+#endif
+		el-&gt;el_history.eventno = 0;
+		return CC_ERROR;
+	}
+	if (el-&gt;el_history.eventno == 0) {
+		(void) Strncpy(el-&gt;el_history.buf, el-&gt;el_line.buffer,
+		    EL_BUFSIZ);
+		el-&gt;el_history.last = el-&gt;el_history.buf +
+		    (el-&gt;el_line.lastchar - el-&gt;el_line.buffer);
+	}
+	if (el-&gt;el_history.ref == NULL)
+		return CC_ERROR;
+
+	hp = HIST_FIRST(el);
+	if (hp == NULL)
+		return CC_ERROR;
+
+	c_setpat(el);		/* Set search pattern !! */
+
+	for (h = 1; h &lt;= el-&gt;el_history.eventno; h++)
+		hp = HIST_NEXT(el);
+
+	while (hp != NULL) {
+#ifdef SDEBUG
+		(void) fprintf(el-&gt;el_errfile, "Comparing with \"%s\"\n", hp);
+#endif
+		if ((Strncmp(hp, el-&gt;el_line.buffer, (size_t)
+			    (el-&gt;el_line.lastchar - el-&gt;el_line.buffer)) ||
+			hp[el-&gt;el_line.lastchar - el-&gt;el_line.buffer]) &amp;&amp;
+		    c_hmatch(el, hp)) {
+			found++;
+			break;
+		}
+		h++;
+		hp = HIST_NEXT(el);
+	}
+
+	if (!found) {
+#ifdef SDEBUG
+		(void) fprintf(el-&gt;el_errfile, "not found\n");
+#endif
+		return CC_ERROR;
+	}
+	el-&gt;el_history.eventno = h;
+
+	return hist_get(el);
+}
+
+
+/* ed_search_next_history():
+ *	Search next in history for a line matching the current
+ *	[M-N] [J]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_search_next_history(EditLine *el, Int c __attribute__((__unused__)))
+{
+	const Char *hp;
+	int h;
+	bool_t found = 0;
+
+	el-&gt;el_chared.c_vcmd.action = NOP;
+	el-&gt;el_chared.c_undo.len = -1;
+	*el-&gt;el_line.lastchar = '\0';	/* just in case */
+
+	if (el-&gt;el_history.eventno == 0)
+		return CC_ERROR;
+
+	if (el-&gt;el_history.ref == NULL)
+		return CC_ERROR;
+
+	hp = HIST_FIRST(el);
+	if (hp == NULL)
+		return CC_ERROR;
+
+	c_setpat(el);		/* Set search pattern !! */
+
+	for (h = 1; h &lt; el-&gt;el_history.eventno &amp;&amp; hp; h++) {
+#ifdef SDEBUG
+		(void) fprintf(el-&gt;el_errfile, "Comparing with \"%s\"\n", hp);
+#endif
+		if ((Strncmp(hp, el-&gt;el_line.buffer, (size_t)
+			    (el-&gt;el_line.lastchar - el-&gt;el_line.buffer)) ||
+			hp[el-&gt;el_line.lastchar - el-&gt;el_line.buffer]) &amp;&amp;
+		    c_hmatch(el, hp))
+			found = h;
+		hp = HIST_NEXT(el);
+	}
+
+	if (!found) {		/* is it the current history number? */
+		if (!c_hmatch(el, el-&gt;el_history.buf)) {
+#ifdef SDEBUG
+			(void) fprintf(el-&gt;el_errfile, "not found\n");
+#endif
+			return CC_ERROR;
+		}
+	}
+	el-&gt;el_history.eventno = found;
+
+	return hist_get(el);
+}
+
+
+/* ed_prev_line():
+ *	Move up one line
+ *	Could be [k] [^p]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_prev_line(EditLine *el, Int c __attribute__((__unused__)))
+{
+	Char *ptr;
+	int nchars = c_hpos(el);
+
+	/*
+         * Move to the line requested
+         */
+	if (*(ptr = el-&gt;el_line.cursor) == '\n')
+		ptr--;
+
+	for (; ptr &gt;= el-&gt;el_line.buffer; ptr--)
+<span style = "background-color:#fdd">		if (*ptr == '\n' &amp;&amp; --el-&gt;el_state.argument &lt;= 0)        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+			break;
+
+	if (el-&gt;el_state.argument &gt; 0)
+		return CC_ERROR;
+
+	/*
+         * Move to the beginning of the line
+         */
+<span style = "background-color:#fdd">	for (ptr--; ptr &gt;= el-&gt;el_line.buffer &amp;&amp; *ptr != '\n'; ptr--)        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+		continue;
+
+	/*
+         * Move to the character requested
+         */
+	for (ptr++;
+<span style = "background-color:#fdd">	    nchars-- &gt; 0 &amp;&amp; ptr &lt; el-&gt;el_line.lastchar &amp;&amp; *ptr != '\n';        out-of-bound array access:Access out-of-bound array element (buffer overflow)</span>
+	    ptr++)
+		continue;
+
+	el-&gt;el_line.cursor = ptr;
+	return CC_CURSOR;
+}
+
+
+/* ed_next_line():
+ *	Move down one line
+ *	Could be [j] [^n]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_next_line(EditLine *el, Int c __attribute__((__unused__)))
+{
+	Char *ptr;
+	int nchars = c_hpos(el);
+
+	/*
+         * Move to the line requested
+         */
+	for (ptr = el-&gt;el_line.cursor; ptr &lt; el-&gt;el_line.lastchar; ptr++)
+		if (*ptr == '\n' &amp;&amp; --el-&gt;el_state.argument &lt;= 0)
+			break;
+
+	if (el-&gt;el_state.argument &gt; 0)
+		return CC_ERROR;
+
+	/*
+         * Move to the character requested
+         */
+	for (ptr++;
+	    nchars-- &gt; 0 &amp;&amp; ptr &lt; el-&gt;el_line.lastchar &amp;&amp; *ptr != '\n';
+	    ptr++)
+		continue;
+
+	el-&gt;el_line.cursor = ptr;
+	return CC_CURSOR;
+}
+
+
+/* ed_command():
+ *	Editline extended command
+ *	[M-X] [:]
+ */
+protected el_action_t
+/*ARGSUSED*/
+ed_command(EditLine *el, Int c __attribute__((__unused__)))
+{
+	Char tmpbuf[EL_BUFSIZ];
+	int tmplen;
+
+	tmplen = c_gets(el, tmpbuf, STR("\n: "));
+	terminal__putc(el, '\n');
+
+	if (tmplen &lt; 0 || (tmpbuf[tmplen] = 0, parse_line(el, tmpbuf)) == -1)
+		terminal_beep(el);
+
+	el-&gt;el_map.current = el-&gt;el_map.key;
+	re_clear_display(el);
+	return CC_REFRESH;
+}
+      </pre>
+    </body>
+</html>

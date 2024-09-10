@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/heap/hp_scan.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000-2002, 2005-2007 MySQL AB
+   Use is subject to license terms
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA */
+
+/* Scan through all rows */
+
+#include "heapdef.h"
+
+/*
+	   Returns one of following values:
+	   0 = Ok.
+	   HA_ERR_RECORD_DELETED = Record is deleted.
+	   HA_ERR_END_OF_FILE = EOF.
+*/
+
+int heap_scan_init(register HP_INFO *info)
+{
+  DBUG_ENTER("heap_scan_init");
+  info-&gt;lastinx= -1;
+  info-&gt;current_record= (ulong) ~0L;		/* No current record */
+  info-&gt;update=0;
+  info-&gt;next_block=0;
+  DBUG_RETURN(0);
+}
+
+int heap_scan(register HP_INFO *info, uchar *record)
+{
+  HP_SHARE *share=info-&gt;s;
+  ulong pos;
+  DBUG_ENTER("heap_scan");
+
+  pos= ++info-&gt;current_record;
+  if (pos &lt; info-&gt;next_block)
+  {
+    info-&gt;current_ptr+=share-&gt;block.recbuffer;
+  }
+  else
+  {
+    info-&gt;next_block+=share-&gt;block.records_in_block;
+    if (info-&gt;next_block &gt;= share-&gt;records+share-&gt;deleted)
+    {
+      info-&gt;next_block= share-&gt;records+share-&gt;deleted;
+      if (pos &gt;= info-&gt;next_block)
+      {
+	info-&gt;update= 0;
+	DBUG_RETURN(my_errno= HA_ERR_END_OF_FILE);
+      }
+    }
+    hp_find_record(info, pos);
+  }
+  if (!info-&gt;current_ptr[share-&gt;reclength])
+  {
+    DBUG_PRINT("warning",("Found deleted record"));
+    info-&gt;update= HA_STATE_PREV_FOUND | HA_STATE_NEXT_FOUND;
+    DBUG_RETURN(my_errno=HA_ERR_RECORD_DELETED);
+  }
+  info-&gt;update= HA_STATE_PREV_FOUND | HA_STATE_NEXT_FOUND | HA_STATE_AKTIV;
+  memcpy(record,info-&gt;current_ptr,(size_t) share-&gt;reclength);
+  info-&gt;current_hash_ptr=0;			/* Can't use read_next */
+  DBUG_RETURN(0);
+} /* heap_scan */
+      </pre>
+    </body>
+</html>

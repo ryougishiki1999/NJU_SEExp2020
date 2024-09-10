@@ -1,0 +1,167 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>Preprocessor.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "Preprocessor.h"
+#include "../../core/Json/JsonProc.h"
+#include &lt;fstream&gt;
+#include &lt;iostream&gt;
+#include &lt;sstream&gt;
+#include &lt;string&gt;
+
+<span style = "background-color:#dfd">Preprocessor::PreprocessorPtr Preprocessor::_preprocessor = nullptr;</span>
+
+<span style = "background-color:#dfd">std::mutex Preprocessor::_m_mutex;</span>
+
+////////////////////////////////////////////////////////////////////////////////
+//                      class Preprocessor method def
+////////////////////////////////////////////////////////////////////////////////
+
+Preprocessor::PreprocessorPtr Preprocessor::instance()
+<span style = "background-color:#dfd">{
+    if (_preprocessor == nullptr)</span>
+    {
+<span style = "background-color:#dfd">        std::lock_guard&lt;std::mutex&gt; lock(_m_mutex);
+        if (_preprocessor == nullptr)</span>
+        {
+<span style = "background-color:#dfd">            _preprocessor = PreprocessorPtr(new Preprocessor);</span>
+        }
+<span style = "background-color:#dfd">    }</span>
+
+<span style = "background-color:#dfd">    return _preprocessor;
+}</span>
+
+bool Preprocessor::resolve_source(const std::string &amp;source)
+<span style = "background-color:#dfd">{
+    _entry_path.assign(source);
+    if (std::filesystem::exists(_entry_path))</span>
+    {
+<span style = "background-color:#dfd">        if (_tree == nullptr)</span>
+        {
+<span style = "background-color:#dfd">            _tree = new FileSystemTree(_entry_path);
+            return true;</span>
+<span style = "background-color:#fdd">        }</span>
+        else
+        {
+<span style = "background-color:#fdd">            std::cerr &lt;&lt; "file tree should be empty....." &lt;&lt; std::endl;
+            return false;</span>
+        }
+<span style = "background-color:#fdd">    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        std::cerr &lt;&lt; "does not exist correct path..." &lt;&lt; std::endl;
+        return false;</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+void Preprocessor::search_compile_commands_json_entry()
+<span style = "background-color:#dfd">{
+    search_compile_commands_json(_entry_path);
+}</span>
+
+void Preprocessor::search_compile_commands_json(const std::filesystem::path &amp;directory)
+<span style = "background-color:#dfd">{
+    for (const auto &amp;dir_entry : std::filesystem::directory_iterator(directory))</span>
+    {
+<span style = "background-color:#dfd">        auto path = dir_entry.path();
+        auto filename = path.filename();</span>
+
+<span style = "background-color:#dfd">        if (std::filesystem::is_directory(dir_entry))</span>
+        {
+<span style = "background-color:#dfd">            if (filename != std::string(ROOT_DIRECTORY) &amp;&amp; filename != std::string(PARENT_DIRECTORY))</span>
+            {
+<span style = "background-color:#dfd">                search_compile_commands_json(path);</span>
+            }
+<span style = "background-color:#dfd">        }
+        else if (filename == std::string(COMPILE_COMMANDS_FILENAME))</span>
+        {
+<span style = "background-color:#dfd">            _compile_commands_json_list.push_back(path);</span>
+        }
+<span style = "background-color:#dfd">    }
+}</span>
+
+void Preprocessor::parse_compile_commands_json_entry()
+<span style = "background-color:#dfd">{
+    for (size_t index = 0; index &lt; _compile_commands_json_list.size(); index++)</span>
+    {
+<span style = "background-color:#dfd">        std::filesystem::path compile_commmands_path = _compile_commands_json_list.at(index);
+        std::set&lt;std::filesystem::path&gt; file_list = parse_compile_commands_json(compile_commmands_path.string());</span>
+
+        //_all_source_file_list.push_back(file_list);
+<span style = "background-color:#dfd">        _corresponding_source_file_map.insert(</span>
+            std::pair&lt;std::filesystem::path, std::set&lt;std::filesystem::path&gt;&gt;(compile_commmands_path, file_list));
+<span style = "background-color:#dfd">    }
+}</span>
+
+const std::set&lt;std::filesystem::path&gt; Preprocessor::parse_compile_commands_json(
+    const std::string &amp;compile_commands_json_path)
+<span style = "background-color:#dfd">{</span>
+
+<span style = "background-color:#dfd">    std::set&lt;std::filesystem::path&gt; source_file_list;</span>
+
+<span style = "background-color:#dfd">    std::ifstream json_file_in(compile_commands_json_path, std::ios::in);</span>
+
+<span style = "background-color:#dfd">    if (json_file_in.is_open())</span>
+    {
+<span style = "background-color:#dfd">        std::stringstream ss;
+        ss &lt;&lt; json_file_in.rdbuf();
+        std::string json_content(ss.str());</span>
+
+<span style = "background-color:#dfd">        Json::Value &amp;original = Json::parse(json_content);</span>
+
+<span style = "background-color:#dfd">        assert(original.get_type() == Json::ValueType::ARRAY &amp;&amp; "compile_commands.json exists errors");
+        Json::ArrayValue arr_value = dynamic_cast&lt;Json::ArrayValue &amp;&gt;(original);</span>
+
+<span style = "background-color:#dfd">        const size_t arr_size = arr_value.size();</span>
+
+<span style = "background-color:#dfd">        for (size_t index = 0; index &lt; arr_size; index++)</span>
+        {
+<span style = "background-color:#dfd">            Json::Value &amp;element = arr_value.get_value(index);</span>
+
+<span style = "background-color:#dfd">            assert(element.get_type() == Json::ValueType::OBJECT &amp;&amp; "compile_commands.json exists errors...");
+            Json::ObjectValue object = dynamic_cast&lt;Json::ObjectValue &amp;&gt;(element);</span>
+
+<span style = "background-color:#dfd">            std::string path_str = Json::stringify(object.get_value(COMPILE_FILE_ATTRIBUTE));
+            path_str = path_str.substr(1, path_str.size() - 2);</span>
+
+<span style = "background-color:#dfd">            const std::filesystem::path source_file_path = path_str;</span>
+
+<span style = "background-color:#dfd">            if (std::filesystem::exists(source_file_path))</span>
+            {
+<span style = "background-color:#dfd">                if (source_file_list.find(source_file_path) == source_file_list.end())</span>
+                {
+<span style = "background-color:#dfd">                    source_file_list.insert(source_file_path);</span>
+                }
+<span style = "background-color:#dfd">            }</span>
+            else
+            {
+<span style = "background-color:#fdd">                std::cerr &lt;&lt; "does not exist corresponding file path..." &lt;&lt; std::endl;</span>
+            }
+<span style = "background-color:#dfd">        }
+    }</span>
+    else
+    {
+<span style = "background-color:#fdd">        std::cerr &lt;&lt; "does not open json file successfully..." &lt;&lt; std::endl;</span>
+    }
+
+<span style = "background-color:#dfd">    json_file_in.close();</span>
+
+<span style = "background-color:#dfd">    return source_file_list;
+}</span>
+
+void Preprocessor::build_file_tree()
+<span style = "background-color:#dfd">{
+    if (!_target_source_file_list.empty())</span>
+    {
+<span style = "background-color:#dfd">        _tree-&gt;build_tree(_target_source_file_list);</span>
+    }
+<span style = "background-color:#dfd">}</span></pre>
+	</body>
+</html>

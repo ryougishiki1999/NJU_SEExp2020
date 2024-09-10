@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/myisam/mi_close.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2011, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+/* close a isam-database */
+/*
+  TODO:
+   We need to have a separate mutex on the closed file to allow other threads
+   to open other files during the time we flush the cache and close this file
+*/
+
+#include "myisamdef.h"
+
+int mi_close(register MI_INFO *info)
+{
+  int error=0,flag;
+  MYISAM_SHARE *share=info-&gt;s;
+  DBUG_ENTER("mi_close");
+  DBUG_PRINT("enter",("base: 0x%lx  reopen: %u  locks: %u",
+		      (long) info, (uint) share-&gt;reopen,
+                      (uint) share-&gt;tot_locks));
+
+  if (info-&gt;open_list.data)
+    mysql_mutex_lock(&amp;THR_LOCK_myisam);
+  if (info-&gt;lock_type == F_EXTRA_LCK)
+    info-&gt;lock_type=F_UNLCK;			/* HA_EXTRA_NO_USER_CHANGE */
+
+  if (info-&gt;lock_type != F_UNLCK)
+  {
+    if (mi_lock_database(info,F_UNLCK))
+      error=my_errno;
+  }
+  mysql_mutex_lock(&amp;share-&gt;intern_lock);
+
+  if (share-&gt;options &amp; HA_OPTION_READ_ONLY_DATA)
+  {
+    share-&gt;r_locks--;
+    share-&gt;tot_locks--;
+  }
+  if (info-&gt;opt_flag &amp; (READ_CACHE_USED | WRITE_CACHE_USED))
+  {
+    if (end_io_cache(&amp;info-&gt;rec_cache))
+      error=my_errno;
+    info-&gt;opt_flag&amp;= ~(READ_CACHE_USED | WRITE_CACHE_USED);
+  }
+  flag= !--share-&gt;reopen;
+  if (info-&gt;open_list.data)
+    myisam_open_list= list_delete(myisam_open_list, &amp;info-&gt;open_list);
+  mysql_mutex_unlock(&amp;share-&gt;intern_lock);
+
+  my_free(mi_get_rec_buff_ptr(info, info-&gt;rec_buff));
+  if (flag)
+  {
+    DBUG_EXECUTE_IF("crash_before_flush_keys",
+                    if (share-&gt;kfile &gt;= 0) abort(););
+    if (share-&gt;kfile &gt;= 0 &amp;&amp;
+	flush_key_blocks(share-&gt;key_cache, share-&gt;kfile,
+			 share-&gt;temporary ? FLUSH_IGNORE_CHANGED :
+			 FLUSH_RELEASE))
+      error=my_errno;
+    if (share-&gt;kfile &gt;= 0)
+    {
+      /*
+        If we are crashed, we can safely flush the current state as it will
+        not change the crashed state.
+        We can NOT write the state in other cases as other threads
+        may be using the file at this point
+      */
+      if (share-&gt;mode != O_RDONLY &amp;&amp; mi_is_crashed(info))
+	mi_state_info_write(share-&gt;kfile, &amp;share-&gt;state, 1);
+      /* Decrement open count must be last I/O on this file. */
+      _mi_decrement_open_count(info);
+      if (mysql_file_close(share-&gt;kfile, MYF(0)))
+        error = my_errno;
+    }
+#ifdef HAVE_MMAP
+    if (share-&gt;file_map)
+    {
+      if (share-&gt;options &amp; HA_OPTION_COMPRESS_RECORD)
+        _mi_unmap_file(info);
+      else
+        mi_munmap_file(info);
+    }
+#endif
+    if (share-&gt;decode_trees)
+    {
+      my_free(share-&gt;decode_trees);
+      my_free(share-&gt;decode_tables);
+    }
+    thr_lock_delete(&amp;share-&gt;lock);
+    mysql_mutex_destroy(&amp;share-&gt;intern_lock);
+    {
+      int i,keys;
+      keys = share-&gt;state.header.keys;
+      mysql_rwlock_destroy(&amp;share-&gt;mmap_lock);
+      for(i=0; i&lt;keys; i++) {
+        mysql_rwlock_destroy(&amp;share-&gt;key_root_lock[i]);
+      }
+    }
+    my_free(info-&gt;s);
+  }
+  if (info-&gt;open_list.data)
+    mysql_mutex_unlock(&amp;THR_LOCK_myisam);
+  if (info-&gt;ftparser_param)
+  {
+    my_free(info-&gt;ftparser_param);
+    info-&gt;ftparser_param= 0;
+  }
+  if (info-&gt;dfile &gt;= 0 &amp;&amp; mysql_file_close(info-&gt;dfile, MYF(0)))
+    error = my_errno;
+
+  myisam_log_command(MI_LOG_CLOSE,info,NULL,0,error);
+  my_free(info);
+
+  if (error)
+  {
+    DBUG_RETURN(my_errno=error);
+  }
+  DBUG_RETURN(0);
+} /* mi_close */
+      </pre>
+    </body>
+</html>

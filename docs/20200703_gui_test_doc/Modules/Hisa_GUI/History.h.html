@@ -1,0 +1,43 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>History.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#pragma once
+#include&lt;string&gt;
+#include&lt;vector&gt;
+const int ATTR_NUM=4;
+
+struct item {
+	std::string in_addr;
+    std::string out_addr;
+    std::string time;
+	bool is_godmode;
+<span style = "background-color:#dfd">    item():in_addr(""),out_addr(""),time(""),is_godmode(false){}</span>
+};
+
+class History {
+	std::string file_name;
+	std::vector&lt;item&gt; history_list;
+    bool is_loaded;
+public:
+<span style = "background-color:#dfd">    explicit History(std::string file = "./history.txt") :file_name(file){
+        is_loaded=false;
+    };</span>
+    void load_history();
+	void clear_history();
+    bool delete_his_by_index(unsigned int i);
+	void add_history(item his);
+	void write_history();
+    int size();
+    bool empty();
+    item get(int i);
+};</pre>
+	</body>
+</html>

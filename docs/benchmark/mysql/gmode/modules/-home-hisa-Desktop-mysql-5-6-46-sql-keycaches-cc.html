@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/sql/keycaches.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2002, 2012, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software Foundation,
+   51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
+
+#include "keycaches.h"
+
+/****************************************************************************
+  Named list handling
+****************************************************************************/
+
+NAMED_ILIST key_caches;
+
+uchar* find_named(I_List&lt;NAMED_ILINK&gt; *list, const char *name, uint length,
+                NAMED_ILINK **found)
+{
+  I_List_iterator&lt;NAMED_ILINK&gt; it(*list);
+  NAMED_ILINK *element;
+  while ((element= it++))
+  {
+    if (element-&gt;cmp(name, length))
+    {
+      if (found)
+        *found= element;
+      return element-&gt;data;
+    }
+  }
+  return 0;
+}
+
+
+void NAMED_ILIST::delete_elements(void (*free_element)(const char *name, uchar*))
+{
+  NAMED_ILINK *element;
+  DBUG_ENTER("NAMED_ILIST::delete_elements");
+  while ((element= get()))
+  {
+    (*free_element)(element-&gt;name, element-&gt;data);
+    delete element;
+  }
+  DBUG_VOID_RETURN;
+}
+
+
+/* Key cache functions */
+
+LEX_STRING default_key_cache_base= {C_STRING_WITH_LEN("default")};
+
+KEY_CACHE zero_key_cache; ///&lt; @@nonexistent_cache.param-&gt;value_ptr() points here
+
+KEY_CACHE *get_key_cache(LEX_STRING *cache_name)
+{
+  if (!cache_name || ! cache_name-&gt;length)
+    cache_name= &amp;default_key_cache_base;
+  return ((KEY_CACHE*) find_named(&amp;key_caches,
+                                  cache_name-&gt;str, cache_name-&gt;length, 0));
+}
+
+KEY_CACHE *create_key_cache(const char *name, uint length)
+{
+  KEY_CACHE *key_cache;
+  DBUG_ENTER("create_key_cache");
+  DBUG_PRINT("enter",("name: %.*s", length, name));
+  
+  if ((key_cache= (KEY_CACHE*) my_malloc(sizeof(KEY_CACHE),
+                                             MYF(MY_ZEROFILL | MY_WME))))
+  {
+    if (!new NAMED_ILINK(&amp;key_caches, name, length, (uchar*) key_cache))
+    {
+      my_free(key_cache);
+      key_cache= 0;
+    }
+    else
+    {
+      /*
+        Set default values for a key cache
+        The values in dflt_key_cache_var is set by my_getopt() at startup
+
+        We don't set 'buff_size' as this is used to enable the key cache
+      */
+      key_cache-&gt;param_block_size=     dflt_key_cache_var.param_block_size;
+      key_cache-&gt;param_division_limit= dflt_key_cache_var.param_division_limit;
+      key_cache-&gt;param_age_threshold=  dflt_key_cache_var.param_age_threshold;
+    }
+  }
+  DBUG_RETURN(key_cache);
+}
+
+
+KEY_CACHE *get_or_create_key_cache(const char *name, uint length)
+{
+  LEX_STRING key_cache_name;
+  KEY_CACHE *key_cache;
+
+  key_cache_name.str= (char *) name;
+  key_cache_name.length= length;
+  if (!(key_cache= get_key_cache(&amp;key_cache_name)))
+    key_cache= create_key_cache(name, length);
+  return key_cache;
+}
+
+
+void free_key_cache(const char *name, KEY_CACHE *key_cache)
+{
+  end_key_cache(key_cache, 1);		// Can never fail
+  my_free(key_cache);
+}
+
+
+bool process_key_caches(process_key_cache_t func)
+{
+  I_List_iterator&lt;NAMED_ILINK&gt; it(key_caches);
+  NAMED_ILINK *element;
+
+  while ((element= it++))
+  {
+    KEY_CACHE *key_cache= (KEY_CACHE *) element-&gt;data;
+    func(element-&gt;name, key_cache);
+  }
+  return 0;
+}
+
+      </pre>
+    </body>
+</html>

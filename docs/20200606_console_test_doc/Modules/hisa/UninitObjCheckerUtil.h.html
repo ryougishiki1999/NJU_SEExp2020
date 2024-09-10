@@ -1,0 +1,450 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>UninitObjCheckerUtil.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef CHECKER_UNINITOBJCHECKER_UTIL_H
+#define CHECKER_UNINITOBJCHECKER_UTIL_H
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/MemRegion.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h&gt;
+#include &lt;map&gt;
+
+class FieldNode;
+class RegularFieldNode;
+class BaseClassNode;
+class FieldListMgr;
+class FindUninitializedFields;
+
+/// Wrapped FieldNode for reference and pointee, and struct for dereference....
+class LocFieldNode;
+class NeedsCastLocFieldNode;
+class CyclicLocFieldNode;
+
+struct DereferenceInfo
+{
+    const clang::ento::TypedValueRegion *_region;
+    const bool _needs_cast_back;
+    const bool _is_cyclic;
+
+    DereferenceInfo(const clang::ento::TypedValueRegion *r, bool ncb, bool ic)
+<span style = "background-color:#dfd">        : _region(r), _needs_cast_back(ncb), _is_cyclic(ic)
+    {
+    }</span>
+};
+
+/// FieldList should essentially be wrapped around an ImmutableList
+/// which should be modified only by its Factory. e.g. add() and replaceHead()
+using FieldList = llvm::ImmutableList&lt;const FieldNode &amp;&gt;;
+
+using UninitFieldMap = std::map&lt;const clang::ento::FieldRegion *, llvm::SmallString&lt;50&gt;&gt;;
+
+//===----------------------------------------------------------------------------
+//                    General Uitility Methods Decl
+//===----------------------------------------------------------------------------
+
+/// Primitive Objects only need to be ananlyed whether their value is undefined.
+bool is_primitive_type(const clang::QualType &amp;type);
+
+bool is_reference_type(const clang::QualType &amp;type);
+
+void print_fieldlist_tail(llvm::raw_ostream &amp;out, const FieldList &amp;list);
+
+std::string get_variable_name(const clang::FieldDecl *field);
+
+//===----------------------------------------------------------------------------
+//                      Reference Uitility Methods Decl
+//===----------------------------------------------------------------------------
+/// Dereferences \p FR and returns with the pointee's region, and whether it
+/// needs to be casted back to it's location type.
+static llvm::Optional&lt;DereferenceInfo&gt; dereference(clang::ento::ProgramStateRef state,
+                                                   const clang::ento::FieldRegion *fr);
+/// Returns whether \p T can be (transitively) dereferenced to a void pointer
+/// type (void*, void**, ...).
+static bool is_void_pointer(clang::QualType type);
+
+//===----------------------------------------------------------------------------
+//                      Class FieldNode Decl
+//===----------------------------------------------------------------------------
+
+// We will use this interface to wrap FieldRegion* and store addinitional
+// information about fields. FieldNodes can print note messages about
+// themselves.
+class FieldNode
+{
+  public:
+    // We only allow the specific construct method to construct FieldNode
+<span style = "background-color:#dfd">    FieldNode(const clang::ento::FieldRegion *field_region) : _fr(field_region)
+    {
+    }</span>
+    FieldNode() = delete;
+    FieldNode(const FieldNode &amp;) = delete;
+    FieldNode(FieldNode &amp;&amp;) = delete;
+
+    FieldNode &amp;operator=(const FieldNode &amp;) = delete;
+    FieldNode &amp;operator=(FieldNode &amp;&amp;) = delete;
+
+    void Profile(llvm::FoldingSetNodeID &amp;ID) const
+<span style = "background-color:#dfd">    {
+        ID.AddPointer(this);
+    }</span>
+
+    bool is_same_region(const clang::ento::FieldRegion *another) const
+<span style = "background-color:#dfd">    {</span>
+        // According to document in CSA, special FieldNode may wrap nullpointers.
+        // We would not agree to unique and equal these objects.
+<span style = "background-color:#dfd">        if (_fr == nullptr)</span>
+        {
+<span style = "background-color:#dfd">            return false;</span>
+        }
+
+<span style = "background-color:#dfd">        return _fr == another;
+    }</span>
+
+    const clang::ento::FieldRegion *get_region() const
+<span style = "background-color:#dfd">    {
+        return _fr;
+    }</span>
+    const clang::FieldDecl *get_decl() const
+<span style = "background-color:#dfd">    {
+        assert(_fr);
+        return _fr-&gt;getDecl();
+    }</span>
+
+    /// The note message should state Message Like "uninitialized field....".
+    virtual void print_note_message(llvm::raw_ostream &amp;out) const = 0;
+    /// Print any prefixes before the fieldchain. Could contain casts, etc.
+    virtual void print_prefix(llvm::raw_ostream &amp;out) const = 0;
+    /// Print the node. Should contain the name of the field stored in FR.
+    virtual void print_node(llvm::raw_ostream &amp;out) const = 0;
+    /// Print the separator. For example, fields may be separated with '.' or
+    /// "-&gt;".
+    virtual void print_separator(llvm::raw_ostream &amp;out) const = 0;
+
+    virtual bool is_base() const
+<span style = "background-color:#dfd">    {
+        return false;
+    }</span>
+
+  protected:
+    const clang::ento::FieldRegion *_fr;
+};
+
+//===----------------------------------------------------------------------------
+//            Class RegularFieldNode(public FieldNode) Decl
+//===----------------------------------------------------------------------------
+
+/// A basic field type rather than a pointer or reference.
+class RegularFieldNode final : public FieldNode
+{
+  public:
+<span style = "background-color:#dfd">    RegularFieldNode(const clang::ento::FieldRegion *fr) : FieldNode(fr)
+    {
+    }</span>
+
+    virtual void print_note_message(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; "uninitialized Field : RegularFieldNode";
+    }</span>
+
+    virtual void print_prefix(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+    }</span>
+
+    virtual void print_node(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; get_variable_name(get_decl());
+    }</span>
+
+    virtual void print_separator(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; ".";
+    }</span>
+};
+
+//===----------------------------------------------------------------------------
+//              Class BaseClassNode(public FieldNode) Decl
+//===----------------------------------------------------------------------------
+
+/// Represents that the FieldNode that comes after this is declared in a base
+/// of the previous FieldNode. As such, this descendant doesn't wrap a
+/// FieldRegion, and is purely a tool to describe a relation between two other
+/// FieldRegion wrapping descendants.
+class BaseClassNode final : public FieldNode
+{
+  public:
+<span style = "background-color:#dfd">    BaseClassNode(const clang::QualType &amp;type) : FieldNode(nullptr), _base_class_type(type)
+    {
+        assert(!type.isNull());
+        assert(type-&gt;getAsCXXRecordDecl());
+    }</span>
+
+    virtual void print_note_message(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#fdd">    {</span>
+        // TODO: This function can never be reached.
+        /*llvm_unreachable("This node can never be the final node in the fieldlist :
+           " "BaseClassNode");*/
+<span style = "background-color:#fdd">    }</span>
+
+    virtual void print_prefix(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+    }</span>
+
+    virtual void print_node(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; _base_class_type-&gt;getAsCXXRecordDecl()-&gt;getName() &lt;&lt; "::";
+    }</span>
+
+    virtual void print_separator(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+    }</span>
+
+    virtual bool is_base() const override
+<span style = "background-color:#dfd">    {
+        return true;
+    }</span>
+
+  private:
+    const clang::QualType _base_class_type;
+};
+
+//===----------------------------------------------------------------------------
+//              Class LocFieldNode(public FieldNode) Decl for Reference
+//===----------------------------------------------------------------------------
+/// Represents a pointer or a reference field.
+class LocFieldNode final : public FieldNode
+{
+  public:
+    LocFieldNode(const clang::ento::FieldRegion *fr, const bool is_dereferenced = true)
+<span style = "background-color:#dfd">        : FieldNode(fr), _is_dereferenced(is_dereferenced)
+    {
+    }</span>
+
+    virtual void print_note_message(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        if (_is_dereferenced)</span>
+        {
+<span style = "background-color:#dfd">            out &lt;&lt; "uninitialized pointee: ";
+        }</span>
+        else
+        {
+<span style = "background-color:#dfd">            out &lt;&lt; "uninitialized pointer: ";</span>
+        }
+<span style = "background-color:#dfd">    }</span>
+
+    virtual void print_prefix(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+    }</span>
+
+    virtual void print_node(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; get_variable_name(get_decl());
+    }</span>
+
+    virtual void print_separator(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        if (get_decl()-&gt;getType()-&gt;isPointerType())</span>
+        {
+<span style = "background-color:#dfd">            out &lt;&lt; "-&gt;";
+        }</span>
+        else
+        {
+<span style = "background-color:#dfd">            out &lt;&lt; ".";</span>
+        }
+<span style = "background-color:#dfd">    }</span>
+
+  private:
+    const bool _is_dereferenced;
+};
+
+//===----------------------------------------------------------------------------
+//        Class NeedsCastLocFieldNode(public FieldNode) Decl for Reference
+//===----------------------------------------------------------------------------
+/// Represents a nonloc::LocAsInteger or void* field, that point to objects, but
+/// needs to be casted back to its dynamic type for a correct note message.
+class NeedsCastLocFieldNode final : public FieldNode
+{
+  public:
+    NeedsCastLocFieldNode(const clang::ento::FieldRegion *fr, const clang::QualType &amp;type)
+<span style = "background-color:#dfd">        : FieldNode(fr), _cast_back_type(type)
+    {
+    }</span>
+
+    virtual void print_note_message(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; "uninitialized pointee: ";
+    }</span>
+
+    virtual void print_prefix(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {</span>
+        // if this object is a nonloc::LocAsInteger.
+<span style = "background-color:#dfd">        if (get_decl()-&gt;getType()-&gt;isIntegerType())</span>
+        {
+<span style = "background-color:#dfd">            out &lt;&lt; "reinterpret_cast";
+        }</span>
+        // if this pointer's dynamic type is different then it's static type
+        else
+        {
+<span style = "background-color:#dfd">            out &lt;&lt; "static_cast";</span>
+        }
+<span style = "background-color:#dfd">        out &lt;&lt; "&lt;" &lt;&lt; _cast_back_type.getAsString() &lt;&lt; "&gt;(";
+    }</span>
+
+    virtual void print_node(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; get_variable_name(get_decl()) &lt;&lt; ")";
+    }</span>
+
+    virtual void print_separator(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; "-&gt;";
+    }</span>
+
+  private:
+    clang::QualType _cast_back_type;
+};
+
+//===----------------------------------------------------------------------------
+//         Class CyclicLocFieldNode(public FieldNode) Decl for Reference
+//===----------------------------------------------------------------------------
+/// Represents a Loc field that points to itself.
+class CyclicLocFieldNode final : public FieldNode
+{
+  public:
+<span style = "background-color:#dfd">    CyclicLocFieldNode(const clang::ento::FieldRegion *fr) : FieldNode(fr)
+    {
+    }</span>
+
+    virtual void print_note_message(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; "object references itself: ";
+    }</span>
+
+    virtual void print_prefix(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+    }</span>
+
+    virtual void print_node(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#dfd">    {
+        out &lt;&lt; get_variable_name(get_decl());
+    }</span>
+
+    virtual void print_separator(llvm::raw_ostream &amp;out) const override
+<span style = "background-color:#fdd">    {</span>
+        // TODO: this function can never be reached.
+        /*llvm_unreachable(
+            "CyclicLocField objects must be the last node of FieldList");*/
+<span style = "background-color:#fdd">    }</span>
+};
+
+//===----------------------------------------------------------------------------
+//                      Class FieldListMgr Decl
+//===----------------------------------------------------------------------------
+
+/// Lists of FieldNode will be constructed where the head element of List is the
+/// object under checking, and every other element is a field, and the element
+/// that precedes it is the object that contains it.
+class FieldListMgr
+{
+  public:
+    FieldListMgr() = delete;
+    FieldListMgr(const FieldListMgr &amp;) = default;
+<span style = "background-color:#dfd">    FieldListMgr(FieldList::Factory &amp;list_factory) : _list_factory(list_factory)
+    {
+    }</span>
+
+    template &lt;class FieldNodeT&gt; FieldListMgr add(const FieldNodeT &amp;field_node);
+
+    template &lt;class FieldNodeT&gt; FieldListMgr replace_head(const FieldNodeT &amp;field_node);
+
+    bool contains(const clang::ento::FieldRegion *fr) const;
+
+    bool is_empty() const
+<span style = "background-color:#dfd">    {
+        return _field_list.isEmpty();
+    }</span>
+
+    const FieldNode &amp;get_head() const
+<span style = "background-color:#dfd">    {
+        return _field_list.getHead();
+    }</span>
+
+    const clang::ento::FieldRegion *get_uninit_region() const
+<span style = "background-color:#dfd">    {
+        return get_head().get_region();
+    }</span>
+    // const FieldList &amp;get_field_list() const { return _field_list; }
+
+    void print_note_message(llvm::raw_ostream &amp;out) const;
+
+  private:
+    FieldList::Factory &amp;_list_factory;
+    FieldList _field_list;
+
+<span style = "background-color:#dfd">    FieldListMgr(FieldList::Factory &amp;list_factory, FieldList new_field_list) : _list_factory(list_factory)
+    {
+        _field_list = new_field_list;
+    }</span>
+};
+
+//===----------------------------------------------------------------------------
+//                      Class FindUninitializedFiedls Decl
+//===----------------------------------------------------------------------------
+
+/// Searches for and stores uninitialized fields in a non-union object:
+/// FindUninitializedFields
+class FindUninitializedFields
+{
+  public:
+    FindUninitializedFields(clang::ento::ProgramStateRef state, const clang::ento::TypedValueRegion *typed_region);
+    FindUninitializedFields() = delete;
+    FindUninitializedFields(const FindUninitializedFields &amp;) = delete;
+    FindUninitializedFields(FindUninitializedFields &amp;&amp;) = delete;
+
+    FindUninitializedFields &amp;operator=(const FindUninitializedFields &amp;) = delete;
+    FindUninitializedFields &amp;operator=(FindUninitializedFields &amp;&amp;) = delete;
+
+    std::pair&lt;clang::ento::ProgramStateRef, const UninitFieldMap &amp;&gt; get_results() const
+<span style = "background-color:#dfd">    {
+        return {_state, _uninit_fieldmap};
+    }</span>
+
+    bool is_any_field_initialized()
+    {
+        return _is_any_field_init;
+    }
+
+  private:
+    clang::ento::ProgramStateRef _state;
+    const clang::ento::TypedValueRegion *const _obj_region;
+<span style = "background-color:#dfd">    bool _is_any_field_init = false;</span>
+
+    /// A factory for creating or modifying FieldList
+    FieldList::Factory _list_factory;
+    /// A map for assigning uninitialized regions to note messages.
+    UninitFieldMap _uninit_fieldmap;
+
+    // We'll traverse each node of the above graph with the appropriate one of
+    // these methods:
+    bool is_union_obj_uninit(const clang::ento::TypedValueRegion *t_region);
+    /// Checks non-union object. Return True if the region is found with
+    /// uninitializaiton.
+    bool is_non_union_obj_uninit(const clang::ento::TypedValueRegion *t_region, FieldListMgr local_list_mgr);
+    /// Checkes a pointer or reference object. Return True if object itself is
+    /// uninitialized.
+    bool is_reference_obj_uninit(const clang::ento::FieldRegion *f_region, FieldListMgr local_list_mgr);
+    /// Checkes the value of a primitive object.
+    bool is_primitive_obj_uninit(const clang::ento::SVal &amp;value);
+
+    // Add qualified Fields to _uninit_fieldmap
+    bool add_fields_to_uninits(FieldListMgr local_list, const clang::ento::MemRegion *pointee_r = nullptr);
+};
+
+#endif</pre>
+	</body>
+</html>

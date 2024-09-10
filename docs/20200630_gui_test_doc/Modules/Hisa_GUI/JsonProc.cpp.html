@@ -1,0 +1,353 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>JsonProc.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "JsonProc.h"
+#include &lt;stack&gt;
+void JsonUseCase()
+<span style = "background-color:#fdd">{</span>
+
+    // generate json and transform to string
+    {
+<span style = "background-color:#fdd">        auto object_value = Json::make_object();
+        auto int_value = Json::make_value(1);
+        auto double_value = Json::make_value(1.1);
+        auto bool_value = Json::make_value(true);
+        auto string_value = Json::make_value("str");
+        auto array_value = Json::make_array();</span>
+
+<span style = "background-color:#fdd">        array_value.append(int_value);
+        array_value.append(double_value);
+        array_value.append(bool_value);
+        array_value.append(string_value);</span>
+
+<span style = "background-color:#fdd">        object_value.append("array", array_value);</span>
+        // expected json text: {"array":[1,1.100000,true,"str"]}
+
+        // you can stringify any type of value
+<span style = "background-color:#fdd">        std::string json_txt = Json::stringify(object_value);</span>
+        //std::cout &lt;&lt; json_txt &lt;&lt; std::endl;
+
+<span style = "background-color:#fdd">        auto &amp;root = Json::parse(json_txt);
+        std::string txt = Json::stringify(root);</span>
+        //std::cout &lt;&lt; txt &lt;&lt; std::endl;
+<span style = "background-color:#fdd">        root.release();
+    }</span>
+
+    // generate json tree on heap
+    {
+<span style = "background-color:#fdd">        auto &amp;root = Json::new_object();
+        root.append("int", Json::new_value(1));
+        root.append("double", Json::new_value(1.1));</span>
+
+<span style = "background-color:#fdd">        std::string t = Json::stringify(root);</span>
+        //std::cout &lt;&lt; t &lt;&lt; "\n";
+
+        // use release to free memory on json tree
+<span style = "background-color:#fdd">        root.release();
+    }
+}</span>
+namespace Json
+{
+IntValue make_value(int v)
+<span style = "background-color:#fdd">{
+    return IntValue(v);
+}</span>
+
+DoubleValue make_value(double v)
+<span style = "background-color:#fdd">{
+    return DoubleValue(v);
+}</span>
+
+BoolValue make_value(bool v)
+<span style = "background-color:#fdd">{
+    return BoolValue(v);
+}</span>
+
+StringValue make_value(const char *v)
+<span style = "background-color:#fdd">{
+    return StringValue(std::string(v));
+}</span>
+
+StringValue make_value(const std::string &amp;v)
+<span style = "background-color:#fdd">{
+    return StringValue(v);
+}</span>
+
+StringValue make_value(std::string &amp;&amp;v)
+<span style = "background-color:#fdd">{
+    return StringValue(std::move(v));
+}</span>
+
+ArrayValue make_array()
+<span style = "background-color:#fdd">{
+    return ArrayValue();</span>
+<span style = "background-color:#dfd">}</span>
+
+ObjectValue make_object()
+<span style = "background-color:#fdd">{
+    return ObjectValue();</span>
+<span style = "background-color:#dfd">}</span>
+
+IntValue &amp;new_value(int v)
+<span style = "background-color:#fdd">{
+    return *new IntValue(v);
+}</span>
+
+DoubleValue &amp;new_value(double v)
+<span style = "background-color:#fdd">{
+    return *new DoubleValue(v);
+}</span>
+
+BoolValue &amp;new_value(bool v)
+<span style = "background-color:#fdd">{
+    return *new BoolValue(v);
+}</span>
+
+StringValue &amp;new_value(const char *v)
+<span style = "background-color:#fdd">{
+    return *new StringValue(std::string(v));
+}</span>
+
+StringValue &amp;new_value(const std::string &amp;v)
+<span style = "background-color:#dfd">{
+    return *new StringValue(v);
+}</span>
+
+StringValue &amp;new_value(std::string &amp;&amp;v)
+<span style = "background-color:#fdd">{
+    return *new StringValue(std::move(v));
+}</span>
+
+ObjectValue &amp;new_object()
+<span style = "background-color:#dfd">{
+    return *new ObjectValue();
+}</span>
+
+ArrayValue &amp;new_array()
+<span style = "background-color:#dfd">{
+    return *new ArrayValue();
+}</span>
+
+// translate json into string
+std::string stringify(Value &amp;root)
+<span style = "background-color:#dfd">{
+    return root.to_string(0, true);
+}</span>
+
+static bool is_space(char t)
+<span style = "background-color:#dfd">{
+    return t == ' ' || t == '\t' || t == '\b' || t == '\r' || t == '\n';
+}</span>
+
+class Stream
+{
+private:
+    const char*str;
+
+    std::stack&lt;char&gt; put_back_chars;
+
+<span style = "background-color:#dfd">    int index = 0;</span>
+
+    int length;
+
+public:
+<span style = "background-color:#dfd">    Stream(std::string &amp;_str) : str(_str.c_str()), length(_str.length())
+    {
+    }</span>
+
+    char fetch_char()
+<span style = "background-color:#dfd">    {
+        if (!put_back_chars.empty())</span>
+        {
+<span style = "background-color:#fdd">            char c = put_back_chars.top();
+            put_back_chars.pop();
+            return c;
+        }</span>
+        else
+        {
+<span style = "background-color:#dfd">            if (index == length)</span>
+<span style = "background-color:#fdd">                return 0;</span>
+<span style = "background-color:#dfd">            return str[index++];</span>
+        }
+<span style = "background-color:#dfd">    }</span>
+
+    void put_back(char c)
+<span style = "background-color:#fdd">    {
+        put_back_chars.push(c);
+    }</span>
+<span style = "background-color:#dfd">};</span>
+Stream &amp;operator&gt;&gt;(Stream &amp;in, char&amp; t)
+<span style = "background-color:#dfd">{
+    t = in.fetch_char();
+    return in;
+}</span>
+
+static char get_next_char(Stream &amp;stream)
+<span style = "background-color:#dfd">{
+    char t = 0;
+    while (true)</span>
+    {
+<span style = "background-color:#dfd">        stream &gt;&gt; t;
+        if (t == 0 || !is_space(t))
+            break;
+    }
+    return t;
+}</span>
+
+static Value *__parse2(Stream &amp;stream)
+<span style = "background-color:#dfd">{</span>
+    char temp;
+<span style = "background-color:#dfd">    temp = get_next_char(stream);</span>
+
+<span style = "background-color:#dfd">    Value *value = nullptr;
+    if (temp == '{')</span>
+    {
+<span style = "background-color:#dfd">        value = &amp;new_object();
+        while (true)</span>
+        {
+<span style = "background-color:#dfd">            Value *name = __parse2(stream);
+            if (name == nullptr)
+                break;
+            assert(name-&gt;get_type() == ValueType::STRING);</span>
+
+<span style = "background-color:#dfd">            Value *v = __parse2(stream);
+            value-&gt;append(static_cast&lt;StringValue *&gt;(name)-&gt;get_value(), *v);
+        }
+    }
+    else if (temp == '[')</span>
+    {
+<span style = "background-color:#dfd">        value = &amp;new_array();
+        while (true)</span>
+        {
+<span style = "background-color:#dfd">            Value *v = __parse2(stream);
+            if (v == nullptr)
+                break;
+            value-&gt;append(*v);
+        }
+    }
+    else if (temp == ']' || temp == '}')</span>
+    {
+<span style = "background-color:#dfd">    }
+    else if (temp == ',' || temp == ':')</span>
+    {
+<span style = "background-color:#dfd">        value = __parse2(stream);
+    }
+    else if (temp == '\"')</span>
+    {
+<span style = "background-color:#dfd">        bool flag = false;
+        std::string tmpstr;
+        while (true)</span>
+        {
+<span style = "background-color:#dfd">            stream &gt;&gt; temp;
+            if (temp == 0)</span>
+<span style = "background-color:#fdd">                break;</span>
+<span style = "background-color:#dfd">            if (temp == '\"' &amp;&amp; !flag)
+                break;</span>
+
+<span style = "background-color:#dfd">            if (temp == '\\')
+                flag = true;</span>
+            else
+<span style = "background-color:#dfd">                flag = false;</span>
+
+<span style = "background-color:#dfd">            tmpstr += temp;
+        }
+        assert(temp == '\"');</span>
+
+<span style = "background-color:#dfd">        value = &amp;new_value(tmpstr);
+    }</span>
+<span style = "background-color:#fdd">    else if (temp == 't')</span>
+    {
+<span style = "background-color:#fdd">        std::string tmpstr;
+        tmpstr += temp;
+        while (true)</span>
+        {
+<span style = "background-color:#fdd">            temp = get_next_char(stream);
+            if (temp == 0)
+                break;
+            if (!isalpha(temp))</span>
+            {
+<span style = "background-color:#fdd">                stream.put_back(temp);
+                break;</span>
+            }
+<span style = "background-color:#fdd">            tmpstr += temp;
+        }
+        assert(tmpstr == "true");
+        value = &amp;new_value(true);
+    }
+    else if (temp == 'f')</span>
+    {
+<span style = "background-color:#fdd">        std::string tmpstr;
+        tmpstr += temp;
+        while (true)</span>
+        {
+<span style = "background-color:#fdd">            temp = get_next_char(stream);
+            if (temp == 0)
+                break;
+            if (!isalpha(temp))</span>
+            {
+<span style = "background-color:#fdd">                stream.put_back(temp);
+                break;</span>
+            }
+<span style = "background-color:#fdd">            tmpstr += temp;
+        }
+        assert(tmpstr == "false");
+        value = &amp;new_value(false);
+    }
+    else if (isdigit(temp))</span>
+    {
+<span style = "background-color:#fdd">        std::string tmpstr;
+        tmpstr += temp;</span>
+
+<span style = "background-color:#fdd">        bool is_float = false;
+        while ((temp = get_next_char(stream)) != 0)</span>
+        {
+<span style = "background-color:#fdd">            if (!(isdigit(temp) || temp == '.'))</span>
+            {
+<span style = "background-color:#fdd">                stream.put_back(temp);
+                break;</span>
+            }
+<span style = "background-color:#fdd">            if (temp == '.')</span>
+            {
+<span style = "background-color:#fdd">                is_float = true;</span>
+            }
+<span style = "background-color:#fdd">            tmpstr += temp;
+        }</span>
+
+<span style = "background-color:#fdd">        if (is_float)</span>
+        {
+            double d;
+<span style = "background-color:#fdd">            d = atof(tmpstr.c_str());
+            value = &amp;new_value(d);
+        }</span>
+        else
+        {
+            int i;
+<span style = "background-color:#fdd">            i = atoi(tmpstr.c_str());
+            value = &amp;new_value(i);</span>
+        }
+<span style = "background-color:#fdd">    }</span>
+<span style = "background-color:#dfd">    return value;
+}</span>
+
+
+// parse str into json
+// todo: text error detection
+Value &amp;parse(std::string &amp;str)
+<span style = "background-color:#dfd">{
+    std::string source = str;</span>
+    // append space around each unit
+
+<span style = "background-color:#dfd">    Stream stream(source);
+    return *__parse2(stream);
+}</span>
+} // namespace Json</pre>
+	</body>
+</html>

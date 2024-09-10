@@ -1,0 +1,77 @@
+help
+info src
+info available-src
+analyze
+reset
+reset abc
+reset help
+reset analyzer-opt
+reset output-opt
+reset checker
+reset src
+enable
+enable abc
+enable help
+enable gmode
+enable analyzer-stats
+enable debug
+enable debug-analysis-progress
+enable debug-exploded-graph
+enable debug-trim-exploded-graph
+info analyzer-opt
+enable output-time
+enable output-checker
+enable output-description
+enable output-stats
+disable
+disable abc
+disable help
+disable gmode
+disable analyzer-stats
+disable debug
+disable debug-analysis-progress
+disable debug-exploded-graph
+disable debug-trim-exploded-graph
+disable gmode-all-checker
+disable output-time
+disable output-checker
+disable output-description
+disable output-stats
+set
+set abc
+set help
+set debug-output-path
+set debug-output-path .
+set compilation-database
+set compilation-database .
+set output-format
+set output-format console
+addsrc
+addsrc double_free.cpp
+info
+info abc
+info src
+delsrc
+delsrc double_free.cpp
+info help
+info analyzer-opt
+info output-opt
+info checker
+info src
+info available-src
+analyze abc def
+analyze
+show help
+show summary
+show all
+show double_free.cpp
+analyze double_free.cpp
+enable analyzer-stats
+enable output-time
+enable output-checker
+enable output-description
+enable output-stats
+show summary
+show all
+show double_free.cpp
+quit

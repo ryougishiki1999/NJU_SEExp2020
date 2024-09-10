@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/mysys/mulalloc.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2002, 2003, 2007 MySQL AB
+   Use is subject to license terms
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   Without limiting anything contained in the foregoing, this file,
+   which is part of C Driver for MySQL (Connector/C), is also subject to the
+   Universal FOSS Exception, version 1.0, a copy of which can be found at
+   http://oss.oracle.com/licenses/universal-foss-exception.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA */
+
+#include "mysys_priv.h"
+#include &lt;stdarg.h&gt;
+
+/*
+  Malloc many pointers at the same time
+  Only ptr1 can be free'd, and doing this will free all
+  the memory allocated. ptr2, etc all point inside big allocated
+  memory area.
+
+  SYNOPSIS
+    my_multi_malloc()
+      myFlags              Flags
+	ptr1, length1      Multiple arguments terminated by null ptr
+	ptr2, length2      ...
+        ...
+	NULL
+*/
+
+void* my_multi_malloc(myf myFlags, ...)
+{
+  va_list args;
+  char **ptr,*start,*res;
+  size_t tot_length,length;
+  DBUG_ENTER("my_multi_malloc");
+
+  va_start(args,myFlags);
+  tot_length=0;
+<span style = "background-color:#fdd">  while ((ptr=va_arg(args, char **)))        Dead nested assignment:Although the value stored to 'ptr' is used in the enclosing expression, the value is never actually read from 'ptr'</span>
+  {
+    length=va_arg(args,uint);
+    tot_length+=ALIGN_SIZE(length);
+  }
+  va_end(args);
+
+  if (!(start=(char *) my_malloc(tot_length,myFlags)))
+    DBUG_RETURN(0); /* purecov: inspected */
+
+  va_start(args,myFlags);
+  res=start;
+  while ((ptr=va_arg(args, char **)))
+  {
+    *ptr=res;
+    length=va_arg(args,uint);
+    res+=ALIGN_SIZE(length);
+  }
+  va_end(args);
+  DBUG_RETURN((void*) start);
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/sql/sql_list.h</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef INCLUDES_MYSQL_SQL_LIST_H
+#define INCLUDES_MYSQL_SQL_LIST_H
+/* Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software Foundation,
+   51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
+
+#include "sql_alloc.h"
+#include "my_global.h"
+#include "my_sys.h"
+#include "m_string.h" /* for TRASH */
+
+#include "my_sys.h"                    /* alloc_root, TRASH, MY_WME,
+                                          MY_FAE, MY_ALLOW_ZERO_PTR */
+#include "m_string.h"
+#include "thr_malloc.h"                         /* sql_alloc */
+
+
+/**
+  Simple intrusive linked list.
+
+  @remark Similar in nature to base_list, but intrusive. It keeps a
+          a pointer to the first element in the list and a indirect
+          reference to the last element.
+*/
+template &lt;typename T&gt;
+class SQL_I_List :public Sql_alloc
+{
+public:
+  uint elements;
+  /** The first element in the list. */
+  T *first;
+  /** A reference to the next element in the list. */
+  T **next;
+
+  SQL_I_List() { empty(); }
+
+  SQL_I_List(const SQL_I_List &amp;tmp) : Sql_alloc()
+  {
+    elements= tmp.elements;
+    first= tmp.first;
+    next= elements ? tmp.next : &amp;first;
+  }
+
+  inline void empty()
+  {
+    elements= 0;
+    first= NULL;
+    next= &amp;first;
+  }
+
+  inline void link_in_list(T *element, T **next_ptr)
+  {
+    elements++;
+    (*next)= element;
+    next= next_ptr;
+    *next= NULL;
+  }
+
+  inline void save_and_clear(SQL_I_List&lt;T&gt; *save)
+  {
+    *save= *this;
+    empty();
+  }
+
+  inline void push_front(SQL_I_List&lt;T&gt; *save)
+  {
+    /* link current list last */
+    *save-&gt;next= first;
+    first= save-&gt;first;
+    elements+= save-&gt;elements;
+  }
+
+  inline void push_back(SQL_I_List&lt;T&gt; *save)
+  {
+    if (save-&gt;first)
+    {
+      *next= save-&gt;first;
+      next= save-&gt;next;
+      elements+= save-&gt;elements;
+    }
+  }
+};
+
+
+/*
+  Basic single linked list
+  Used for item and item_buffs.
+  All list ends with a pointer to the 'end_of_list' element, which
+  data pointer is a null pointer and the next pointer points to itself.
+  This makes it very fast to traverse lists as we don't have to
+  test for a specialend condition for list that can't contain a null
+  pointer.
+*/
+
+
+/**
+  list_node - a node of a single-linked list.
+  @note We never call a destructor for instances of this class.
+*/
+
+struct list_node :public Sql_alloc
+{
+  list_node *next;
+  void *info;
+  list_node(void *info_par,list_node *next_par)
+    :next(next_par),info(info_par)
+  {}
+  list_node()					/* For end_of_list */
+  {
+    info= 0;
+    next= this;
+  }
+};
+
+
+extern MYSQL_PLUGIN_IMPORT list_node end_of_list;
+
+/**
+  Comparison function for list sorting.
+
+  @param n1   Info of 1st node
+  @param n2   Info of 2nd node
+  @param arg  Additional info
+
+  @return
+    -1  n1 &lt; n2
+     0  n1 == n2
+     1  n1 &gt; n2
+*/
+
+typedef int (*Node_cmp_func)(void *n1, void *n2, void *arg);
+
+class base_list :public Sql_alloc
+{
+protected:
+  list_node *first,**last;
+
+public:
+  uint elements;
+
+  bool operator==(const base_list &amp;rhs) const
+  {
+    return
+      elements == rhs.elements &amp;&amp;
+      first == rhs.first &amp;&amp;
+      last == rhs.last;
+  }
+
+  inline void empty() { elements=0; first= &amp;end_of_list; last=&amp;first;}
+  inline base_list() { empty(); }
+  /**
+    This is a shallow copy constructor that implicitly passes the ownership
+    from the source list to the new instance. The old instance is not
+    updated, so both objects end up sharing the same nodes. If one of
+    the instances then adds or removes a node, the other becomes out of
+    sync ('last' pointer), while still operational. Some old code uses and
+    relies on this behaviour. This logic is quite tricky: please do not use
+    it in any new code.
+  */
+  inline base_list(const base_list &amp;tmp) :Sql_alloc()
+  {
+    elements= tmp.elements;
+    first= tmp.first;
+    last= elements ? tmp.last : &amp;first;
+  }
+  /**
+    Construct a deep copy of the argument in memory root mem_root.
+    The elements themselves are copied by pointer. If you also
+    need to copy elements by value, you should employ
+    list_copy_and_replace_each_value after creating a copy.
+  */
+  base_list(const base_list &amp;rhs, MEM_ROOT *mem_root);
+  inline base_list(bool error) { }
+  inline bool push_back(void *info)
+  {
+    if (((*last)=new list_node(info, &amp;end_of_list)))
+    {
+      last= &amp;(*last)-&gt;next;
+      elements++;
+      return 0;
+    }
+    return 1;
+  }
+  inline bool push_back(void *info, MEM_ROOT *mem_root)
+  {
+    if (((*last)=new (mem_root) list_node(info, &amp;end_of_list)))
+    {
+      last= &amp;(*last)-&gt;next;
+      elements++;
+      return 0;
+    }
+    return 1;
+  }
+  inline bool push_front(void *info)
+  {
+    list_node *node=new list_node(info,first);
+    if (node)
+    {
+      if (last == &amp;first)
+	last= &amp;node-&gt;next;
+      first=node;
+      elements++;
+      return 0;
+    }
+    return 1;
+  }
+  void remove(list_node **prev)
+  {
+    list_node *node=(*prev)-&gt;next;
+    if (!--elements)
+      last= &amp;first;
+    else if (last == &amp;(*prev)-&gt;next)
+      last= prev;
+    delete *prev;
+    *prev=node;
+  }
+  inline void concat(base_list *list)
+  {
+    if (!list-&gt;is_empty())
+    {
+      *last= list-&gt;first;
+      last= list-&gt;last;
+      elements+= list-&gt;elements;
+    }
+  }
+  inline void *pop(void)
+  {
+    if (first == &amp;end_of_list) return 0;
+    list_node *tmp=first;
+    first=first-&gt;next;
+    if (!--elements)
+      last= &amp;first;
+    return tmp-&gt;info;
+  }
+  inline void disjoin(base_list *list)
+  {
+    list_node **prev= &amp;first;
+    list_node *node= first;
+    list_node *list_first= list-&gt;first;
+    elements=0;
+    while (node &amp;&amp; node != list_first)
+    {
+      prev= &amp;node-&gt;next;
+      node= node-&gt;next;
+      elements++;
+    }
+    *prev= *last;
+    last= prev;
+  }
+  inline void prepand(base_list *list)
+  {
+    if (!list-&gt;is_empty())
+    {
+      *list-&gt;last= first;
+      first= list-&gt;first;
+      elements+= list-&gt;elements;
+    }
+  }
+  /**
+    @brief
+    Sort the list
+
+    @param cmp  node comparison function
+    @param arg  additional info to be passed to comparison function
+
+    @details
+    The function sorts list nodes by an exchange sort algorithm.
+    The order of list nodes isn't changed, values of info fields are
+    swapped instead. Due to this, list iterators that are initialized before
+    sort could be safely used after sort, i.e they wouldn't cause a crash.
+    As this isn't an effective algorithm the list to be sorted is supposed to
+    be short.
+  */
+  void sort(Node_cmp_func cmp, void *arg)
+  {
+    if (elements &lt; 2)
+      return;
+    for (list_node *n1= first; n1 &amp;&amp; n1 != &amp;end_of_list; n1= n1-&gt;next)
+    {
+      for (list_node *n2= n1-&gt;next; n2 &amp;&amp; n2 != &amp;end_of_list; n2= n2-&gt;next)
+      {
+        if ((*cmp)(n1-&gt;info, n2-&gt;info, arg) &gt; 0)
+        {
+          void *tmp= n1-&gt;info;
+          n1-&gt;info= n2-&gt;info;
+          n2-&gt;info= tmp;
+        }
+      }
+    }
+  }
+  /**
+    Swap two lists.
+  */
+  inline void swap(base_list &amp;rhs)
+  {
+    swap_variables(list_node *, first, rhs.first);
+    swap_variables(list_node **, last, rhs.last);
+    swap_variables(uint, elements, rhs.elements);
+  }
+  inline list_node* last_node() { return *last; }
+  inline list_node* first_node() { return first;}
+  inline void *head() { return first-&gt;info; }
+  inline void **head_ref() { return first != &amp;end_of_list ? &amp;first-&gt;info : 0; }
+  inline bool is_empty() const { return first == &amp;end_of_list ; }
+  inline list_node *last_ref() { return &amp;end_of_list; }
+  friend class base_list_iterator;
+  friend class error_list;
+  friend class error_list_iterator;
+
+#ifdef LIST_EXTRA_DEBUG
+  /*
+    Check list invariants and print results into trace. Invariants are:
+      - (*last) points to end_of_list
+      - There are no NULLs in the list.
+      - base_list::elements is the number of elements in the list.
+
+    SYNOPSIS
+      check_list()
+        name  Name to print to trace file
+
+    RETURN 
+      1  The list is Ok.
+      0  List invariants are not met.
+  */
+
+  bool check_list(const char *name)
+  {
+    base_list *list= this;
+    list_node *node= first;
+    uint cnt= 0;
+
+    while (node-&gt;next != &amp;end_of_list)
+    {
+      if (!node-&gt;info)
+      {
+        DBUG_PRINT("list_invariants",("%s: error: NULL element in the list", 
+                                      name));
+        return FALSE;
+      }
+      node= node-&gt;next;
+      cnt++;
+    }
+    if (last != &amp;(node-&gt;next))
+    {
+      DBUG_PRINT("list_invariants", ("%s: error: wrong last pointer", name));
+      return FALSE;
+    }
+    if (cnt+1 != elements)
+    {
+      DBUG_PRINT("list_invariants", ("%s: error: wrong element count", name));
+      return FALSE;
+    }
+    DBUG_PRINT("list_invariants", ("%s: list is ok", name));
+    return TRUE;
+  }
+#endif // LIST_EXTRA_DEBUG
+
+protected:
+  void after(void *info,list_node *node)
+  {
+    list_node *new_node=new list_node(info,node-&gt;next);
+    node-&gt;next=new_node;
+    elements++;
+    if (last == &amp;(node-&gt;next))
+      last= &amp;new_node-&gt;next;
+  }
+};
+
+class base_list_iterator
+{
+protected:
+  base_list *list;
+  list_node **el,**prev,*current;
+  void sublist(base_list &amp;ls, uint elm)
+  {
+    ls.first= *el;
+    ls.last= list-&gt;last;
+    ls.elements= elm;
+  }
+public:
+  base_list_iterator() 
+    :list(0), el(0), prev(0), current(0)
+  {}
+
+  base_list_iterator(base_list &amp;list_par) 
+  { init(list_par); }
+
+  inline void init(base_list &amp;list_par)
+  {
+    list= &amp;list_par;
+    el= &amp;list_par.first;
+    prev= 0;
+    current= 0;
+  }
+
+  inline void *next(void)
+  {
+    prev=el;
+    current= *el;
+    el= &amp;current-&gt;next;
+<span style = "background-color:#fdd">    return current-&gt;info;        Dereference of null pointer:Access to field 'info' results in a dereference of a null pointer (loaded from field 'current')</span>
+  }
+  inline void *next_fast(void)
+  {
+    list_node *tmp;
+    tmp= *el;
+    el= &amp;tmp-&gt;next;
+<span style = "background-color:#fdd">    return tmp-&gt;info;        Dereference of null pointer:Access to field 'info' results in a dereference of a null pointer (loaded from variable 'tmp')</span>
+  }
+  inline void rewind(void)
+  {
+    el= &amp;list-&gt;first;
+  }
+  inline void *replace(void *element)
+  {						// Return old element
+    void *tmp=current-&gt;info;
+    DBUG_ASSERT(current-&gt;info != 0);
+    current-&gt;info=element;
+    return tmp;
+  }
+  void *replace(base_list &amp;new_list)
+  {
+    void *ret_value=current-&gt;info;
+    if (!new_list.is_empty())
+    {
+      *new_list.last=current-&gt;next;
+      current-&gt;info=new_list.first-&gt;info;
+      current-&gt;next=new_list.first-&gt;next;
+      if ((list-&gt;last == &amp;current-&gt;next) &amp;&amp; (new_list.elements &gt; 1))
+	list-&gt;last= new_list.last;
+      list-&gt;elements+=new_list.elements-1;
+    }
+    return ret_value;				// return old element
+  }
+  inline void remove(void)			// Remove current
+  {
+    list-&gt;remove(prev);
+    el=prev;
+    current=0;					// Safeguard
+  }
+  void after(void *element)			// Insert element after current
+  {
+    list-&gt;after(element,current);
+    current=current-&gt;next;
+    el= &amp;current-&gt;next;
+  }
+  inline void **ref(void)			// Get reference pointer
+  {
+    return &amp;current-&gt;info;
+  }
+  inline bool is_last(void)
+  {
+    return el == &amp;list-&gt;last_ref()-&gt;next;
+  }
+  friend class error_list_iterator;
+};
+
+template &lt;class T&gt; class List :public base_list
+{
+public:
+  inline List() :base_list() {}
+  inline List(const List&lt;T&gt; &amp;tmp) :base_list(tmp) {}
+  inline List(const List&lt;T&gt; &amp;tmp, MEM_ROOT *mem_root) :
+    base_list(tmp, mem_root) {}
+  /*
+    Typecasting to (void *) it's necessary if we want to declare List&lt;T&gt; with
+    constant T parameter (like List&lt;const char&gt;), since the untyped storage
+    is "void *", and assignment of const pointer to "void *" is a syntax error.
+  */
+  inline bool push_back(T *a) { return base_list::push_back((void *) a); }
+  inline bool push_back(T *a, MEM_ROOT *mem_root)
+  { return base_list::push_back((void *) a, mem_root); }
+  inline bool push_front(T *a) { return base_list::push_front((void *) a); }
+  inline T* head() {return (T*) base_list::head(); }
+  inline T** head_ref() {return (T**) base_list::head_ref(); }
+  inline T* pop()  {return (T*) base_list::pop(); }
+  inline void concat(List&lt;T&gt; *list) { base_list::concat(list); }
+  inline void disjoin(List&lt;T&gt; *list) { base_list::disjoin(list); }
+  inline void prepand(List&lt;T&gt; *list) { base_list::prepand(list); }
+  void delete_elements(void)
+  {
+    list_node *element,*next;
+    for (element=first; element != &amp;end_of_list; element=next)
+    {
+      next=element-&gt;next;
+      delete (T*) element-&gt;info;
+    }
+    empty();
+  }
+
+  using base_list::sort;
+};
+
+
+template &lt;class T&gt; class List_iterator :public base_list_iterator
+{
+public:
+  List_iterator(List&lt;T&gt; &amp;a) : base_list_iterator(a) {}
+  List_iterator() : base_list_iterator() {}
+  inline void init(List&lt;T&gt; &amp;a) { base_list_iterator::init(a); }
+  inline T* operator++(int) { return (T*) base_list_iterator::next(); }
+  inline T *replace(T *a)   { return (T*) base_list_iterator::replace(a); }
+  inline T *replace(List&lt;T&gt; &amp;a) { return (T*) base_list_iterator::replace(a); }
+  inline void rewind(void)  { base_list_iterator::rewind(); }
+  inline void remove()      { base_list_iterator::remove(); }
+  inline void after(T *a)   { base_list_iterator::after(a); }
+  inline T** ref(void)	    { return (T**) base_list_iterator::ref(); }
+};
+
+
+template &lt;class T&gt; class List_iterator_fast :public base_list_iterator
+{
+protected:
+  inline T *replace(T *a)   { return (T*) 0; }
+  inline T *replace(List&lt;T&gt; &amp;a) { return (T*) 0; }
+  inline void remove(void)  { }
+  inline void after(T *a)   { }
+  inline T** ref(void)	    { return (T**) 0; }
+
+public:
+  inline List_iterator_fast(List&lt;T&gt; &amp;a) : base_list_iterator(a) {}
+  inline List_iterator_fast() : base_list_iterator() {}
+  inline void init(List&lt;T&gt; &amp;a) { base_list_iterator::init(a); }
+  inline T* operator++(int) { return (T*) base_list_iterator::next_fast(); }
+  inline void rewind(void)  { base_list_iterator::rewind(); }
+  void sublist(List&lt;T&gt; &amp;list_arg, uint el_arg)
+  {
+    base_list_iterator::sublist(list_arg, el_arg);
+  }
+};
+
+
+template &lt;typename T&gt; class base_ilist;
+template &lt;typename T&gt; class base_ilist_iterator;
+
+/*
+  A simple intrusive list which automaticly removes element from list
+  on delete (for THD element)
+  NOTE: this inherently unsafe, since we rely on &lt;T&gt; to have
+  the same layout as ilink&lt;T&gt; (see base_ilist::sentinel).
+  Please consider using a different strategy for linking objects.
+*/
+
+template &lt;typename T&gt;
+class ilink
+{
+  T **prev, *next;
+public:
+  ilink() : prev(NULL), next(NULL) {}
+
+  void unlink()
+  {
+    /* Extra tests because element doesn't have to be linked */
+    if (prev) *prev= next;
+    if (next) next-&gt;prev=prev;
+    prev= NULL;
+    next= NULL;
+  }
+
+  virtual ~ilink() { unlink(); }		/*lint -e1740 */
+
+  friend class base_ilist&lt;T&gt;;
+  friend class base_ilist_iterator&lt;T&gt;;
+};
+
+
+/* Needed to be able to have an I_List of char* strings in mysqld.cc. */
+
+class i_string: public ilink&lt;i_string&gt;
+{
+public:
+  const char* ptr;
+  i_string():ptr(0) { }
+  i_string(const char* s) : ptr(s) {}
+};
+
+/* needed for linked list of two strings for replicate-rewrite-db */
+class i_string_pair: public ilink&lt;i_string_pair&gt;
+{
+public:
+  const char* key;
+  const char* val;
+  i_string_pair():key(0),val(0) { }
+  i_string_pair(const char* key_arg, const char* val_arg) : 
+    key(key_arg),val(val_arg) {}
+};
+
+
+template &lt;class T&gt; class I_List_iterator;
+
+
+template&lt;typename T&gt;
+class base_ilist
+{
+  T *first;
+  ilink&lt;T&gt; sentinel;
+public:
+  void empty() {
+    first= static_cast&lt;T*&gt;(&amp;sentinel);
+    sentinel.prev= &amp;first;
+  }
+  base_ilist() { empty(); }
+  bool is_empty() const { return first == static_cast&lt;const T*&gt;(&amp;sentinel); }
+
+  /// Pushes new element in front of list.
+  void push_front(T *a)
+  {
+    first-&gt;prev= &amp;a-&gt;next;
+    a-&gt;next= first;
+    a-&gt;prev= &amp;first;
+    first= a;
+  }
+
+  /// Pushes new element to the end of the list, i.e. in front of the sentinel.
+  void push_back(T *a)
+  {
+    *sentinel.prev= a;
+    a-&gt;next= static_cast&lt;T*&gt;(&amp;sentinel);
+    a-&gt;prev= sentinel.prev;
+    sentinel.prev= &amp;a-&gt;next;
+  }
+
+  // Unlink first element, and return it.
+  T *get()
+  {
+    if (is_empty())
+      return NULL;
+    T *first_link= first;
+<span style = "background-color:#fdd">    first_link-&gt;unlink();        Use-after-free:Use of memory after it is freed</span>
+    return first_link;
+  }
+
+  T *head() { return is_empty() ? NULL : first; }
+
+  /**
+    Moves list elements to new owner, and empties current owner (i.e. this).
+
+    @param[in,out]  new_owner  The new owner of the list elements.
+                               Should be empty in input.
+  */
+
+  void move_elements_to(base_ilist *new_owner)
+  {
+    DBUG_ASSERT(new_owner-&gt;is_empty());
+    new_owner-&gt;first= first;
+    new_owner-&gt;sentinel= sentinel;
+    empty();
+  }
+
+  friend class base_ilist_iterator&lt;T&gt;;
+ private:
+  /*
+    We don't want to allow copying of this class, as that would give us
+    two list heads containing the same elements.
+    So we declare, but don't define copy CTOR and assignment operator.
+  */
+  base_ilist(const base_ilist&amp;);
+  void operator=(const base_ilist&amp;);
+};
+
+
+template&lt;typename T&gt;
+class base_ilist_iterator
+{
+  base_ilist&lt;T&gt; *list;
+  T **el, *current;
+public:
+  base_ilist_iterator(base_ilist&lt;T&gt; &amp;list_par) :
+    list(&amp;list_par),
+    el(&amp;list_par.first),
+    current(NULL)
+  {}
+
+  T *next(void)
+  {
+    /* This is coded to allow push_back() while iterating */
+    current= *el;
+    if (current == static_cast&lt;T*&gt;(&amp;list-&gt;sentinel))
+      return NULL;
+    el= &amp;current-&gt;next;
+    return current;
+  }
+};
+
+
+template &lt;class T&gt;
+class I_List :private base_ilist&lt;T&gt;
+{
+public:
+  using base_ilist&lt;T&gt;::empty;
+  using base_ilist&lt;T&gt;::is_empty;
+  using base_ilist&lt;T&gt;::get;
+  using base_ilist&lt;T&gt;::push_front;
+  using base_ilist&lt;T&gt;::push_back;
+  using base_ilist&lt;T&gt;::head;
+  void move_elements_to(I_List&lt;T&gt;* new_owner) {
+    base_ilist&lt;T&gt;::move_elements_to(new_owner);
+  }
+#ifndef _lint
+  friend class I_List_iterator&lt;T&gt;;
+#endif
+};
+
+
+template &lt;class T&gt; 
+class I_List_iterator :public base_ilist_iterator&lt;T&gt;
+{
+public:
+  I_List_iterator(I_List&lt;T&gt; &amp;a) : base_ilist_iterator&lt;T&gt;(a) {}
+  inline T* operator++(int) { return base_ilist_iterator&lt;T&gt;::next(); }
+};
+
+/**
+  Make a deep copy of each list element.
+
+  @note A template function and not a template method of class List
+  is employed because of explicit template instantiation:
+  in server code there are explicit instantiations of List&lt;T&gt; and
+  an explicit instantiation of a template requires that any method
+  of the instantiated class used in the template can be resolved.
+  Evidently not all template arguments have clone() method with
+  the right signature.
+
+  @return You must query the error state in THD for out-of-memory
+  situation after calling this function.
+*/
+
+template &lt;typename T&gt;
+inline
+void
+list_copy_and_replace_each_value(List&lt;T&gt; &amp;list, MEM_ROOT *mem_root)
+{
+  /* Make a deep copy of each element */
+  List_iterator&lt;T&gt; it(list);
+  T *el;
+  while ((el= it++))
+    it.replace(el-&gt;clone(mem_root));
+}
+
+void free_list(I_List &lt;i_string_pair&gt; *list);
+void free_list(I_List &lt;i_string&gt; *list);
+
+#endif // INCLUDES_MYSQL_SQL_LIST_H
+      </pre>
+    </body>
+</html>

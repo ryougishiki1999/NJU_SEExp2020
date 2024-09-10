@@ -1,0 +1,41 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>AnalyzerOptions.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "AnalyzerOptions.h"
+
+AnalyzerOptions::AnalyzerOptions()
+<span style = "background-color:#dfd">{
+    enable_god_mode = enable_stats = enable_debug_mode = show_analysis_progress = enable_exploded_graph =</span>
+        trim_exploded_graph = 0;
+<span style = "background-color:#dfd">}</span>
+void AnalyzerOptions::dump(std::ostream &amp;os)
+<span style = "background-color:#dfd">{
+    os &lt;&lt; "\tGod Mode: " &lt;&lt; (bool)enable_god_mode &lt;&lt; '\n';
+    os &lt;&lt; "\tStats: " &lt;&lt; (bool)enable_stats &lt;&lt; '\n';
+    os &lt;&lt; "\tDebug Mode: " &lt;&lt; (bool)enable_debug_mode &lt;&lt; '\n';
+    if (enable_debug_mode)</span>
+    {
+<span style = "background-color:#fdd">        os &lt;&lt; "\tShow Analysis Progress: " &lt;&lt; (bool)show_analysis_progress &lt;&lt; '\n';
+        os &lt;&lt; "\tExploded Graph: " &lt;&lt; (bool)enable_exploded_graph &lt;&lt; '\n';
+        os &lt;&lt; "\tTrim Exploded Graph: " &lt;&lt; (bool)trim_exploded_graph &lt;&lt; '\n';
+        os &lt;&lt; "\tDebug Output Path: " &lt;&lt; debug_output_path &lt;&lt; '\n';</span>
+    }
+<span style = "background-color:#dfd">    os &lt;&lt; "\tCompilation Database: " &lt;&lt; compilation_database_path &lt;&lt; '\n';
+}</span>
+void AnalyzerOptions::reset()
+<span style = "background-color:#dfd">{
+    enable_god_mode = enable_stats = enable_debug_mode = show_analysis_progress = enable_exploded_graph =</span>
+        trim_exploded_graph  = 0;
+<span style = "background-color:#dfd">    debug_output_path = "";
+    compilation_database_path = "";
+}</span></pre>
+	</body>
+</html>

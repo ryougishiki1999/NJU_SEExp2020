@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/myisam/mi_key.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+/* Functions to handle keys */
+
+#include "myisamdef.h"
+#include "m_ctype.h"
+#include "sp_defs.h"
+#ifdef HAVE_IEEEFP_H
+#include &lt;ieeefp.h&gt;
+#endif
+
+#define CHECK_KEYS                              /* Enable safety checks */
+
+#define FIX_LENGTH(cs, pos, length, char_length)                            \
+            do {                                                            \
+              if (length &gt; char_length)                                     \
+                char_length= my_charpos(cs, pos, pos+length, char_length);  \
+              set_if_smaller(char_length,length);                           \
+            } while(0)
+
+static int _mi_put_key_in_record(MI_INFO *info, uint keynr, 
+                                 my_bool unpack_blobs, uchar *record);
+
+/*
+  Make a intern key from a record
+
+  SYNOPSIS
+    _mi_make_key()
+    info		MyiSAM handler
+    keynr		key number
+    key			Store created key here
+    record		Record
+    filepos		Position to record in the data file
+
+  RETURN
+    Length of key
+*/
+
+uint _mi_make_key(register MI_INFO *info, uint keynr, uchar *key,
+		  const uchar *record, my_off_t filepos)
+{
+  uchar *pos;
+  uchar *start;
+  reg1 HA_KEYSEG *keyseg;
+  my_bool is_ft= info-&gt;s-&gt;keyinfo[keynr].flag &amp; HA_FULLTEXT;
+  DBUG_ENTER("_mi_make_key");
+
+  if (info-&gt;s-&gt;keyinfo[keynr].flag &amp; HA_SPATIAL)
+  {
+    /*
+      TODO: nulls processing
+    */
+#ifdef HAVE_SPATIAL
+    DBUG_RETURN(sp_make_key(info,keynr,key,record,filepos));
+#else
+    DBUG_ASSERT(0); /* mi_open should check that this never happens*/
+#endif
+  }
+
+  start=key;
+  for (keyseg=info-&gt;s-&gt;keyinfo[keynr].seg ; keyseg-&gt;type ;keyseg++)
+  {
+    enum ha_base_keytype type=(enum ha_base_keytype) keyseg-&gt;type;
+    uint length=keyseg-&gt;length;
+    uint char_length;
+    const CHARSET_INFO *cs= keyseg-&gt;charset;
+
+    if (keyseg-&gt;null_bit)
+    {
+      if (record[keyseg-&gt;null_pos] &amp; keyseg-&gt;null_bit)
+      {
+	*key++= 0;				/* NULL in key */
+	continue;
+      }
+      *key++=1;					/* Not NULL */
+    }
+
+    char_length= ((!is_ft &amp;&amp; cs &amp;&amp; cs-&gt;mbmaxlen &gt; 1) ? length/cs-&gt;mbmaxlen :
+                  length);
+
+    pos= (uchar*) record+keyseg-&gt;start;
+    if (type == HA_KEYTYPE_BIT)
+    {
+      if (keyseg-&gt;bit_length)
+      {
+        uchar bits= get_rec_bits((uchar*) record + keyseg-&gt;bit_pos,
+                                 keyseg-&gt;bit_start, keyseg-&gt;bit_length);
+        *key++= bits;
+        length--;
+      }
+      memcpy((uchar*) key, pos, length);
+      key+= length;
+      continue;
+    }
+    if (keyseg-&gt;flag &amp; HA_SPACE_PACK)
+    {
+      if (type != HA_KEYTYPE_NUM)
+      {
+<span style = "background-color:#fdd">        length= cs-&gt;cset-&gt;lengthsp(cs, (char*) pos, length);        Dereference of null pointer:Access to field 'cset' results in a dereference of a null pointer (loaded from variable 'cs')</span>
+      }
+      else
+      {
+        uchar *end= pos + length;
+	while (pos &lt; end &amp;&amp; pos[0] == ' ')
+	  pos++;
+	length=(uint) (end-pos);
+      }
+<span style = "background-color:#fdd">      FIX_LENGTH(cs, pos, length, char_length);        Dereference of null pointer:Access to field 'cset' results in a dereference of a null pointer (loaded from variable 'cs')</span>
+      store_key_length_inc(key,char_length);
+      memcpy((uchar*) key,(uchar*) pos,(size_t) char_length);
+      key+=char_length;
+      continue;
+    }
+    if (keyseg-&gt;flag &amp; HA_VAR_LENGTH_PART)
+    {
+      uint pack_length= (keyseg-&gt;bit_start == 1 ? 1 : 2);
+      uint tmp_length= (pack_length == 1 ? (uint) *(uchar*) pos :
+                        uint2korr(pos));
+      pos+= pack_length;			/* Skip VARCHAR length */
+      set_if_smaller(length,tmp_length);
+<span style = "background-color:#fdd">      FIX_LENGTH(cs, pos, length, char_length);        Dereference of null pointer:Access to field 'cset' results in a dereference of a null pointer (loaded from variable 'cs')</span>
+      store_key_length_inc(key,char_length);
+      memcpy((uchar*) key,(uchar*) pos,(size_t) char_length);
+      key+= char_length;
+      continue;
+    }
+    else if (keyseg-&gt;flag &amp; HA_BLOB_PART)
+    {
+      uint tmp_length=_mi_calc_blob_length(keyseg-&gt;bit_start,pos);
+      memcpy(&amp;pos,pos+keyseg-&gt;bit_start,sizeof(char*));
+      set_if_smaller(length,tmp_length);
+<span style = "background-color:#fdd">      FIX_LENGTH(cs, pos, length, char_length);        Dereference of null pointer:Access to field 'cset' results in a dereference of a null pointer (loaded from variable 'cs')</span>
+      store_key_length_inc(key,char_length);
+      memcpy((uchar*) key,(uchar*) pos,(size_t) char_length);
+      key+= char_length;
+      continue;
+    }
+    else if (keyseg-&gt;flag &amp; HA_SWAP_KEY)
+    {						/* Numerical column */
+#ifdef HAVE_ISNAN
+      if (type == HA_KEYTYPE_FLOAT)
+      {
+	float nr;
+	float4get(nr,pos);
+	if (my_isnan(nr))
+	{
+	  /* Replace NAN with zero */
+	  memset(key, 0, length);
+	  key+=length;
+	  continue;
+	}
+      }
+      else if (type == HA_KEYTYPE_DOUBLE)
+      {
+	double nr;
+	float8get(nr,pos);
+	if (my_isnan(nr))
+	{
+	  memset(key, 0, length);
+	  key+=length;
+	  continue;
+	}
+      }
+#endif
+      pos+=length;
+      while (length--)
+      {
+	*key++ = *--pos;
+      }
+      continue;
+    }
+    FIX_LENGTH(cs, pos, length, char_length);
+    memcpy((uchar*) key, pos, char_length);
+    if (length &gt; char_length)
+      cs-&gt;cset-&gt;fill(cs, (char*) key+char_length, length-char_length, ' ');
+    key+= length;
+  }
+  _mi_dpointer(info,key,filepos);
+  DBUG_PRINT("exit",("keynr: %d",keynr));
+  DBUG_DUMP("key",(uchar*) start,(uint) (key-start)+keyseg-&gt;length);
+  DBUG_EXECUTE("key",
+	       _mi_print_key(DBUG_FILE,info-&gt;s-&gt;keyinfo[keynr].seg,start,
+			     (uint) (key-start)););
+  DBUG_RETURN((uint) (key-start));		/* Return keylength */
+} /* _mi_make_key */
+
+
+/*
+  Pack a key to intern format from given format (c_rkey)
+
+  SYNOPSIS
+    _mi_pack_key()
+    info		MyISAM handler
+    uint keynr		key number
+    key			Store packed key here
+    old			Not packed key
+    keypart_map         bitmap of used keyparts
+    last_used_keyseg	out parameter.  May be NULL
+
+   RETURN
+     length of packed key
+
+     last_use_keyseg    Store pointer to the keyseg after the last used one
+*/
+
+uint _mi_pack_key(register MI_INFO *info, uint keynr, uchar *key, uchar *old,
+                  key_part_map keypart_map, HA_KEYSEG **last_used_keyseg)
+{
+  uchar *start_key=key;
+  HA_KEYSEG *keyseg;
+  my_bool is_ft= info-&gt;s-&gt;keyinfo[keynr].flag &amp; HA_FULLTEXT;
+  DBUG_ENTER("_mi_pack_key");
+
+  /* "one part" rtree key is 2*SPDIMS part key in MyISAM */
+  if (info-&gt;s-&gt;keyinfo[keynr].key_alg == HA_KEY_ALG_RTREE)
+    keypart_map= (((key_part_map)1) &lt;&lt; (2*SPDIMS)) - 1;
+
+  /* only key prefixes are supported */
+  DBUG_ASSERT(((keypart_map+1) &amp; keypart_map) == 0);
+
+  for (keyseg= info-&gt;s-&gt;keyinfo[keynr].seg ; keyseg-&gt;type &amp;&amp; keypart_map;
+       old+= keyseg-&gt;length, keyseg++)
+  {
+    enum ha_base_keytype type= (enum ha_base_keytype) keyseg-&gt;type;
+    uint length= keyseg-&gt;length;
+    uint char_length;
+    uchar *pos;
+
+    const CHARSET_INFO *cs= keyseg-&gt;charset;
+    keypart_map&gt;&gt;= 1;
+    if (keyseg-&gt;null_bit)
+    {
+      if (!(*key++= (char) 1-*old++))			/* Copy null marker */
+      {
+        if (keyseg-&gt;flag &amp; (HA_VAR_LENGTH_PART | HA_BLOB_PART))
+          old+= 2;
+	continue;					/* Found NULL */
+      }
+    }
+    char_length= (!is_ft &amp;&amp; cs &amp;&amp; cs-&gt;mbmaxlen &gt; 1) ? length/cs-&gt;mbmaxlen : length;
+    pos=old;
+    if (keyseg-&gt;flag &amp; HA_SPACE_PACK)
+    {
+      if (type == HA_KEYTYPE_NUM)
+      {
+        uchar *end= pos + length;
+        while (pos &lt; end &amp;&amp; pos[0] == ' ')
+          pos++;
+        length= (uint) (end - pos);
+      }
+      else if (type != HA_KEYTYPE_BINARY)
+      {
+<span style = "background-color:#fdd">        length= cs-&gt;cset-&gt;lengthsp(cs, (char*) pos, length);        Dereference of null pointer:Access to field 'cset' results in a dereference of a null pointer (loaded from variable 'cs')</span>
+      }
+<span style = "background-color:#fdd">      FIX_LENGTH(cs, pos, length, char_length);        Dereference of null pointer:Access to field 'cset' results in a dereference of a null pointer (loaded from variable 'cs')</span>
+      store_key_length_inc(key,char_length);
+      memcpy((uchar*) key,pos,(size_t) char_length);
+      key+= char_length;
+      continue;
+    }
+    else if (keyseg-&gt;flag &amp; (HA_VAR_LENGTH_PART | HA_BLOB_PART))
+    {
+      /* Length of key-part used with mi_rkey() always 2 */
+      uint tmp_length=uint2korr(pos);
+      pos+=2;
+      set_if_smaller(length,tmp_length);	/* Safety */
+<span style = "background-color:#fdd">      FIX_LENGTH(cs, pos, length, char_length);        Dereference of null pointer:Access to field 'cset' results in a dereference of a null pointer (loaded from variable 'cs')</span>
+      store_key_length_inc(key,char_length);
+      old+=2;					/* Skip length */
+      memcpy((uchar*) key, pos,(size_t) char_length);
+      key+= char_length;
+      continue;
+    }
+    else if (keyseg-&gt;flag &amp; HA_SWAP_KEY)
+    {						/* Numerical column */
+      pos+=length;
+      while (length--)
+	*key++ = *--pos;
+      continue;
+    }
+    FIX_LENGTH(cs, pos, length, char_length);
+    memcpy((uchar*) key, pos, char_length);
+    if (length &gt; char_length)
+      cs-&gt;cset-&gt;fill(cs, (char*) key+char_length, length-char_length, ' ');
+    key+= length;
+  }
+  if (last_used_keyseg)
+    *last_used_keyseg= keyseg;
+
+  DBUG_RETURN((uint) (key-start_key));
+} /* _mi_pack_key */
+
+
+
+/*
+  Store found key in record
+
+  SYNOPSIS
+    _mi_put_key_in_record()
+    info		MyISAM handler
+    keynr		Key number that was used
+    unpack_blobs        TRUE  &lt;=&gt; Unpack blob columns
+                        FALSE &lt;=&gt; Skip them. This is used by index condition 
+                                  pushdown check function
+    record 		Store key here
+
+    Last read key is in info-&gt;lastkey
+
+ NOTES
+   Used when only-keyread is wanted
+
+ RETURN
+   0   ok
+   1   error
+*/
+
+static int _mi_put_key_in_record(register MI_INFO *info, uint keynr, 
+                                 my_bool unpack_blobs, uchar *record)
+{
+  reg2 uchar *key;
+  uchar *pos,*key_end;
+  reg1 HA_KEYSEG *keyseg;
+  uchar *blob_ptr;
+  DBUG_ENTER("_mi_put_key_in_record");
+
+  blob_ptr= (uchar*) info-&gt;lastkey2;             /* Place to put blob parts */
+  key=(uchar*) info-&gt;lastkey;                    /* KEy that was read */
+  key_end=key+info-&gt;lastkey_length;
+  for (keyseg=info-&gt;s-&gt;keyinfo[keynr].seg ; keyseg-&gt;type ;keyseg++)
+  {
+    if (keyseg-&gt;null_bit)
+    {
+      if (!*key++)
+      {
+	record[keyseg-&gt;null_pos]|= keyseg-&gt;null_bit;
+	continue;
+      }
+      record[keyseg-&gt;null_pos]&amp;= ~keyseg-&gt;null_bit;
+    }
+    if (keyseg-&gt;type == HA_KEYTYPE_BIT)
+    {
+      uint length= keyseg-&gt;length;
+
+      if (keyseg-&gt;bit_length)
+      {
+        uchar bits= *key++;
+        set_rec_bits(bits, record + keyseg-&gt;bit_pos, keyseg-&gt;bit_start,
+                     keyseg-&gt;bit_length);
+        length--;
+      }
+      else
+      {
+        clr_rec_bits(record + keyseg-&gt;bit_pos, keyseg-&gt;bit_start,
+                     keyseg-&gt;bit_length);
+      }
+      memcpy(record + keyseg-&gt;start, (uchar*) key, length);
+      key+= length;
+      continue;
+    }
+    if (keyseg-&gt;flag &amp; HA_SPACE_PACK)
+    {
+      uint length;
+      get_key_length(length,key);
+#ifdef CHECK_KEYS
+      if (length &gt; keyseg-&gt;length || key+length &gt; key_end)
+	goto err;
+#endif
+      pos= record+keyseg-&gt;start;
+      if (keyseg-&gt;type != (int) HA_KEYTYPE_NUM)
+      {
+        memcpy(pos,key,(size_t) length);
+        keyseg-&gt;charset-&gt;cset-&gt;fill(keyseg-&gt;charset,
+                                    (char*) pos + length,
+                                    keyseg-&gt;length - length,
+                                    ' ');
+      }
+      else
+      {
+	memset(pos, ' ', keyseg-&gt;length-length);
+	memcpy(pos+keyseg-&gt;length-length,key,(size_t) length);
+      }
+      key+=length;
+      continue;
+    }
+
+    if (keyseg-&gt;flag &amp; HA_VAR_LENGTH_PART)
+    {
+      uint length;
+      get_key_length(length,key);
+#ifdef CHECK_KEYS
+      if (length &gt; keyseg-&gt;length || key+length &gt; key_end)
+	goto err;
+#endif
+      /* Store key length */
+      if (keyseg-&gt;bit_start == 1)
+        *(uchar*) (record+keyseg-&gt;start)= (uchar) length;
+      else
+        int2store(record+keyseg-&gt;start, length);
+      /* And key data */
+      memcpy(record+keyseg-&gt;start + keyseg-&gt;bit_start, (uchar*) key, length);
+      key+= length;
+    }
+    else if (keyseg-&gt;flag &amp; HA_BLOB_PART)
+    {
+      uint length;
+      get_key_length(length,key);
+#ifdef CHECK_KEYS
+      if (length &gt; keyseg-&gt;length || key+length &gt; key_end)
+	goto err;
+#endif
+      if (unpack_blobs)
+      {
+        memcpy(record+keyseg-&gt;start+keyseg-&gt;bit_start,
+               &amp;blob_ptr, sizeof(char*));
+        memcpy(blob_ptr,key,length);
+        blob_ptr+=length;
+        _mi_store_blob_length(record+keyseg-&gt;start,
+                              (uint) keyseg-&gt;bit_start,length);
+      }
+      key+=length;
+    }
+    else if (keyseg-&gt;flag &amp; HA_SWAP_KEY)
+    {
+      uchar *to=  record+keyseg-&gt;start+keyseg-&gt;length;
+      uchar *end= key+keyseg-&gt;length;
+#ifdef CHECK_KEYS
+      if (end &gt; key_end)
+	goto err;
+#endif
+      do
+      {
+	 *--to= *key++;
+      } while (key != end);
+      continue;
+    }
+    else
+    {
+#ifdef CHECK_KEYS
+      if (key+keyseg-&gt;length &gt; key_end)
+	goto err;
+#endif
+      memcpy(record+keyseg-&gt;start,(uchar*) key,
+	     (size_t) keyseg-&gt;length);
+      key+= keyseg-&gt;length;
+    }
+  }
+  DBUG_RETURN(0);
+
+err:
+  DBUG_RETURN(1);				/* Crashed row */
+} /* _mi_put_key_in_record */
+
+
+	/* Here when key reads are used */
+
+int _mi_read_key_record(MI_INFO *info, my_off_t filepos, uchar *buf)
+{
+  fast_mi_writeinfo(info);
+  if (filepos != HA_OFFSET_ERROR)
+  {
+    if (info-&gt;lastinx &gt;= 0)
+    {				/* Read only key */
+      if (_mi_put_key_in_record(info, (uint)info-&gt;lastinx, TRUE, buf))
+      {
+        mi_print_error(info-&gt;s, HA_ERR_CRASHED);
+	my_errno=HA_ERR_CRASHED;
+	return -1;
+      }
+      info-&gt;update|= HA_STATE_AKTIV; /* We should find a record */
+      return 0;
+    }
+    my_errno=HA_ERR_WRONG_INDEX;
+  }
+  return(-1);				/* Wrong data to read */
+}
+
+
+/*
+  Save current key tuple to record and call index condition check function
+
+  SYNOPSIS
+    mi_check_index_cond()
+      info    MyISAM handler
+      keynr   Index we're running a scan on
+      record  Record buffer to use (it is assumed that index check function 
+              will look for column values there)
+
+  RETURN
+    -1  Error 
+    0   Index condition is not satisfied, continue scanning
+    1   Index condition is satisfied
+    2   Index condition is not satisfied, end the scan. 
+*/
+
+int mi_check_index_cond(register MI_INFO *info, uint keynr, uchar *record)
+{
+  if (_mi_put_key_in_record(info, keynr, FALSE, record))
+  {
+    mi_print_error(info-&gt;s, HA_ERR_CRASHED);
+    my_errno=HA_ERR_CRASHED;
+    return -1;
+  }
+  return info-&gt;index_cond_func(info-&gt;index_cond_func_arg);
+}
+
+
+/*
+  Retrieve auto_increment info
+
+  SYNOPSIS
+    retrieve_auto_increment()
+    info			MyISAM handler
+    record			Row to update
+
+  IMPLEMENTATION
+    For signed columns we don't retrieve the auto increment value if it's
+    less than zero.
+*/
+
+ulonglong retrieve_auto_increment(MI_INFO *info,const uchar *record)
+{
+  ulonglong value= 0;			/* Store unsigned values here */
+  longlong s_value= 0;			/* Store signed values here */
+  HA_KEYSEG *keyseg= info-&gt;s-&gt;keyinfo[info-&gt;s-&gt;base.auto_key-1].seg;
+  const uchar *key= (uchar*) record + keyseg-&gt;start;
+
+  switch (keyseg-&gt;type) {
+  case HA_KEYTYPE_INT8:
+    s_value= (longlong) *(char*)key;
+    break;
+  case HA_KEYTYPE_BINARY:
+    value=(ulonglong)  *(uchar*) key;
+    break;
+  case HA_KEYTYPE_SHORT_INT:
+    s_value= (longlong) sint2korr(key);
+    break;
+  case HA_KEYTYPE_USHORT_INT:
+    value=(ulonglong) uint2korr(key);
+    break;
+  case HA_KEYTYPE_LONG_INT:
+    s_value= (longlong) sint4korr(key);
+    break;
+  case HA_KEYTYPE_ULONG_INT:
+    value=(ulonglong) uint4korr(key);
+    break;
+  case HA_KEYTYPE_INT24:
+    s_value= (longlong) sint3korr(key);
+    break;
+  case HA_KEYTYPE_UINT24:
+    value=(ulonglong) uint3korr(key);
+    break;
+  case HA_KEYTYPE_FLOAT:                        /* This shouldn't be used */
+  {
+    float f_1;
+    float4get(f_1,key);
+    /* Ignore negative values */
+    value = (f_1 &lt; (float) 0.0) ? 0 : (ulonglong) f_1;
+    break;
+  }
+  case HA_KEYTYPE_DOUBLE:                       /* This shouldn't be used */
+  {
+    double f_1;
+    float8get(f_1,key);
+    /* Ignore negative values */
+    value = (f_1 &lt; 0.0) ? 0 : (ulonglong) f_1;
+    break;
+  }
+  case HA_KEYTYPE_LONGLONG:
+    s_value= sint8korr(key);
+    break;
+  case HA_KEYTYPE_ULONGLONG:
+    value= uint8korr(key);
+    break;
+  default:
+    DBUG_ASSERT(0);
+    value=0;                                    /* Error */
+    break;
+  }
+
+  /*
+    The following code works becasue if s_value &lt; 0 then value is 0
+    and if s_value == 0 then value will contain either s_value or the
+    correct value.
+  */
+  return (s_value &gt; 0) ? (ulonglong) s_value : value;
+}
+      </pre>
+    </body>
+</html>

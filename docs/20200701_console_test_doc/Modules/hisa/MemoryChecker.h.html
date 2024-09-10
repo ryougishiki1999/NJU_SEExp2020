@@ -1,0 +1,153 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>MemoryChecker.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef CHECKER_MEMORY_CHECKER_H
+#define CHECKER_MEMORY_CHECKER_H
+
+#include "../CSADriver.h"
+#include &lt;clang/StaticAnalyzer/Core/BugReporter/BugReporterVisitors.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/Checker.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h&gt;
+#include &lt;string&gt;
+#include &lt;unordered_map&gt;
+// The checker for memory management, check memory leak, use-after-free,
+// double-free, inspired by clang Static Analyzer MallocChecker.
+
+namespace clang
+{
+namespace ento
+{
+class AnalysisManager;
+class BugReporter;
+class BugType;
+} // namespace ento
+} // namespace clang
+
+// This class represents the state of a memory region
+class MemoryState
+{
+  public:
+    enum State
+    {
+        Allocated,
+        Deallocated,
+        Unknown,
+    };
+    enum Function
+    {
+        Malloc,
+        Free,
+        CXXNew,
+        CXXNewArray,
+        CXXDelete,
+        CXXDeleteArray
+    };
+
+  public:
+<span style = "background-color:#dfd">    MemoryState(State s, Function func, clang::Stmt *stmt) : state(s), alloc_func(func), bind_stmt(stmt)
+    {
+    }</span>
+
+    bool operator==(const MemoryState &amp;other) const
+<span style = "background-color:#dfd">    {
+        return state == other.state &amp;&amp; alloc_func == other.alloc_func &amp;&amp; bind_stmt == other.bind_stmt;
+    }</span>
+    void Profile(llvm::FoldingSetNodeID &amp;ID) const
+<span style = "background-color:#dfd">    {
+        ID.AddInteger(state);
+        ID.AddInteger(alloc_func);
+        ID.AddPointer(bind_stmt);
+    }</span>
+    State state;
+    Function alloc_func;
+    clang::Stmt *bind_stmt;
+};
+
+class MemoryChecker
+    : public clang::ento::Checker&lt;clang::ento::check::NewAllocator, clang::ento::check::Location,
+                                  clang::ento::check::DeadSymbols, /*clang::ento::check::PointerEscape,
+                                  clang::ento::check::ConstPointerEscape,*/
+                                  clang::ento::check::PreCall, clang::ento::check::PostCall,
+                                  clang::ento::check::PostStmt&lt;clang::CXXNewExpr&gt;,
+                                  clang::ento::check::PreStmt&lt;clang::CXXDeleteExpr&gt;, clang::ento::eval::Assume,
+                                  clang::ento::check::PreStmt&lt;clang::ReturnStmt&gt;, clang::ento::check::EndFunction&gt;
+{
+
+  public:
+    void checkNewAllocator(const clang::CXXNewExpr *new_expr, clang::ento::SVal target,
+                           clang::ento::CheckerContext &amp;ctx) const;
+    void checkLocation(clang::ento::SVal loc, bool is_load, const clang::Stmt *stmt,
+                       clang::ento::CheckerContext &amp;ctx) const;
+    void checkDeadSymbols(clang::ento::SymbolReaper &amp;sym_reaper, clang::ento::CheckerContext &amp;ctx) const;
+    void checkPreCall(const clang::ento::CallEvent &amp;call, clang::ento::CheckerContext &amp;ctx) const;
+    void checkPostCall(const clang::ento::CallEvent &amp;call, clang::ento::CheckerContext &amp;ctx) const;
+    void checkPostStmt(const clang::CXXNewExpr *new_expr, clang::ento::CheckerContext &amp;ctx) const;
+    void checkPreStmt(const clang::CXXDeleteExpr *delete_expr, clang::ento::CheckerContext &amp;ctx) const;
+    clang::ento::ProgramStateRef evalAssume(clang::ento::ProgramStateRef state, clang::ento::SVal cond,
+                                            bool assumption) const;
+    void checkPreStmt(const clang::ReturnStmt *return_stmt, clang::ento::CheckerContext &amp;ctx) const;
+    void checkEndFunction(const clang::ReturnStmt *return_stmt, clang::ento::CheckerContext &amp;ctx) const;
+
+  public:
+    // helper
+    bool is_deallocated(clang::ento::CheckerContext &amp;ctx, clang::ento::SymbolRef memory) const;
+    bool is_new_delete(const clang::FunctionDecl *decl) const;
+
+    // handler
+    clang::ento::ProgramStateRef register_allocation_memory_state(clang::ento::CheckerContext &amp;ctx,
+                                                                  const clang::Expr *e,
+                                                                  clang::ento::ProgramStateRef state,
+                                                                  MemoryState::Function alloc_func,
+                                                                  clang::ento::SVal pointer) const;
+    clang::ento::ProgramStateRef handle_allocation(clang::ento::CheckerContext &amp;ctx, const clang::CallExpr *call_expr,
+                                                   clang::ento::ProgramStateRef state,
+                                                   MemoryState::Function alloc_func) const;
+    clang::ento::ProgramStateRef handle_deallocation(clang::ento::CheckerContext &amp;ctx, const clang::Expr *call_expr,
+                                                     const clang::Expr *arg_expr,
+                                                     clang::ento::ProgramStateRef state) const;
+    void handle_new(clang::ento::CheckerContext &amp;ctx, const clang::CXXNewExpr *expr, clang::ento::SVal memory,
+                    MemoryState::Function alloc_func) const;
+    void handle_return(const clang::ReturnStmt *return_stmt, clang::ento::CheckerContext &amp;ctx) const;
+
+    // checker
+    void check_malloc(clang::ento::CheckerContext &amp;ctx, const clang::CallExpr *expr,
+                      clang::ento::ProgramStateRef state) const;
+    void check_free(clang::ento::CheckerContext &amp;ctx, const clang::CallExpr *expr,
+                    clang::ento::ProgramStateRef state) const;
+    void check_new_delete(clang::ento::CheckerContext &amp;ctx, const clang::CallExpr *expr,
+                          clang::ento::ProgramStateRef state) const;
+    bool check_use_after_free(clang::ento::CheckerContext &amp;ctx, clang::ento::SymbolRef sym,
+                              const clang::Stmt *stmt) const;
+    // reporter
+    void report_memory_leak(clang::ento::CheckerContext &amp;ctx, clang::ento::SymbolRef memory,
+                            clang::ento::ExplodedNode *node) const;
+    void report_double_free(clang::ento::CheckerContext &amp;ctx, clang::SourceRange range,
+                            clang::ento::SymbolRef memory) const;
+    void report_use_after_free(clang::ento::CheckerContext &amp;ctx, clang::SourceRange range,
+                               clang::ento::SymbolRef memory) const;
+
+  private:
+    mutable std::unique_ptr&lt;clang::ento::BugType&gt; memory_leak_bug_type;
+    mutable std::unique_ptr&lt;clang::ento::BugType&gt; double_free_bug_type;
+    mutable std::unique_ptr&lt;clang::ento::BugType&gt; use_after_free_bug_type;
+
+  public:
+    using CheckFunctionType = std::function&lt;void(const MemoryChecker *, clang::ento::CheckerContext &amp;,
+                                                 const clang::CallExpr *, clang::ento::ProgramStateRef)&gt;;
+    const clang::ento::CallDescriptionMap&lt;CheckFunctionType&gt; deallocate_function_map{
+        {{"free", 1}, &amp;MemoryChecker::check_free}};
+    const clang::ento::CallDescriptionMap&lt;CheckFunctionType&gt; allocate_function_map{
+        {{"malloc", 1}, &amp;MemoryChecker::check_malloc}};
+};
+CSA_GENERATE_REGISTER_FUNCTION_DECL(MemoryChecker)
+#endif</pre>
+	</body>
+</html>

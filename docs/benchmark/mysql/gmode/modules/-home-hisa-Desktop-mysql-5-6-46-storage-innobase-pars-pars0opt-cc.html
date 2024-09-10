@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/pars/pars0opt.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 1997, 2011, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/**************************************************//**
+@file pars/pars0opt.cc
+Simple SQL optimizer
+
+Created 12/21/1997 Heikki Tuuri
+*******************************************************/
+
+#include "pars0opt.h"
+
+#ifdef UNIV_NONINL
+#include "pars0opt.ic"
+#endif
+
+#include "row0sel.h"
+#include "row0ins.h"
+#include "row0upd.h"
+#include "dict0dict.h"
+#include "dict0mem.h"
+#include "que0que.h"
+#include "pars0grm.h"
+#include "pars0pars.h"
+#include "lock0lock.h"
+
+#define OPT_EQUAL	1	/* comparison by = */
+#define OPT_COMPARISON	2	/* comparison by &lt;, &gt;, &lt;=, or &gt;= */
+
+#define OPT_NOT_COND	1
+#define OPT_END_COND	2
+#define OPT_TEST_COND	3
+#define OPT_SCROLL_COND	4
+
+
+/*******************************************************************//**
+Inverts a comparison operator.
+@return	the equivalent operator when the order of the arguments is switched */
+static
+int
+opt_invert_cmp_op(
+/*==============*/
+	int	op)	/*!&lt; in: operator */
+{
+	if (op == '&lt;') {
+		return('&gt;');
+	} else if (op == '&gt;') {
+		return('&lt;');
+	} else if (op == '=') {
+		return('=');
+	} else if (op == PARS_LE_TOKEN) {
+		return(PARS_GE_TOKEN);
+	} else if (op == PARS_GE_TOKEN) {
+		return(PARS_LE_TOKEN);
+	} else {
+		/* TODO: LIKE operator */
+		ut_error;
+	}
+
+	return(0);
+}
+
+/*******************************************************************//**
+Checks if the value of an expression can be calculated BEFORE the nth table
+in a join is accessed. If this is the case, it can possibly be used in an
+index search for the nth table.
+@return	TRUE if already determined */
+static
+ibool
+opt_check_exp_determined_before(
+/*============================*/
+	que_node_t*	exp,		/*!&lt; in: expression */
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		nth_table)	/*!&lt; in: nth table will be accessed */
+{
+	func_node_t*	func_node;
+	sym_node_t*	sym_node;
+	dict_table_t*	table;
+	que_node_t*	arg;
+	ulint		i;
+
+	ut_ad(exp &amp;&amp; sel_node);
+
+	if (que_node_get_type(exp) == QUE_NODE_FUNC) {
+		func_node = static_cast&lt;func_node_t*&gt;(exp);
+
+		arg = func_node-&gt;args;
+
+		while (arg) {
+			if (!opt_check_exp_determined_before(arg, sel_node,
+							     nth_table)) {
+				return(FALSE);
+			}
+
+			arg = que_node_get_next(arg);
+		}
+
+		return(TRUE);
+	}
+
+	ut_a(que_node_get_type(exp) == QUE_NODE_SYMBOL);
+
+	sym_node = static_cast&lt;sym_node_t*&gt;(exp);
+
+	if (sym_node-&gt;token_type != SYM_COLUMN) {
+
+		return(TRUE);
+	}
+
+	for (i = 0; i &lt; nth_table; i++) {
+
+		table = sel_node_get_nth_plan(sel_node, i)-&gt;table;
+
+		if (sym_node-&gt;table == table) {
+
+			return(TRUE);
+		}
+	}
+
+	return(FALSE);
+}
+
+/*******************************************************************//**
+Looks in a comparison condition if a column value is already restricted by
+it BEFORE the nth table is accessed.
+@return	expression restricting the value of the column, or NULL if not known */
+static
+que_node_t*
+opt_look_for_col_in_comparison_before(
+/*==================================*/
+	ulint		cmp_type,	/*!&lt; in: OPT_EQUAL, OPT_COMPARISON */
+	ulint		col_no,		/*!&lt; in: column number */
+	func_node_t*	search_cond,	/*!&lt; in: comparison condition */
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		nth_table,	/*!&lt; in: nth table in a join (a query
+					from a single table is considered a
+					join of 1 table) */
+	ulint*		op)		/*!&lt; out: comparison operator ('=',
+					PARS_GE_TOKEN, ... ); this is inverted
+					if the column appears on the right
+					side */
+{
+	sym_node_t*	sym_node;
+	dict_table_t*	table;
+	que_node_t*	exp;
+	que_node_t*	arg;
+
+	ut_ad(search_cond);
+
+	ut_a((search_cond-&gt;func == '&lt;')
+	     || (search_cond-&gt;func == '&gt;')
+	     || (search_cond-&gt;func == '=')
+	     || (search_cond-&gt;func == PARS_GE_TOKEN)
+	     || (search_cond-&gt;func == PARS_LE_TOKEN)
+	     || (search_cond-&gt;func == PARS_LIKE_TOKEN_EXACT)
+	     || (search_cond-&gt;func == PARS_LIKE_TOKEN_PREFIX)
+	     || (search_cond-&gt;func == PARS_LIKE_TOKEN_SUFFIX)
+	     || (search_cond-&gt;func == PARS_LIKE_TOKEN_SUBSTR));
+
+	table = sel_node_get_nth_plan(sel_node, nth_table)-&gt;table;
+
+	if ((cmp_type == OPT_EQUAL)
+	    &amp;&amp; (search_cond-&gt;func != '=')
+	    &amp;&amp; (search_cond-&gt;func != PARS_LIKE_TOKEN_EXACT)
+            &amp;&amp; (search_cond-&gt;func != PARS_LIKE_TOKEN_PREFIX)) {
+
+		return(NULL);
+
+	} else if ((cmp_type == OPT_COMPARISON)
+		   &amp;&amp; (search_cond-&gt;func != '&lt;')
+		   &amp;&amp; (search_cond-&gt;func != '&gt;')
+		   &amp;&amp; (search_cond-&gt;func != PARS_GE_TOKEN)
+		   &amp;&amp; (search_cond-&gt;func != PARS_LE_TOKEN)
+		   &amp;&amp; (search_cond-&gt;func != PARS_LIKE_TOKEN_PREFIX)
+                   &amp;&amp; (search_cond-&gt;func != PARS_LIKE_TOKEN_SUFFIX)) {
+
+		return(NULL);
+	}
+
+	arg = search_cond-&gt;args;
+
+	if (que_node_get_type(arg) == QUE_NODE_SYMBOL) {
+		sym_node = static_cast&lt;sym_node_t*&gt;(arg);
+
+		if ((sym_node-&gt;token_type == SYM_COLUMN)
+		    &amp;&amp; (sym_node-&gt;table == table)
+		    &amp;&amp; (sym_node-&gt;col_no == col_no)) {
+
+			/* sym_node contains the desired column id */
+
+			/* Check if the expression on the right side of the
+			operator is already determined */
+
+			exp = que_node_get_next(arg);
+
+			if (opt_check_exp_determined_before(exp, sel_node,
+							    nth_table)) {
+				*op = search_cond-&gt;func;
+
+				return(exp);
+			}
+		}
+	}
+
+	exp = search_cond-&gt;args;
+	arg = que_node_get_next(arg);
+
+	if (que_node_get_type(arg) == QUE_NODE_SYMBOL) {
+		sym_node = static_cast&lt;sym_node_t*&gt;(arg);
+
+		if ((sym_node-&gt;token_type == SYM_COLUMN)
+		    &amp;&amp; (sym_node-&gt;table == table)
+		    &amp;&amp; (sym_node-&gt;col_no == col_no)) {
+
+			if (opt_check_exp_determined_before(exp, sel_node,
+							    nth_table)) {
+				*op = opt_invert_cmp_op(search_cond-&gt;func);
+
+				return(exp);
+			}
+		}
+	}
+
+	return(NULL);
+}
+
+/*******************************************************************//**
+Looks in a search condition if a column value is already restricted by the
+search condition BEFORE the nth table is accessed. Takes into account that
+if we will fetch in an ascending order, we cannot utilize an upper limit for
+a column value; in a descending order, respectively, a lower limit.
+@return	expression restricting the value of the column, or NULL if not known */
+static
+que_node_t*
+opt_look_for_col_in_cond_before(
+/*============================*/
+	ulint		cmp_type,	/*!&lt; in: OPT_EQUAL, OPT_COMPARISON */
+	ulint		col_no,		/*!&lt; in: column number */
+	func_node_t*	search_cond,	/*!&lt; in: search condition or NULL */
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		nth_table,	/*!&lt; in: nth table in a join (a query
+					from a single table is considered a
+					join of 1 table) */
+	ulint*		op)		/*!&lt; out: comparison operator ('=',
+					PARS_GE_TOKEN, ... ) */
+{
+	func_node_t*	new_cond;
+	que_node_t*	exp;
+
+	if (search_cond == NULL) {
+
+		return(NULL);
+	}
+
+	ut_a(que_node_get_type(search_cond) == QUE_NODE_FUNC);
+	ut_a(search_cond-&gt;func != PARS_OR_TOKEN);
+	ut_a(search_cond-&gt;func != PARS_NOT_TOKEN);
+
+	if (search_cond-&gt;func == PARS_AND_TOKEN) {
+		new_cond = static_cast&lt;func_node_t*&gt;(search_cond-&gt;args);
+
+		exp = opt_look_for_col_in_cond_before(cmp_type, col_no,
+						      new_cond, sel_node,
+						      nth_table, op);
+		if (exp) {
+
+			return(exp);
+		}
+
+		new_cond = static_cast&lt;func_node_t*&gt;(
+			que_node_get_next(new_cond));
+
+		exp = opt_look_for_col_in_cond_before(cmp_type, col_no,
+						      new_cond, sel_node,
+						      nth_table, op);
+		return(exp);
+	}
+
+	exp = opt_look_for_col_in_comparison_before(cmp_type, col_no,
+						    search_cond, sel_node,
+						    nth_table, op);
+	if (exp == NULL) {
+
+		return(NULL);
+	}
+
+	/* If we will fetch in an ascending order, we cannot utilize an upper
+	limit for a column value; in a descending order, respectively, a lower
+	limit */
+
+	if (sel_node-&gt;asc &amp;&amp; ((*op == '&lt;') || (*op == PARS_LE_TOKEN))) {
+
+		return(NULL);
+
+	} else if (!sel_node-&gt;asc
+		   &amp;&amp; ((*op == '&gt;') || (*op == PARS_GE_TOKEN))) {
+
+		return(NULL);
+	}
+
+	return(exp);
+}
+
+/*******************************************************************//**
+Calculates the goodness for an index according to a select node. The
+goodness is 4 times the number of first fields in index whose values we
+already know exactly in the query. If we have a comparison condition for
+an additional field, 2 point are added. If the index is unique, and we know
+all the unique fields for the index we add 1024 points. For a clustered index
+we add 1 point.
+@return	goodness */
+static
+ulint
+opt_calc_index_goodness(
+/*====================*/
+	dict_index_t*	index,		/*!&lt; in: index */
+	sel_node_t*	sel_node,	/*!&lt; in: parsed select node */
+	ulint		nth_table,	/*!&lt; in: nth table in a join */
+	que_node_t**	index_plan,	/*!&lt; in/out: comparison expressions for
+					this index */
+	ulint*		last_op)	/*!&lt; out: last comparison operator, if
+					goodness &gt; 1 */
+{
+	que_node_t*	exp;
+	ulint		goodness;
+	ulint		n_fields;
+	ulint		col_no;
+	ulint		op;
+	ulint		j;
+
+	/* At least for now we don't support using FTS indexes for queries
+	done through InnoDB's own SQL parser. */
+	if (dict_index_is_online_ddl(index) || (index-&gt;type &amp; DICT_FTS)) {
+		return(0);
+	}
+
+	goodness = 0;
+
+	/* Note that as higher level node pointers in the B-tree contain
+	page addresses as the last field, we must not put more fields in
+	the search tuple than dict_index_get_n_unique_in_tree(index); see
+	the note in btr_cur_search_to_nth_level. */
+
+	n_fields = dict_index_get_n_unique_in_tree(index);
+
+	for (j = 0; j &lt; n_fields; j++) {
+
+		col_no = dict_index_get_nth_col_no(index, j);
+
+		exp = opt_look_for_col_in_cond_before(
+			OPT_EQUAL, col_no,
+			static_cast&lt;func_node_t*&gt;(sel_node-&gt;search_cond),
+			sel_node, nth_table, &amp;op);
+		if (exp) {
+			/* The value for this column is exactly known already
+			at this stage of the join */
+
+			index_plan[j] = exp;
+			*last_op = op;
+			goodness += 4;
+		} else {
+			/* Look for non-equality comparisons */
+
+			exp = opt_look_for_col_in_cond_before(
+				OPT_COMPARISON, col_no,
+				static_cast&lt;func_node_t*&gt;(
+					sel_node-&gt;search_cond),
+				sel_node, nth_table, &amp;op);
+			if (exp) {
+				index_plan[j] = exp;
+				*last_op = op;
+				goodness += 2;
+			}
+
+			break;
+		}
+	}
+
+	if (goodness &gt;= 4 * dict_index_get_n_unique(index)) {
+		goodness += 1024;
+
+		if (dict_index_is_clust(index)) {
+
+			goodness += 1024;
+		}
+	}
+
+	/* We have to test for goodness here, as last_op may not be set */
+	if (goodness &amp;&amp; dict_index_is_clust(index)) {
+
+		goodness++;
+	}
+
+	return(goodness);
+}
+
+/*******************************************************************//**
+Calculates the number of matched fields based on an index goodness.
+@return	number of excatly or partially matched fields */
+UNIV_INLINE
+ulint
+opt_calc_n_fields_from_goodness(
+/*============================*/
+	ulint	goodness)	/*!&lt; in: goodness */
+{
+	return(((goodness % 1024) + 2) / 4);
+}
+
+/*******************************************************************//**
+Converts a comparison operator to the corresponding search mode PAGE_CUR_GE,
+...
+@return	search mode */
+UNIV_INLINE
+ulint
+opt_op_to_search_mode(
+/*==================*/
+	ibool	asc,	/*!&lt; in: TRUE if the rows should be fetched in an
+			ascending order */
+	ulint	op)	/*!&lt; in: operator '=', PARS_GE_TOKEN, ... */
+{
+	if (op == '='
+	    || op == PARS_LIKE_TOKEN_EXACT
+	    || op == PARS_LIKE_TOKEN_PREFIX
+	    || op == PARS_LIKE_TOKEN_SUFFIX
+	    || op == PARS_LIKE_TOKEN_SUBSTR) {
+
+		if (asc) {
+			return(PAGE_CUR_GE);
+		} else {
+			return(PAGE_CUR_LE);
+		}
+	} else if (op == '&lt;') {
+		ut_a(!asc);
+		return(PAGE_CUR_L);
+	} else if (op == '&gt;') {
+		ut_a(asc);
+		return(PAGE_CUR_G);
+	} else if (op == PARS_GE_TOKEN) {
+		ut_a(asc);
+		return(PAGE_CUR_GE);
+	} else if (op == PARS_LE_TOKEN) {
+		ut_a(!asc);
+		return(PAGE_CUR_LE);
+	} else {
+		ut_error;
+	}
+
+	return(0);
+}
+
+/*******************************************************************//**
+Determines if a node is an argument node of a function node.
+@return	TRUE if is an argument */
+static
+ibool
+opt_is_arg(
+/*=======*/
+	que_node_t*	arg_node,	/*!&lt; in: possible argument node */
+	func_node_t*	func_node)	/*!&lt; in: function node */
+{
+	que_node_t*	arg;
+
+	arg = func_node-&gt;args;
+
+	while (arg) {
+		if (arg == arg_node) {
+
+			return(TRUE);
+		}
+
+		arg = que_node_get_next(arg);
+	}
+
+	return(FALSE);
+}
+
+/*******************************************************************//**
+Decides if the fetching of rows should be made in a descending order, and
+also checks that the chosen query plan produces a result which satisfies
+the order-by. */
+static
+void
+opt_check_order_by(
+/*===============*/
+	sel_node_t*	sel_node)	/*!&lt; in: select node; asserts an error
+					if the plan does not agree with the
+					order-by */
+{
+	order_node_t*	order_node;
+	dict_table_t*	order_table;
+	ulint		order_col_no;
+	plan_t*		plan;
+	ulint		i;
+
+	if (!sel_node-&gt;order_by) {
+
+		return;
+	}
+
+	order_node = sel_node-&gt;order_by;
+	order_col_no = order_node-&gt;column-&gt;col_no;
+	order_table = order_node-&gt;column-&gt;table;
+
+	/* If there is an order-by clause, the first non-exactly matched field
+	in the index used for the last table in the table list should be the
+	column defined in the order-by clause, and for all the other tables
+	we should get only at most a single row, otherwise we cannot presently
+	calculate the order-by, as we have no sort utility */
+
+	for (i = 0; i &lt; sel_node-&gt;n_tables; i++) {
+
+		plan = sel_node_get_nth_plan(sel_node, i);
+
+		if (i &lt; sel_node-&gt;n_tables - 1) {
+			ut_a(dict_index_get_n_unique(plan-&gt;index)
+			     &lt;= plan-&gt;n_exact_match);
+		} else {
+			ut_a(plan-&gt;table == order_table);
+
+			ut_a((dict_index_get_n_unique(plan-&gt;index)
+			      &lt;= plan-&gt;n_exact_match)
+			     || (dict_index_get_nth_col_no(plan-&gt;index,
+							   plan-&gt;n_exact_match)
+				 == order_col_no));
+		}
+	}
+}
+
+/*******************************************************************//**
+Optimizes a select. Decides which indexes to tables to use. The tables
+are accessed in the order that they were written to the FROM part in the
+select statement. */
+static
+void
+opt_search_plan_for_table(
+/*======================*/
+	sel_node_t*	sel_node,	/*!&lt; in: parsed select node */
+	ulint		i,		/*!&lt; in: this is the ith table */
+	dict_table_t*	table)		/*!&lt; in: table */
+{
+	plan_t*		plan;
+	dict_index_t*	index;
+	dict_index_t*	best_index;
+	ulint		n_fields;
+	ulint		goodness;
+	ulint		last_op		= 75946965;	/* Eliminate a Purify
+							warning */
+	ulint		best_goodness;
+	ulint		best_last_op = 0; /* remove warning */
+	que_node_t*	index_plan[256];
+	que_node_t*	best_index_plan[256];
+
+	plan = sel_node_get_nth_plan(sel_node, i);
+
+	plan-&gt;table = table;
+	plan-&gt;asc = sel_node-&gt;asc;
+	plan-&gt;pcur_is_open = FALSE;
+	plan-&gt;cursor_at_end = FALSE;
+
+	/* Calculate goodness for each index of the table */
+
+	index = dict_table_get_first_index(table);
+	best_index = index; /* Eliminate compiler warning */
+	best_goodness = 0;
+
+	/* should be do ... until ? comment by Jani */
+	while (index) {
+		goodness = opt_calc_index_goodness(index, sel_node, i,
+						   index_plan, &amp;last_op);
+		if (goodness &gt; best_goodness) {
+
+			best_index = index;
+			best_goodness = goodness;
+			n_fields = opt_calc_n_fields_from_goodness(goodness);
+
+			ut_memcpy(best_index_plan, index_plan,
+				  n_fields * sizeof(void*));
+			best_last_op = last_op;
+		}
+
+		dict_table_next_uncorrupted_index(index);
+	}
+
+	plan-&gt;index = best_index;
+
+	n_fields = opt_calc_n_fields_from_goodness(best_goodness);
+
+	if (n_fields == 0) {
+		plan-&gt;tuple = NULL;
+		plan-&gt;n_exact_match = 0;
+	} else {
+		plan-&gt;tuple = dtuple_create(pars_sym_tab_global-&gt;heap,
+					    n_fields);
+		dict_index_copy_types(plan-&gt;tuple, plan-&gt;index, n_fields);
+
+		plan-&gt;tuple_exps = static_cast&lt;que_node_t**&gt;(
+			mem_heap_alloc(
+				pars_sym_tab_global-&gt;heap,
+				n_fields * sizeof(void*)));
+
+		ut_memcpy(plan-&gt;tuple_exps, best_index_plan,
+			  n_fields * sizeof(void*));
+		if (best_last_op == '='
+		    || best_last_op == PARS_LIKE_TOKEN_EXACT
+                    || best_last_op == PARS_LIKE_TOKEN_PREFIX
+                    || best_last_op == PARS_LIKE_TOKEN_SUFFIX
+                    || best_last_op == PARS_LIKE_TOKEN_SUBSTR) {
+			plan-&gt;n_exact_match = n_fields;
+		} else {
+			plan-&gt;n_exact_match = n_fields - 1;
+		}
+
+		plan-&gt;mode = opt_op_to_search_mode(sel_node-&gt;asc,
+						   best_last_op);
+	}
+
+	if (dict_index_is_clust(best_index)
+	    &amp;&amp; (plan-&gt;n_exact_match &gt;= dict_index_get_n_unique(best_index))) {
+
+		plan-&gt;unique_search = TRUE;
+	} else {
+		plan-&gt;unique_search = FALSE;
+	}
+
+	plan-&gt;old_vers_heap = NULL;
+
+	btr_pcur_init(&amp;(plan-&gt;pcur));
+	btr_pcur_init(&amp;(plan-&gt;clust_pcur));
+}
+
+/*******************************************************************//**
+Looks at a comparison condition and decides if it can, and need, be tested for
+a table AFTER the table has been accessed.
+@return OPT_NOT_COND if not for this table, else OPT_END_COND,
+OPT_TEST_COND, or OPT_SCROLL_COND, where the last means that the
+condition need not be tested, except when scroll cursors are used */
+static
+ulint
+opt_classify_comparison(
+/*====================*/
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		i,		/*!&lt; in: ith table in the join */
+	func_node_t*	cond)		/*!&lt; in: comparison condition */
+{
+	plan_t*	plan;
+	ulint	n_fields;
+	ulint	op;
+	ulint	j;
+
+	ut_ad(cond &amp;&amp; sel_node);
+
+	plan = sel_node_get_nth_plan(sel_node, i);
+
+	/* Check if the condition is determined after the ith table has been
+	accessed, but not after the i - 1:th */
+
+	if (!opt_check_exp_determined_before(cond, sel_node, i + 1)) {
+
+		return(OPT_NOT_COND);
+	}
+
+	if ((i &gt; 0) &amp;&amp; opt_check_exp_determined_before(cond, sel_node, i)) {
+
+		return(OPT_NOT_COND);
+	}
+
+	/* If the condition is an exact match condition used in constructing
+	the search tuple, it is classified as OPT_END_COND */
+
+	if (plan-&gt;tuple) {
+		n_fields = dtuple_get_n_fields(plan-&gt;tuple);
+	} else {
+		n_fields = 0;
+	}
+
+	for (j = 0; j &lt; plan-&gt;n_exact_match; j++) {
+
+		if (opt_is_arg(plan-&gt;tuple_exps[j], cond)) {
+
+			return(OPT_END_COND);
+		}
+	}
+
+	/* If the condition is an non-exact match condition used in
+	constructing the search tuple, it is classified as OPT_SCROLL_COND.
+	When the cursor is positioned, and if a non-scroll cursor is used,
+	there is no need to test this condition; if a scroll cursor is used
+	the testing is necessary when the cursor is reversed. */
+
+	if ((n_fields &gt; plan-&gt;n_exact_match)
+	    &amp;&amp; opt_is_arg(plan-&gt;tuple_exps[n_fields - 1], cond)) {
+
+		return(OPT_SCROLL_COND);
+	}
+
+	/* If the condition is a non-exact match condition on the first field
+	in index for which there is no exact match, and it limits the search
+	range from the opposite side of the search tuple already BEFORE we
+	access the table, it is classified as OPT_END_COND */
+
+	if ((dict_index_get_n_fields(plan-&gt;index) &gt; plan-&gt;n_exact_match)
+	    &amp;&amp; opt_look_for_col_in_comparison_before(
+		    OPT_COMPARISON,
+		    dict_index_get_nth_col_no(plan-&gt;index,
+					      plan-&gt;n_exact_match),
+		    cond, sel_node, i, &amp;op)) {
+
+		if (sel_node-&gt;asc &amp;&amp; ((op == '&lt;') || (op == PARS_LE_TOKEN))) {
+
+			return(OPT_END_COND);
+		}
+
+		if (!sel_node-&gt;asc &amp;&amp; ((op == '&gt;') || (op == PARS_GE_TOKEN))) {
+
+			return(OPT_END_COND);
+		}
+	}
+
+	/* Otherwise, cond is classified as OPT_TEST_COND */
+
+	return(OPT_TEST_COND);
+}
+
+/*******************************************************************//**
+Recursively looks for test conditions for a table in a join. */
+static
+void
+opt_find_test_conds(
+/*================*/
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		i,		/*!&lt; in: ith table in the join */
+	func_node_t*	cond)		/*!&lt; in: conjunction of search
+					conditions or NULL */
+{
+	func_node_t*	new_cond;
+	ulint		fclass;
+	plan_t*		plan;
+
+	if (cond == NULL) {
+
+		return;
+	}
+
+	if (cond-&gt;func == PARS_AND_TOKEN) {
+		new_cond = static_cast&lt;func_node_t*&gt;(cond-&gt;args);
+
+		opt_find_test_conds(sel_node, i, new_cond);
+
+		new_cond = static_cast&lt;func_node_t*&gt;(
+			que_node_get_next(new_cond));
+
+		opt_find_test_conds(sel_node, i, new_cond);
+
+		return;
+	}
+
+	plan = sel_node_get_nth_plan(sel_node, i);
+
+	fclass = opt_classify_comparison(sel_node, i, cond);
+
+	if (fclass == OPT_END_COND) {
+		UT_LIST_ADD_LAST(cond_list, plan-&gt;end_conds, cond);
+
+	} else if (fclass == OPT_TEST_COND) {
+		UT_LIST_ADD_LAST(cond_list, plan-&gt;other_conds, cond);
+
+	}
+}
+
+/*******************************************************************//**
+Normalizes a list of comparison conditions so that a column of the table
+appears on the left side of the comparison if possible. This is accomplished
+by switching the arguments of the operator. */
+static
+void
+opt_normalize_cmp_conds(
+/*====================*/
+	func_node_t*	cond,	/*!&lt; in: first in a list of comparison
+				conditions, or NULL */
+	dict_table_t*	table)	/*!&lt; in: table */
+{
+	que_node_t*	arg1;
+	que_node_t*	arg2;
+	sym_node_t*	sym_node;
+
+	while (cond) {
+		arg1 = cond-&gt;args;
+		arg2 = que_node_get_next(arg1);
+
+		if (que_node_get_type(arg2) == QUE_NODE_SYMBOL) {
+
+			sym_node = static_cast&lt;sym_node_t*&gt;(arg2);
+
+			if ((sym_node-&gt;token_type == SYM_COLUMN)
+			    &amp;&amp; (sym_node-&gt;table == table)) {
+
+				/* Switch the order of the arguments */
+
+				cond-&gt;args = arg2;
+				que_node_list_add_last(NULL, arg2);
+				que_node_list_add_last(arg2, arg1);
+
+				/* Invert the operator */
+				cond-&gt;func = opt_invert_cmp_op(cond-&gt;func);
+			}
+		}
+
+		cond = UT_LIST_GET_NEXT(cond_list, cond);
+	}
+}
+
+/*******************************************************************//**
+Finds out the search condition conjuncts we can, and need, to test as the ith
+table in a join is accessed. The search tuple can eliminate the need to test
+some conjuncts. */
+static
+void
+opt_determine_and_normalize_test_conds(
+/*===================================*/
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		i)		/*!&lt; in: ith table in the join */
+{
+	plan_t*	plan;
+
+	plan = sel_node_get_nth_plan(sel_node, i);
+
+	UT_LIST_INIT(plan-&gt;end_conds);
+	UT_LIST_INIT(plan-&gt;other_conds);
+
+	/* Recursively go through the conjuncts and classify them */
+
+	opt_find_test_conds(
+		sel_node,
+		i,
+		static_cast&lt;func_node_t*&gt;(sel_node-&gt;search_cond));
+
+	opt_normalize_cmp_conds(UT_LIST_GET_FIRST(plan-&gt;end_conds),
+				plan-&gt;table);
+
+	ut_a(UT_LIST_GET_LEN(plan-&gt;end_conds) &gt;= plan-&gt;n_exact_match);
+}
+
+/*******************************************************************//**
+Looks for occurrences of the columns of the table in the query subgraph and
+adds them to the list of columns if an occurrence of the same column does not
+already exist in the list. If the column is already in the list, puts a value
+indirection to point to the occurrence in the column list, except if the
+column occurrence we are looking at is in the column list, in which case
+nothing is done. */
+UNIV_INTERN
+void
+opt_find_all_cols(
+/*==============*/
+	ibool		copy_val,	/*!&lt; in: if TRUE, new found columns are
+					added as columns to copy */
+	dict_index_t*	index,		/*!&lt; in: index of the table to use */
+	sym_node_list_t* col_list,	/*!&lt; in: base node of a list where
+					to add new found columns */
+	plan_t*		plan,		/*!&lt; in: plan or NULL */
+	que_node_t*	exp)		/*!&lt; in: expression or condition or
+					NULL */
+{
+	func_node_t*	func_node;
+	que_node_t*	arg;
+	sym_node_t*	sym_node;
+	sym_node_t*	col_node;
+	ulint		col_pos;
+
+	if (exp == NULL) {
+
+		return;
+	}
+
+	if (que_node_get_type(exp) == QUE_NODE_FUNC) {
+		func_node = static_cast&lt;func_node_t*&gt;(exp);
+
+		for (arg = func_node-&gt;args;
+		     arg != 0;
+		     arg = que_node_get_next(arg)) {
+
+			opt_find_all_cols(
+				copy_val, index, col_list, plan, arg);
+		}
+
+		return;
+	}
+
+	ut_a(que_node_get_type(exp) == QUE_NODE_SYMBOL);
+
+	sym_node = static_cast&lt;sym_node_t*&gt;(exp);
+
+	if (sym_node-&gt;token_type != SYM_COLUMN) {
+
+		return;
+	}
+
+	if (sym_node-&gt;table != index-&gt;table) {
+
+		return;
+	}
+
+	/* Look for an occurrence of the same column in the plan column
+	list */
+
+	col_node = UT_LIST_GET_FIRST(*col_list);
+
+	while (col_node) {
+		if (col_node-&gt;col_no == sym_node-&gt;col_no) {
+
+			if (col_node == sym_node) {
+				/* sym_node was already in a list: do
+				nothing */
+
+				return;
+			}
+
+			/* Put an indirection */
+			sym_node-&gt;indirection = col_node;
+			sym_node-&gt;alias = col_node;
+
+			return;
+		}
+
+		col_node = UT_LIST_GET_NEXT(col_var_list, col_node);
+	}
+
+	/* The same column did not occur in the list: add it */
+
+	UT_LIST_ADD_LAST(col_var_list, *col_list, sym_node);
+
+	sym_node-&gt;copy_val = copy_val;
+
+	/* Fill in the field_no fields in sym_node */
+
+	sym_node-&gt;field_nos[SYM_CLUST_FIELD_NO] = dict_index_get_nth_col_pos(
+		dict_table_get_first_index(index-&gt;table), sym_node-&gt;col_no);
+	if (!dict_index_is_clust(index)) {
+
+		ut_a(plan);
+
+		col_pos = dict_index_get_nth_col_pos(index, sym_node-&gt;col_no);
+
+		if (col_pos == ULINT_UNDEFINED) {
+
+			plan-&gt;must_get_clust = TRUE;
+		}
+
+		sym_node-&gt;field_nos[SYM_SEC_FIELD_NO] = col_pos;
+	}
+}
+
+/*******************************************************************//**
+Looks for occurrences of the columns of the table in conditions which are
+not yet determined AFTER the join operation has fetched a row in the ith
+table. The values for these column must be copied to dynamic memory for
+later use. */
+static
+void
+opt_find_copy_cols(
+/*===============*/
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		i,		/*!&lt; in: ith table in the join */
+	func_node_t*	search_cond)	/*!&lt; in: search condition or NULL */
+{
+	func_node_t*	new_cond;
+	plan_t*		plan;
+
+	if (search_cond == NULL) {
+
+		return;
+	}
+
+	ut_ad(que_node_get_type(search_cond) == QUE_NODE_FUNC);
+
+	if (search_cond-&gt;func == PARS_AND_TOKEN) {
+		new_cond = static_cast&lt;func_node_t*&gt;(search_cond-&gt;args);
+
+		opt_find_copy_cols(sel_node, i, new_cond);
+
+		new_cond = static_cast&lt;func_node_t*&gt;(
+			que_node_get_next(new_cond));
+
+		opt_find_copy_cols(sel_node, i, new_cond);
+
+		return;
+	}
+
+	if (!opt_check_exp_determined_before(search_cond, sel_node, i + 1)) {
+
+		/* Any ith table columns occurring in search_cond should be
+		copied, as this condition cannot be tested already on the
+		fetch from the ith table */
+
+		plan = sel_node_get_nth_plan(sel_node, i);
+
+		opt_find_all_cols(TRUE, plan-&gt;index, &amp;(plan-&gt;columns), plan,
+				  search_cond);
+	}
+}
+
+/*******************************************************************//**
+Classifies the table columns according to whether we use the column only while
+holding the latch on the page, or whether we have to copy the column value to
+dynamic memory. Puts the first occurrence of a column to either list in the
+plan node, and puts indirections to later occurrences of the column. */
+static
+void
+opt_classify_cols(
+/*==============*/
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		i)		/*!&lt; in: ith table in the join */
+{
+	plan_t*		plan;
+	que_node_t*	exp;
+
+	plan = sel_node_get_nth_plan(sel_node, i);
+
+	/* The final value of the following field will depend on the
+	environment of the select statement: */
+
+	plan-&gt;must_get_clust = FALSE;
+
+	UT_LIST_INIT(plan-&gt;columns);
+
+	/* All select list columns should be copied: therefore TRUE as the
+	first argument */
+
+	for (exp = sel_node-&gt;select_list;
+	     exp != 0;
+	     exp = que_node_get_next(exp)) {
+
+		opt_find_all_cols(
+			TRUE, plan-&gt;index, &amp;(plan-&gt;columns), plan, exp);
+	}
+
+	opt_find_copy_cols(
+		sel_node, i, static_cast&lt;func_node_t*&gt;(sel_node-&gt;search_cond));
+
+	/* All remaining columns in the search condition are temporary
+	columns: therefore FALSE */
+
+	opt_find_all_cols(
+		FALSE, plan-&gt;index, &amp;plan-&gt;columns, plan,
+		static_cast&lt;func_node_t*&gt;(sel_node-&gt;search_cond));
+}
+
+/*******************************************************************//**
+Fills in the info in plan which is used in accessing a clustered index
+record. The columns must already be classified for the plan node. */
+static
+void
+opt_clust_access(
+/*=============*/
+	sel_node_t*	sel_node,	/*!&lt; in: select node */
+	ulint		n)		/*!&lt; in: nth table in select */
+{
+	plan_t*		plan;
+	dict_table_t*	table;
+	dict_index_t*	clust_index;
+	dict_index_t*	index;
+	mem_heap_t*	heap;
+	ulint		n_fields;
+	ulint		pos;
+	ulint		i;
+
+	plan = sel_node_get_nth_plan(sel_node, n);
+
+	index = plan-&gt;index;
+
+	/* The final value of the following field depends on the environment
+	of the select statement: */
+
+	plan-&gt;no_prefetch = FALSE;
+
+	if (dict_index_is_clust(index)) {
+		plan-&gt;clust_map = NULL;
+		plan-&gt;clust_ref = NULL;
+
+		return;
+	}
+
+	table = index-&gt;table;
+
+	clust_index = dict_table_get_first_index(table);
+
+	n_fields = dict_index_get_n_unique(clust_index);
+
+	heap = pars_sym_tab_global-&gt;heap;
+
+	plan-&gt;clust_ref = dtuple_create(heap, n_fields);
+
+	dict_index_copy_types(plan-&gt;clust_ref, clust_index, n_fields);
+
+	plan-&gt;clust_map = static_cast&lt;ulint*&gt;(
+		mem_heap_alloc(heap, n_fields * sizeof(ulint)));
+
+	for (i = 0; i &lt; n_fields; i++) {
+		pos = dict_index_get_nth_field_pos(index, clust_index, i);
+
+		ut_a(pos != ULINT_UNDEFINED);
+
+		/* We optimize here only queries to InnoDB's internal system
+		tables, and they should not contain column prefix indexes. */
+
+		if (dict_index_get_nth_field(index, pos)-&gt;prefix_len != 0
+		    || dict_index_get_nth_field(clust_index, i)
+		    -&gt;prefix_len != 0) {
+			fprintf(stderr,
+				"InnoDB: Error in pars0opt.cc:"
+				" table %s has prefix_len != 0\n",
+				index-&gt;table_name);
+		}
+
+		*(plan-&gt;clust_map + i) = pos;
+
+		ut_ad(pos != ULINT_UNDEFINED);
+	}
+}
+
+/*******************************************************************//**
+Optimizes a select. Decides which indexes to tables to use. The tables
+are accessed in the order that they were written to the FROM part in the
+select statement. */
+UNIV_INTERN
+void
+opt_search_plan(
+/*============*/
+	sel_node_t*	sel_node)	/*!&lt; in: parsed select node */
+{
+	sym_node_t*	table_node;
+	dict_table_t*	table;
+	order_node_t*	order_by;
+	ulint		i;
+
+	sel_node-&gt;plans = static_cast&lt;plan_t*&gt;(
+		mem_heap_alloc(
+			pars_sym_tab_global-&gt;heap,
+			sel_node-&gt;n_tables * sizeof(plan_t)));
+
+	/* Analyze the search condition to find out what we know at each
+	join stage about the conditions that the columns of a table should
+	satisfy */
+
+	table_node = sel_node-&gt;table_list;
+
+	if (sel_node-&gt;order_by == NULL) {
+		sel_node-&gt;asc = TRUE;
+	} else {
+		order_by = sel_node-&gt;order_by;
+
+		sel_node-&gt;asc = order_by-&gt;asc;
+	}
+
+	for (i = 0; i &lt; sel_node-&gt;n_tables; i++) {
+
+		table = table_node-&gt;table;
+
+		/* Choose index through which to access the table */
+
+		opt_search_plan_for_table(sel_node, i, table);
+
+		/* Determine the search condition conjuncts we can test at
+		this table; normalize the end conditions */
+
+		opt_determine_and_normalize_test_conds(sel_node, i);
+
+		table_node = static_cast&lt;sym_node_t*&gt;(
+			que_node_get_next(table_node));
+	}
+
+	table_node = sel_node-&gt;table_list;
+
+	for (i = 0; i &lt; sel_node-&gt;n_tables; i++) {
+
+		/* Classify the table columns into those we only need to access
+		but not copy, and to those we must copy to dynamic memory */
+
+		opt_classify_cols(sel_node, i);
+
+		/* Calculate possible info for accessing the clustered index
+		record */
+
+		opt_clust_access(sel_node, i);
+
+		table_node = static_cast&lt;sym_node_t*&gt;(
+			que_node_get_next(table_node));
+	}
+
+	/* Check that the plan obeys a possible order-by clause: if not,
+	an assertion error occurs */
+
+	opt_check_order_by(sel_node);
+
+#ifdef UNIV_SQL_DEBUG
+	opt_print_query_plan(sel_node);
+#endif
+}
+
+/********************************************************************//**
+Prints info of a query plan. */
+UNIV_INTERN
+void
+opt_print_query_plan(
+/*=================*/
+	sel_node_t*	sel_node)	/*!&lt; in: select node */
+{
+	plan_t*	plan;
+	ulint	n_fields;
+	ulint	i;
+
+	fputs("QUERY PLAN FOR A SELECT NODE\n", stderr);
+
+	fputs(sel_node-&gt;asc ? "Asc. search; " : "Desc. search; ", stderr);
+
+	if (sel_node-&gt;set_x_locks) {
+		fputs("sets row x-locks; ", stderr);
+		ut_a(sel_node-&gt;row_lock_mode == LOCK_X);
+		ut_a(!sel_node-&gt;consistent_read);
+	} else if (sel_node-&gt;consistent_read) {
+		fputs("consistent read; ", stderr);
+	} else {
+		ut_a(sel_node-&gt;row_lock_mode == LOCK_S);
+		fputs("sets row s-locks; ", stderr);
+	}
+
+	putc('\n', stderr);
+
+	for (i = 0; i &lt; sel_node-&gt;n_tables; i++) {
+		plan = sel_node_get_nth_plan(sel_node, i);
+
+		if (plan-&gt;tuple) {
+			n_fields = dtuple_get_n_fields(plan-&gt;tuple);
+		} else {
+			n_fields = 0;
+		}
+
+		fputs("Table ", stderr);
+		dict_index_name_print(stderr, NULL, plan-&gt;index);
+		fprintf(stderr,"; exact m. %lu, match %lu, end conds %lu\n",
+			(unsigned long) plan-&gt;n_exact_match,
+			(unsigned long) n_fields,
+			(unsigned long) UT_LIST_GET_LEN(plan-&gt;end_conds));
+	}
+}
+      </pre>
+    </body>
+</html>

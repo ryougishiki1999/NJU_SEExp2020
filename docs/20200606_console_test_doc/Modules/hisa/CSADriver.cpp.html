@@ -1,0 +1,182 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>CSADriver.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "CSADriver.h"
+#include "Logger.h"
+#include "ResultCollector.h"
+#include &lt;clang/Frontend/CompilerInstance.h&gt;
+#include &lt;clang/StaticAnalyzer/Frontend/AnalysisConsumer.h&gt;
+#include &lt;clang/StaticAnalyzer/Frontend/CheckerRegistry.h&gt;
+#include &lt;vector&gt;
+
+static bool csa_should_register_function(const clang::ento::CheckerManager &amp;)
+<span style = "background-color:#dfd">{
+    return true;
+}</span>
+
+/////////////////////////////////////
+// CSACheckerRegistry
+/////////////////////////////////////
+CSACheckerRegistry::CSAChecker::CSAChecker(const std::string &amp;n, CSACheckerRegistry::InitFuncType init_f,
+                                           const std::string &amp;desc, bool en)
+<span style = "background-color:#dfd">    : name(n), init_func(init_f), description(desc), enabled(en)
+{
+}</span>
+CSACheckerRegistry &amp;CSACheckerRegistry::instance()
+<span style = "background-color:#dfd">{
+    static CSACheckerRegistry cr;
+    return cr;
+}</span>
+void CSACheckerRegistry::register_checker(const std::string &amp;name, InitFuncType init_function, const std::string &amp;desc)
+<span style = "background-color:#dfd">{
+    std::string full_name = "hisa." + name;</span>
+    /*DEBUG("Register Checker %s to CSADriver.\n", full_name.c_str());*/
+<span style = "background-color:#dfd">    checkers.insert(std::make_pair(full_name, CSAChecker(full_name, init_function, desc)));
+}</span>
+void CSACheckerRegistry::add_checkers_to_csa(clang::ento::CheckerRegistry &amp;cr)
+<span style = "background-color:#dfd">{
+    for (auto &amp;chk : checkers)</span>
+    {
+        /*DEBUG("Add Checker %s to CSA.\n", chk.first.c_str());*/
+<span style = "background-color:#dfd">        cr.addChecker(chk.second.init_func, csa_should_register_function, chk.first, chk.second.description, "", false);
+    }
+}</span>
+void CSACheckerRegistry::inject_checkers(clang::AnalyzerOptions *opts)
+<span style = "background-color:#dfd">{
+    for (auto &amp;chk : checkers)</span>
+    {
+        /*DEBUG("Inject Checker %s to CSA Instance.\n", chk.first.c_str());*/
+<span style = "background-color:#dfd">        opts-&gt;CheckersAndPackages.push_back(std::make_pair(chk.first, chk.second.enabled));
+    }
+}</span>
+void CSACheckerRegistry::dump_checkers(std::ostream &amp;os)
+<span style = "background-color:#dfd">{
+    os &lt;&lt; "\tChecker\tDescription\tEnabled?\n";
+    for (const auto &amp;i : checkers)</span>
+    {
+<span style = "background-color:#dfd">        os &lt;&lt; '\t' &lt;&lt; i.second.name &lt;&lt; '\t' &lt;&lt; i.second.description &lt;&lt; '\t' &lt;&lt; i.second.enabled &lt;&lt; '\n';
+    }
+}</span>
+void CSACheckerRegistry::reset_checker_state()
+<span style = "background-color:#dfd">{
+    for (auto &amp;i : checkers)</span>
+    {
+<span style = "background-color:#dfd">        i.second.enabled = true;
+    }
+}</span>
+
+static void csa_checker_registry(clang::ento::CheckerRegistry &amp;cr)
+<span style = "background-color:#dfd">{
+    CSACheckerRegistry::instance().add_checkers_to_csa(cr);
+}</span>
+/////////////////////////////////////
+// CSAAction
+/////////////////////////////////////
+<span style = "background-color:#dfd">CSAAction::CSAAction(const AnalyzerOptions &amp;opts, const EventCallbackTable &amp;ev_tb) : options(opts), event_table(ev_tb)
+{
+}</span>
+CSAAction::~CSAAction()
+<span style = "background-color:#dfd">{
+    if (options.enable_stats)</span>
+    {
+<span style = "background-color:#dfd">        timer.stop();
+        ResultCollector::instance().add_stats(Stats(filename, timer.used_time()));</span>
+    }
+<span style = "background-color:#dfd">}</span>
+std::unique_ptr&lt;clang::ASTConsumer&gt; CSAAction::CreateASTConsumer(clang::CompilerInstance &amp;CI, llvm::StringRef InFile)
+<span style = "background-color:#dfd">{
+    event_table.callback(std::make_unique&lt;AnalyzingFileEvent&gt;(InFile.str()));</span>
+    // std::cout &lt;&lt; "Analyzing " &lt;&lt; InFile.str() &lt;&lt; '\n';
+    /* INFO("Analyzing %s\n", InFile.str().c_str()); */
+    // inject the analyzer options here
+<span style = "background-color:#dfd">    clang::AnalyzerOptions *opts = CI.getAnalyzerOpts().get();</span>
+    // disable builtin checkers
+<span style = "background-color:#dfd">    if (!options.enable_god_mode)</span>
+    {
+<span style = "background-color:#dfd">        for (auto &amp;chk : opts-&gt;CheckersAndPackages)</span>
+        {
+<span style = "background-color:#dfd">            chk.second = false;
+        }</span>
+        // inject our checkers
+<span style = "background-color:#dfd">        CSACheckerRegistry::instance().inject_checkers(opts);</span>
+    }
+    // todo enable specified checkers in god mode
+<span style = "background-color:#dfd">    if (options.enable_debug_mode)</span>
+    {
+<span style = "background-color:#fdd">        opts-&gt;AnalyzerDisplayProgress = options.show_analysis_progress;
+        opts-&gt;visualizeExplodedGraphWithGraphViz = options.enable_exploded_graph;
+        opts-&gt;DumpExplodedGraphTo = options.debug_output_path;
+        opts-&gt;TrimGraph = options.trim_exploded_graph;
+    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        opts-&gt;AnalysisDiagOpt = clang::AnalysisDiagClients::PD_NONE;</span>
+    }
+    // for debug stats
+<span style = "background-color:#dfd">    if (options.enable_stats &amp;&amp; options.enable_debug_mode)</span>
+<span style = "background-color:#fdd">        opts-&gt;PrintStats = 1;</span>
+    // create consumer
+<span style = "background-color:#dfd">    std::unique_ptr&lt;clang::ento::AnalysisASTConsumer&gt; consumer = clang::ento::CreateAnalysisConsumer(CI);
+    consumer-&gt;AddDiagnosticConsumer(new CSADiagnostics);
+    if (!options.enable_god_mode)
+        consumer-&gt;AddCheckerRegistrationFn(csa_checker_registry);</span>
+    // stats
+<span style = "background-color:#dfd">    if (options.enable_stats)</span>
+    {
+<span style = "background-color:#dfd">        filename = InFile.str();
+        timer.start();</span>
+    }
+<span style = "background-color:#dfd">    return consumer;
+}</span>
+/////////////////////////////////////
+// CSAFactory
+/////////////////////////////////////
+<span style = "background-color:#dfd">CSAFactory::CSAFactory(const AnalyzerOptions &amp;opts, const EventCallbackTable &amp;ev_tb) : options(opts), event_table(ev_tb)
+{
+}</span>
+std::unique_ptr&lt;clang::FrontendAction&gt; CSAFactory::create()
+<span style = "background-color:#dfd">{
+    return std::make_unique&lt;CSAAction&gt;(options, event_table);
+}</span>
+/////////////////////////////////////
+// CSADiagnostics
+/////////////////////////////////////
+CSADiagnostics::CSADiagnostics()
+<span style = "background-color:#dfd">{
+}</span>
+CSADiagnostics::~CSADiagnostics()
+<span style = "background-color:#dfd">{
+}</span>
+
+llvm::StringRef CSADiagnostics::getName() const
+<span style = "background-color:#fdd">{
+    return "CSADiagnostics";
+}</span>
+
+void CSADiagnostics::FlushDiagnosticsImpl(std::vector&lt;const clang::ento::PathDiagnostic *&gt; &amp;diags,
+                                          FilesMade *files_made)
+<span style = "background-color:#dfd">{
+    for (auto &amp;diag : diags)</span>
+    {
+        /* clang::FullSourceLoc loc = diag-&gt;getLocation().asLocation();
+        ResultCollector::instance().add_diagnostic(
+            Diagnostic(diag-&gt;getCheckerName().str(), diag-&gt;getBugType().str(), loc.getManager().getFilename(loc).str(),
+                       diag-&gt;getShortDescription().str(), loc.getSpellingLineNumber(), loc.getSpellingColumnNumber()));
+      */
+<span style = "background-color:#dfd">        clang::FullSourceLoc loc = diag-&gt;getLocation().asLocation();
+        clang::PresumedLoc ploc = loc.getManager().getPresumedLoc(loc);
+        ResultCollector::instance().add_diagnostic(</span>
+            Diagnostic(diag-&gt;getCheckerName().str(), diag-&gt;getBugType().str(), std::string(ploc.getFilename()),
+                       diag-&gt;getShortDescription().str(), ploc.getLine(), ploc.getColumn()));
+<span style = "background-color:#dfd">    }
+}</span></pre>
+	</body>
+</html>

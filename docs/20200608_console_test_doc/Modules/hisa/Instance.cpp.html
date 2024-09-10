@@ -1,0 +1,106 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>Instance.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "Instance.h"
+#include "../CSADriver.h"
+#include "../CommandLineParser.h"
+#include "../OutputManager.h"
+#include "../ResultCollector.h"
+#include "../StaticAnalyzer.h"
+#include "../Statistics/StatisticsHelper.h"
+#include "../checker/DereferenceChecker.h"
+#include "../checker/DivModZeroChecker.h"
+#include "../checker/MemoryChecker.h"
+#include "../checker/UninitObjChecker/UninitializedObjectChecker.h"
+
+void HiSAInstance::global_init()
+<span style = "background-color:#dfd">{</span>
+    // register checkers
+<span style = "background-color:#dfd">    CSACheckerRegistry::instance().register_checker("MemoryChecker", CSA_REGISTER_FUNCTION_NAME(MemoryChecker),</span>
+                                                    "memory leak,double-free,use-after-free");
+<span style = "background-color:#dfd">    CSACheckerRegistry::instance().register_checker("DivZeroChecker", CSA_REGISTER_FUNCTION_NAME(DivModZeroChecker),</span>
+                                                    "div zero,mod zero,div taint value");
+<span style = "background-color:#dfd">    CSACheckerRegistry::instance().register_checker("UninitObjChecker", CSA_REGISTER_FUNCTION_NAME(UninitObjChecker),</span>
+                                                    "non-union,primitive,reference uninitialize");
+<span style = "background-color:#dfd">    CSACheckerRegistry::instance().register_checker(</span>
+        "DereferenceChecker", CSA_REGISTER_FUNCTION_NAME(DereferenceChecker), "null-pointer-dereference");
+<span style = "background-color:#dfd">}
+HiSAInstance::HiSAInstance(const EventCallbackTable &amp;tb) : event_table(tb)
+{
+}</span>
+
+int HiSAInstance::run(int argc, char *argv[])
+<span style = "background-color:#dfd">{</span>
+    // parse commands
+<span style = "background-color:#dfd">    CommandLineParser cmdline_parser(argc - 1, &amp;argv[1]);
+    int retval = cmdline_parser.parse();
+    if (retval != 0)
+        return retval &lt; 0 ? -1 : 0;</span>
+    // analyze
+<span style = "background-color:#dfd">    return run(cmdline_parser.sources, cmdline_parser.analyzer_options, cmdline_parser.output_options);
+}</span>
+
+int HiSAInstance::run(const std::vector&lt;std::string&gt; &amp;srcs, const AnalyzerOptions &amp;analyzer_opts,
+                      const OutputOptions &amp;output_opts)
+<span style = "background-color:#dfd">{</span>
+    // reset data
+<span style = "background-color:#dfd">    ResultCollector::instance().clear_diagnostics();
+    ResultCollector::instance().clear_stats();
+    StatsHelper::instance()-&gt;clear();</span>
+
+    // analyze
+<span style = "background-color:#dfd">    StaticAnalyzer sa(event_table);
+    int retval = sa.analyze(srcs, analyzer_opts);</span>
+
+    // output
+<span style = "background-color:#dfd">    StatsHelper::instance()-&gt;collect_generate(ResultCollector::instance().get_diagnostics(),</span>
+                                              ResultCollector::instance().get_stats());
+
+<span style = "background-color:#dfd">    OutputManager::output(output_opts);
+    return retval;
+}</span>
+
+std::vector&lt;std::string&gt; HiSAInstance::get_available_sources(const std::vector&lt;std::string&gt; &amp;srcs,
+                                                             const AnalyzerOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    StaticAnalyzer sa(event_table);
+    return sa.get_available_sources(srcs, opts);
+}</span>
+std::vector&lt;std::string&gt; HiSAInstance::get_sources(const std::vector&lt;std::string&gt; &amp;srcs, const AnalyzerOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    StaticAnalyzer sa(event_table);
+    return sa.get_sources(srcs, opts);
+}</span>
+
+void HiSAInstance::dump_checkers(std::ostream &amp;os)
+<span style = "background-color:#dfd">{
+    CSACheckerRegistry::instance().dump_checkers(std::cout);
+}</span>
+void HiSAInstance::reset_checkers()
+<span style = "background-color:#dfd">{
+    CSACheckerRegistry::instance().reset_checker_state();
+}</span>
+bool HiSAInstance::change_checker_state(const std::string &amp;name, bool enabled)
+<span style = "background-color:#dfd">{
+    CSACheckerRegistry &amp;csa_cr = CSACheckerRegistry::instance();
+    auto it = csa_cr.checkers.find(name);
+    if (it != csa_cr.checkers.end())</span>
+    {
+<span style = "background-color:#fdd">        it-&gt;second.enabled = enabled;
+        return true;
+    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        return false;</span>
+    }
+<span style = "background-color:#fdd">}</span></pre>
+	</body>
+</html>

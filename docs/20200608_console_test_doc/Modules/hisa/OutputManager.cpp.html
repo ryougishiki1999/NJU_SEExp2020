@@ -1,0 +1,659 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>OutputManager.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "OutputManager.h"
+#include "HtmlPrinter.h"
+#include "ResultCollector.h"
+#include "Statistics/StatisticsHelper.h"
+#include "Json/DiagJsonTransform.h"
+#include "Statistics/StatisticsHelper.h"
+#include &lt;fstream&gt;
+
+static void append_line(std::string &amp;dst_str, std::vector&lt;std::string&gt; &amp;strs, const std::vector&lt;int&gt; &amp;widths);
+
+class Table
+{
+private:
+    std::vector&lt;std::string&gt; table_heads;
+  std::vector&lt;std::vector&lt;std::string&gt;&gt; table_data;
+
+  public:
+<span style = "background-color:#dfd">  Table()</span>
+  {
+<span style = "background-color:#dfd">  }</span>
+
+  Table(const std::vector&lt;std::string&gt; &amp;heads) : table_heads(heads)
+    {
+    }
+
+  Table(std::vector&lt;std::string&gt; &amp;&amp;heads) : table_heads(std::move(heads))
+  {
+  }
+
+  void reset(const std::vector&lt;std::string&gt; &amp;heads)
+<span style = "background-color:#dfd">  {
+      table_heads.clear();
+      table_heads = heads;
+      table_data.clear();
+  }</span>
+
+  void reset(std::vector&lt;std::string&gt; &amp;&amp;heads)
+  {
+      table_heads = std::move(heads);
+      table_data.clear();
+  }
+
+  void append_row(const std::vector&lt;std::string&gt; &amp;row)
+<span style = "background-color:#dfd">  {
+      table_data.push_back(row);
+  }</span>
+
+  void append_row(std::vector&lt;std::string&gt; &amp;&amp;row)
+  {
+      table_data.push_back(std::move(row));
+  }
+
+  std::string to_md()
+<span style = "background-color:#dfd">  {
+      std::string str;
+      for (auto &amp;head : table_heads)</span>
+      {
+<span style = "background-color:#dfd">          str += (head + " | ");
+      }
+      str += "\n";</span>
+
+<span style = "background-color:#dfd">      for (int i = 0; i &lt; table_heads.size(); i++)</span>
+      {
+<span style = "background-color:#dfd">          str += "--- | ";
+      }
+      str += "\n";</span>
+
+<span style = "background-color:#dfd">      for (auto &amp;row : table_data)</span>
+      {
+<span style = "background-color:#dfd">          for (auto &amp;dat : row)</span>
+          {
+<span style = "background-color:#dfd">              str += (dat + " | ");
+          }
+          str += "\n";
+      }
+      str += "\n";
+      return str;
+  }</span>
+
+  std::string to_text()
+<span style = "background-color:#dfd">  {
+      const int offset = 5;
+      std::vector&lt;int&gt; widths;
+      widths.resize(table_heads.size(), 15);
+      for (int i = 0; i &lt; widths.size(); i++)</span>
+      {
+<span style = "background-color:#dfd">          if (table_heads[i].length() + offset &gt; widths[i])</span>
+          {
+<span style = "background-color:#dfd">              widths[i] = table_heads[i].length() + offset;</span>
+          }
+
+<span style = "background-color:#dfd">          for (auto &amp;row : table_data)</span>
+          {
+<span style = "background-color:#dfd">              if (row[i].length() + offset &gt; widths[i])</span>
+              {
+<span style = "background-color:#dfd">                  widths[i] = row[i].length() + offset;</span>
+              }
+<span style = "background-color:#dfd">          }
+      }</span>
+
+<span style = "background-color:#dfd">      return to_text(widths);
+  }</span>
+
+  std::string to_text(const std::vector&lt;int&gt;&amp; widths)
+<span style = "background-color:#dfd">  {
+      std::string str;
+      append_line(str, table_heads, widths);
+      str += "\n";
+      for (auto &amp;row : table_data)</span>
+      {
+<span style = "background-color:#dfd">          append_line(str, row, widths);
+      }
+      str += '\n';
+      return str;
+  }</span>
+};
+
+void OutputManager::output(const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    std::string filepath = opts.output_path;
+    for (auto &amp;mode : opts.output_formats)</span>
+    {
+<span style = "background-color:#dfd">        if (mode == "json")</span>
+        {
+<span style = "background-color:#dfd">            output_json(filepath, opts);
+        }
+        else if (mode == "html")</span>
+        {
+<span style = "background-color:#dfd">            output_html(filepath, opts);
+        }
+        else if (mode == "md")</span>
+        {
+<span style = "background-color:#dfd">            output_md(filepath, opts);
+        }
+        else if (mode == "text")</span>
+        {
+<span style = "background-color:#dfd">            output_text(filepath, opts);
+        }
+        else if (mode == "console")</span>
+        {
+<span style = "background-color:#dfd">            output_console(opts);</span>
+        }
+<span style = "background-color:#dfd">    }
+}</span>
+void OutputManager::output_json(const std::string &amp;filepath, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    std::fstream stream(filepath.back() == '/' ? filepath + "report.json" : filepath + "/report.json", std::ios::out);
+    std::string json_text = Json::stringify(opts);</span>
+
+<span style = "background-color:#dfd">    stream &lt;&lt; json_text;
+    stream.close();
+}</span>
+
+void OutputManager::output_html(const std::string &amp;filepath, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    HtmlPrinter printer(filepath, opts.output_time, true, true, opts.output_checker, opts.output_description,</span>
+                        opts.output_stats);
+<span style = "background-color:#dfd">    printer.print();
+}</span>
+
+void OutputManager::output_md(const std::string &amp;filepath, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    std::fstream stream(filepath.back() == '/' ? filepath + "report.md" : filepath + "/report.md", std::ios::out);
+    auto helper = StatsHelper::instance();
+    std::vector&lt;std::string&gt; head;
+    std::vector&lt;std::string&gt; row;
+    Table table;</span>
+    
+<span style = "background-color:#dfd">    head.clear();
+    head.push_back("location");
+    if (opts.output_checker)</span>
+    {
+<span style = "background-color:#dfd">        head.push_back("checker");</span>
+    }
+<span style = "background-color:#dfd">    if (opts.output_description)</span>
+    {
+<span style = "background-color:#dfd">        head.push_back("description");</span>
+    }
+<span style = "background-color:#dfd">    table.reset(head);</span>
+
+<span style = "background-color:#dfd">    for (auto &amp;list : helper-&gt;get_all_bug_stats_list())</span>
+    {
+<span style = "background-color:#dfd">        for (auto &amp;bug : list.get_bug_desc_list())</span>
+        {
+<span style = "background-color:#dfd">            row.clear();
+            row.push_back(bug._file_name + ":" + std::to_string(bug._line_number) + ":" +</span>
+                          std::to_string(bug._column_number));
+<span style = "background-color:#dfd">            if (opts.output_checker)</span>
+            {
+<span style = "background-color:#dfd">                row.push_back(bug._checker_name);</span>
+            }
+<span style = "background-color:#dfd">            if (opts.output_description)</span>
+            {
+<span style = "background-color:#dfd">                row.push_back(bug._description);</span>
+            }
+<span style = "background-color:#dfd">            table.append_row(row);
+        }
+    }
+    stream &lt;&lt; table.to_md() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">    if (opts.output_stats)</span>
+    {
+<span style = "background-color:#dfd">        head.clear();
+        head.emplace_back("analysis_time");
+        head.emplace_back("bug_num");
+        head.emplace_back("bug_type_num");
+        head.emplace_back("file_num");
+        table.reset(head);</span>
+       
+<span style = "background-color:#dfd">        row.clear();
+        row.emplace_back(std::to_string(helper-&gt;get_all_analysis_time()));
+        row.emplace_back(std::to_string(helper-&gt;get_all_bug_num()));
+        row.emplace_back(std::to_string(helper-&gt;get_all_bug_type_num()));
+        row.emplace_back(std::to_string(helper-&gt;get_all_file_num()));
+        table.append_row(row);</span>
+
+<span style = "background-color:#dfd">        stream &lt;&lt; table.to_md() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">        head.clear();
+        head.emplace_back("bug_types");
+        table.reset(head);
+        for (auto &amp;bug_type : helper-&gt;get_all_bug_type_list())</span>
+        {
+<span style = "background-color:#dfd">            row.clear();
+            row.emplace_back(bug_type);
+            table.append_row(row);
+        }
+        stream &lt;&lt; table.to_md() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">        head.clear();
+        head.emplace_back("file_name");
+        table.reset(head);
+        for (auto &amp;file_name : helper-&gt;get_filename_list())</span>
+        {
+<span style = "background-color:#dfd">            row.clear();
+            row.emplace_back(file_name);
+            table.append_row(row);
+        }
+        stream &lt;&lt; table.to_md() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">        stream &lt;&lt; "file statistics:" &lt;&lt; std::endl &lt;&lt; std::endl;</span>
+        
+<span style = "background-color:#dfd">        for (auto &amp;file_stat : helper-&gt;get_file_stats_list())</span>
+        {
+<span style = "background-color:#dfd">            stream &lt;&lt; "file name: " &lt;&lt; file_stat._filename &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">            head.clear();
+            head.emplace_back("analysis_time");
+            head.emplace_back("bug_num");
+            head.emplace_back("bug_type_num");
+            table.reset(head);</span>
+
+<span style = "background-color:#dfd">            row.clear();
+            row.emplace_back(std::to_string(file_stat.get_analysis_time()));
+            row.emplace_back(std::to_string(file_stat.get_all_bug_num()));
+            row.emplace_back(std::to_string(file_stat.get_bug_type_num()));
+            table.append_row(row);</span>
+
+<span style = "background-color:#dfd">            stream &lt;&lt; table.to_md() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">            head.clear();
+            head.emplace_back("bug_type");
+            table.reset(head);</span>
+
+<span style = "background-color:#dfd">            for (auto &amp;bug_type : file_stat.get_bug_type_list())</span>
+            {
+<span style = "background-color:#dfd">                row.clear();
+                row.emplace_back(bug_type);
+                table.append_row(row);
+            }
+            stream &lt;&lt; table.to_md() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">            for (auto &amp;bug_stats : file_stat.get_bug_stats_list())</span>
+            {
+<span style = "background-color:#dfd">                stream &lt;&lt; "bug num: " &lt;&lt; bug_stats.get_num() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">                head.clear();
+                head.emplace_back("file_name");
+                head.emplace_back("line_no");
+                head.emplace_back("col_no");
+                head.emplace_back("checker_name");
+                head.emplace_back("description");
+                table.reset(head);</span>
+
+<span style = "background-color:#dfd">                for (auto &amp;desc : bug_stats.get_bug_desc_list())</span>
+                {
+<span style = "background-color:#dfd">                    row.clear();
+                    row.emplace_back(desc._file_name);
+                    row.emplace_back(std::to_string(desc._line_number));
+                    row.emplace_back(std::to_string(desc._column_number));
+                    row.emplace_back(desc._checker_name);
+                    row.emplace_back(desc._description);
+                    table.append_row(row);
+                }</span>
+
+<span style = "background-color:#dfd">                stream &lt;&lt; table.to_md() &lt;&lt; std::endl;
+            }
+        }</span>
+    }
+
+<span style = "background-color:#dfd">    stream.close();
+}</span>
+
+static void append_space(std::string&amp; str, int num)
+<span style = "background-color:#dfd">{
+    while (num-- &gt; 0)</span>
+    {
+<span style = "background-color:#dfd">        str += ' ';
+    }
+}</span>
+
+static void append_space(std::ostream &amp;stream, int num)
+{
+    while (num-- &gt; 0)
+        stream &lt;&lt; ' ';
+}
+
+struct StrBuffer
+{
+  private:
+<span style = "background-color:#dfd">    const std::string *str = nullptr;</span>
+
+<span style = "background-color:#dfd">    bool mem_mng = false;</span>
+
+<span style = "background-color:#dfd">    size_t offset = 0;</span>
+
+  public:
+    StrBuffer() = default;
+    StrBuffer(StrBuffer &amp;o) : str(o.str), offset(o.offset), mem_mng(o.mem_mng)
+    {
+        o.mem_mng = false;
+    }
+<span style = "background-color:#dfd">    StrBuffer(StrBuffer &amp;&amp;o) noexcept : str(o.str), offset(o.offset), mem_mng(o.mem_mng)
+    {
+        o.mem_mng = false;
+    }
+    StrBuffer(const std::string &amp;_str)</span>
+    {
+<span style = "background-color:#dfd">        reset(_str);
+    }</span>
+    StrBuffer(std::string &amp;&amp;_str)
+    {
+        reset(std::move(_str));
+    }
+
+    const std::string &amp;get_str() const
+    {
+        return *str;
+    }
+
+    size_t get_offset() const
+    {
+        return offset;
+    }
+
+    void set_offset(size_t _offset)
+    {
+        offset = _offset;
+    }
+
+    bool is_end() const
+<span style = "background-color:#dfd">    {
+        return offset == str-&gt;length();
+    }</span>
+
+    void reset(const std::string &amp;_str)
+<span style = "background-color:#dfd">    {
+        if (str &amp;&amp; mem_mng)</span>
+<span style = "background-color:#fdd">            delete str;</span>
+<span style = "background-color:#dfd">        str = &amp;_str;
+        offset = 0;
+        mem_mng = false;
+    }</span>
+
+    void reset(std::string &amp;&amp;_str)
+    {
+        if (str &amp;&amp; mem_mng)
+            delete str;
+        str = new std::string(std::move(_str));
+        offset = 0;
+        mem_mng = true;
+    }
+
+    size_t write(std::string &amp;dst_str, size_t length)
+<span style = "background-color:#dfd">    {
+        size_t dst_offset = offset + length;
+        if (dst_offset &gt; str-&gt;length())
+            dst_offset = str-&gt;length();
+        length = dst_offset - offset;</span>
+
+<span style = "background-color:#dfd">        dst_str.append(str-&gt;begin() + offset, str-&gt;begin() + dst_offset);
+        offset = dst_offset;
+        return length;
+    }</span>
+
+    size_t write(std::ostream &amp;out, size_t length)
+    {
+        size_t dst_offset = offset + length;
+        if (dst_offset &gt; str-&gt;length())
+            dst_offset = str-&gt;length();
+        length = dst_offset - offset;
+
+        out.write(str-&gt;c_str() + offset, length);
+        /*for (int i = offset; i &lt; dst_offset; i++) {
+          out &lt;&lt; str[i];
+        }*/
+
+        offset = dst_offset;
+        return length;
+    }
+
+    ~StrBuffer()
+<span style = "background-color:#dfd">    {
+        if (str &amp;&amp; mem_mng)</span>
+        {
+<span style = "background-color:#fdd">            delete str;
+            mem_mng = false;</span>
+        }
+<span style = "background-color:#dfd">    }</span>
+};
+
+static void append_line(std::string &amp;dst_str, std::vector&lt;std::string&gt; &amp;strs, const std::vector&lt;int&gt; &amp;widths)
+<span style = "background-color:#dfd">{
+    std::vector&lt;StrBuffer&gt; bufs;
+    for (auto &amp;str : strs)
+        bufs.emplace_back(str);
+    while (true)</span>
+    {
+<span style = "background-color:#dfd">        bool end = true;
+        for (int i = 0; i &lt; widths.size(); i++)</span>
+        {
+<span style = "background-color:#dfd">            int width = widths[i];
+            auto &amp;buf = bufs[i];</span>
+
+<span style = "background-color:#dfd">            if (!buf.is_end())</span>
+            {
+<span style = "background-color:#dfd">                end = false;
+                size_t sz = buf.write(dst_str, (size_t)width - 3);
+                append_space(dst_str, width - sz);</span>
+            }
+<span style = "background-color:#dfd">        }
+        if (end)
+            break;
+        dst_str += '\n';
+    }
+}</span>
+
+static void append_line(std::ostream &amp;stream, std::vector&lt;StrBuffer&gt; &amp;bufs, const std::vector&lt;int&gt; &amp;widths)
+{
+    while (true)
+    {
+        bool end = true;
+        for (int i = 0; i &lt; widths.size(); i++)
+        {
+            int width = widths[i];
+            auto &amp;buf = bufs[i];
+
+            if (!buf.is_end())
+            {
+                end = false;
+                size_t sz = buf.write(stream, (size_t)width - 3);
+                append_space(stream, width - sz);
+            }
+        }
+        if (end)
+            break;
+        stream &lt;&lt; std::endl;
+    }
+}
+
+static void append_line(std::ostream &amp;stream, const std::vector&lt;std::string&gt; &amp;strs, const std::vector&lt;int&gt; &amp;widths)
+{
+    std::vector&lt;StrBuffer&gt; bufs;
+    for (auto &amp;str : strs)
+        bufs.emplace_back(str);
+    append_line(stream, bufs, widths);
+}
+
+
+
+//#include &lt;Windows.h&gt;
+void OutputManager::append_text(std::ostream &amp;stream, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{</span>
+    // SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_GREEN);
+    // diags
+<span style = "background-color:#dfd">    auto helper = StatsHelper::instance();
+    std::vector&lt;std::string&gt; head;
+    std::vector&lt;std::string&gt; row;
+    Table table;</span>
+
+<span style = "background-color:#dfd">    head.clear();
+    head.push_back("location");
+    if (opts.output_checker)</span>
+    {
+<span style = "background-color:#dfd">        head.push_back("checker");</span>
+    }
+<span style = "background-color:#dfd">    if (opts.output_description)</span>
+    {
+<span style = "background-color:#dfd">        head.push_back("description");</span>
+    }
+<span style = "background-color:#dfd">    table.reset(head);</span>
+
+<span style = "background-color:#dfd">   for (auto &amp;list : helper-&gt;get_all_bug_stats_list())</span>
+    {
+<span style = "background-color:#dfd">        for (auto &amp;bug : list.get_bug_desc_list())</span>
+        {
+<span style = "background-color:#dfd">            row.clear();
+            row.push_back(bug._file_name + ":" + std::to_string(bug._line_number) + ":" +</span>
+                          std::to_string(bug._column_number));
+<span style = "background-color:#dfd">            if (opts.output_checker)</span>
+            {
+<span style = "background-color:#dfd">                row.push_back(bug._checker_name);</span>
+            }
+<span style = "background-color:#dfd">            if (opts.output_description)</span>
+            {
+<span style = "background-color:#dfd">                row.push_back(bug._description);</span>
+            }
+<span style = "background-color:#dfd">            table.append_row(row);
+        }
+    }
+    stream &lt;&lt; table.to_text() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">    if (opts.output_stats)</span>
+    {
+<span style = "background-color:#dfd">        head.clear();
+        head.emplace_back("analysis_time");
+        head.emplace_back("bug_num");
+        head.emplace_back("bug_type_num");
+        head.emplace_back("file_num");
+        table.reset(head);</span>
+
+<span style = "background-color:#dfd">        row.clear();
+        row.emplace_back(std::to_string(helper-&gt;get_all_analysis_time()));
+        row.emplace_back(std::to_string(helper-&gt;get_all_bug_num()));
+        row.emplace_back(std::to_string(helper-&gt;get_all_bug_type_num()));
+        row.emplace_back(std::to_string(helper-&gt;get_all_file_num()));
+        table.append_row(row);</span>
+
+<span style = "background-color:#dfd">        stream &lt;&lt; table.to_text() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">        head.clear();
+        head.emplace_back("bug_types");
+        table.reset(head);
+        for (auto &amp;bug_type : helper-&gt;get_all_bug_type_list())</span>
+        {
+<span style = "background-color:#dfd">            row.clear();
+            row.emplace_back(bug_type);
+            table.append_row(row);
+        }
+        stream &lt;&lt; table.to_text() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">        head.clear();
+        head.emplace_back("file_name");
+        table.reset(head);
+        for (auto &amp;file_name : helper-&gt;get_filename_list())</span>
+        {
+<span style = "background-color:#dfd">            row.clear();
+            row.emplace_back(file_name);
+            table.append_row(row);
+        }
+        stream &lt;&lt; table.to_text() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">        stream &lt;&lt; "file statistics:" &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">        for (auto &amp;file_stat : helper-&gt;get_file_stats_list())</span>
+        {
+<span style = "background-color:#dfd">            stream &lt;&lt; "file name: " &lt;&lt; file_stat._filename &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">            head.clear();
+            head.emplace_back("analysis_time");
+            head.emplace_back("bug_num");
+            head.emplace_back("bug_type_num");
+            table.reset(head);</span>
+
+<span style = "background-color:#dfd">            row.clear();
+            row.emplace_back(std::to_string(file_stat.get_analysis_time()));
+            row.emplace_back(std::to_string(file_stat.get_all_bug_num()));
+            row.emplace_back(std::to_string(file_stat.get_bug_type_num()));
+            table.append_row(row);</span>
+
+<span style = "background-color:#dfd">            stream &lt;&lt; table.to_text() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">            head.clear();
+            head.emplace_back("bug_type");
+            table.reset(head);</span>
+
+<span style = "background-color:#dfd">            for (auto &amp;bug_type : file_stat.get_bug_type_list())</span>
+            {
+<span style = "background-color:#dfd">                row.clear();
+                row.emplace_back(bug_type);
+                table.append_row(row);
+            }
+            stream &lt;&lt; table.to_text() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">            for (auto &amp;bug_stats : file_stat.get_bug_stats_list())</span>
+            {
+<span style = "background-color:#dfd">                stream &lt;&lt; "bug num: " &lt;&lt; bug_stats.get_num() &lt;&lt; std::endl;</span>
+
+<span style = "background-color:#dfd">                head.clear();
+                head.emplace_back("file_name");
+                head.emplace_back("line_no");
+                head.emplace_back("col_no");
+                head.emplace_back("checker_name");
+                head.emplace_back("description");
+                table.reset(head);</span>
+
+<span style = "background-color:#dfd">                for (auto &amp;desc : bug_stats.get_bug_desc_list())</span>
+                {
+<span style = "background-color:#dfd">                    row.clear();
+                    row.emplace_back(desc._file_name);
+                    row.emplace_back(std::to_string(desc._line_number));
+                    row.emplace_back(std::to_string(desc._column_number));
+                    row.emplace_back(desc._checker_name);
+                    row.emplace_back(desc._description);
+                    table.append_row(row);
+                }</span>
+
+<span style = "background-color:#dfd">                stream &lt;&lt; table.to_text() &lt;&lt; std::endl;
+            }
+        }</span>
+    }
+
+<span style = "background-color:#dfd">    stream.flush();</span>
+
+    // SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
+    //                        FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+<span style = "background-color:#dfd">}</span>
+
+void OutputManager::output_text(const std::string &amp;filepath, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    std::string path = filepath.back() == '/' ? filepath + "report.txt" : filepath + "/report.txt";
+    std::fstream stream(path, std::ios::out);
+    if (!stream.is_open())</span>
+    {
+<span style = "background-color:#fdd">        assert(false &amp;&amp; "file open failed: %s\n");
+        return;</span>
+    }
+
+<span style = "background-color:#dfd">    append_text(stream, opts);
+    stream.close();
+}</span>
+
+void OutputManager::output_console(const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    append_text(std::cout, opts);
+}</span></pre>
+	</body>
+</html>

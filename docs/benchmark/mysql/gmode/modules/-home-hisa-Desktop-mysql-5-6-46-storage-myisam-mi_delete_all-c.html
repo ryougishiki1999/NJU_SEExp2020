@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/myisam/mi_delete_all.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2011, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+/* Remove all rows from a MyISAM table */
+/* This clears the status information and truncates files */
+
+#include "myisamdef.h"
+
+int mi_delete_all_rows(MI_INFO *info)
+{
+  uint i;
+  MYISAM_SHARE *share=info-&gt;s;
+  MI_STATE_INFO *state=&amp;share-&gt;state;
+  DBUG_ENTER("mi_delete_all_rows");
+
+  if (share-&gt;options &amp; HA_OPTION_READ_ONLY_DATA)
+  {
+    DBUG_RETURN(my_errno=EACCES);
+  }
+  if (_mi_readinfo(info,F_WRLCK,1))
+    DBUG_RETURN(my_errno);
+  if (_mi_mark_file_changed(info))
+    goto err;
+
+  info-&gt;state-&gt;records=info-&gt;state-&gt;del=state-&gt;split=0;
+  state-&gt;dellink = HA_OFFSET_ERROR;
+  state-&gt;sortkey=  (ushort) ~0;
+  info-&gt;state-&gt;key_file_length=share-&gt;base.keystart;
+  info-&gt;state-&gt;data_file_length=0;
+  info-&gt;state-&gt;empty=info-&gt;state-&gt;key_empty=0;
+  info-&gt;state-&gt;checksum=0;
+
+  for (i=share-&gt;base.max_key_block_length/MI_MIN_KEY_BLOCK_LENGTH ; i-- ; )
+    state-&gt;key_del[i]= HA_OFFSET_ERROR;
+  for (i=0 ; i &lt; share-&gt;base.keys ; i++)
+    state-&gt;key_root[i]= HA_OFFSET_ERROR;
+
+  myisam_log_command(MI_LOG_DELETE_ALL,info,(uchar*) 0,0,0);
+  /*
+    If we are using delayed keys or if the user has done changes to the tables
+    since it was locked then there may be key blocks in the key cache
+  */
+  flush_key_blocks(share-&gt;key_cache, share-&gt;kfile, FLUSH_IGNORE_CHANGED);
+#ifdef HAVE_MMAP
+  if (share-&gt;file_map)
+    mi_munmap_file(info);
+#endif
+  if (mysql_file_chsize(info-&gt;dfile, 0, 0, MYF(MY_WME)) ||
+      mysql_file_chsize(share-&gt;kfile, share-&gt;base.keystart, 0, MYF(MY_WME)))
+    goto err;
+  (void) _mi_writeinfo(info,WRITEINFO_UPDATE_KEYFILE);
+  DBUG_RETURN(0);
+
+err:
+  {
+    int save_errno=my_errno;
+    (void) _mi_writeinfo(info,WRITEINFO_UPDATE_KEYFILE);
+    info-&gt;update|=HA_STATE_WRITTEN;	/* Buffer changed */
+    DBUG_RETURN(my_errno=save_errno);
+  }
+} /* mi_delete */
+      </pre>
+    </body>
+</html>

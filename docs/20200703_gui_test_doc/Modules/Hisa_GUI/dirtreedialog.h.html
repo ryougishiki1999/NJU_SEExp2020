@@ -1,0 +1,71 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>dirtreedialog.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#ifndef DIRTREEDIALOG_H
+#define DIRTREEDIALOG_H
+
+#include&lt;QTreeWidgetItem&gt;
+#include &lt;QDialog&gt;
+#include&lt;filesystem&gt;
+#include&lt;set&gt;
+#include&lt;map&gt;
+#include&lt;string&gt;
+#include &lt;QtCore/QVariant&gt;
+#include &lt;QtWidgets/QApplication&gt;
+#include &lt;QtWidgets/QDialog&gt;
+#include &lt;QtWidgets/QHeaderView&gt;
+#include &lt;QtWidgets/QPushButton&gt;
+#include &lt;QtWidgets/QTreeWidget&gt;
+#include"preprocessor/Preprocessor.h"
+#include"Language/language.h"
+
+enum DirTreeStatus{INIT_FAIL,INIT,CHOSEN_COMPILE_DB,FINISHED};
+
+namespace Ui {
+class DirTreeDialog;
+}
+
+class DirTreeDialog : public QDialog
+{
+    Q_OBJECT
+private:
+    Language lan;
+    DirTreeStatus status;
+    QString compile_db;
+     std::set&lt;std::string&gt;*  file_list;
+     std::string source;
+     void update_children(QTreeWidgetItem* root,Qt::CheckState state,std::set&lt;std::string&gt;*file_list);
+     void update_parent(QTreeWidgetItem* leaf,Qt::CheckState state);
+public:
+    QPushButton *affirm_button;
+    QTreeWidget *tree_widget;
+    QPushButton *cancel_button;
+public:
+    void load_comiple_dbs(std::map&lt;std::filesystem::path,
+                          std::set&lt;std::filesystem::path&gt;&gt; &amp;compiledb_mp);
+
+    explicit DirTreeDialog(std::set&lt;std::string&gt;*  file_list, std::string source,
+                           Language lan=English,QWidget *parent = nullptr);
+<span style = "background-color:#dfd">    QString get_compiledb_path(){return this-&gt;compile_db;};</span>
+    ~DirTreeDialog();
+public slots:
+   void  tree_item_clicked(QTreeWidgetItem*,int);
+   void cancel();
+   void build_file_tree(const FileTreeNode *root);
+<span style = "background-color:#dfd">   DirTreeStatus get_status(){return this-&gt;status;};</span>
+   void confirm();
+protected:
+   void closeEvent(QCloseEvent *event);
+};
+
+#endif // DIRTREEDIALOG_H</pre>
+	</body>
+</html>

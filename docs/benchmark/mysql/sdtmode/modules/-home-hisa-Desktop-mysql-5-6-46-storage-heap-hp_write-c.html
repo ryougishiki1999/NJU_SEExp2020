@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/heap/hp_write.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000-2002, 2004-2007 MySQL AB, 2009 Sun Microsystems, Inc.
+   Use is subject to license terms.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+/* Write a record to heap-databas */
+
+#include "heapdef.h"
+#ifdef __WIN__
+#include &lt;fcntl.h&gt;
+#endif
+
+#define LOWFIND 1
+#define LOWUSED 2
+#define HIGHFIND 4
+#define HIGHUSED 8
+
+static uchar *next_free_record_pos(HP_SHARE *info);
+static HASH_INFO *hp_find_free_hash(HP_SHARE *info, HP_BLOCK *block,
+				     ulong records);
+
+int heap_write(HP_INFO *info, const uchar *record)
+{
+  HP_KEYDEF *keydef, *end;
+  uchar *pos;
+  HP_SHARE *share=info-&gt;s;
+  DBUG_ENTER("heap_write");
+#ifndef DBUG_OFF
+  if (info-&gt;mode &amp; O_RDONLY)
+  {
+    DBUG_RETURN(my_errno=EACCES);
+  }
+#endif
+  if (!(pos=next_free_record_pos(share)))
+    DBUG_RETURN(my_errno);
+  share-&gt;changed=1;
+
+  for (keydef = share-&gt;keydef, end = keydef + share-&gt;keys; keydef &lt; end;
+       keydef++)
+  {
+    if ((*keydef-&gt;write_key)(info, keydef, record, pos))
+      goto err;
+  }
+
+  memcpy(pos,record,(size_t) share-&gt;reclength);
+  pos[share-&gt;reclength]=1;		/* Mark record as not deleted */
+  if (++share-&gt;records == share-&gt;blength)
+    share-&gt;blength+= share-&gt;blength;
+  info-&gt;current_ptr=pos;
+  info-&gt;current_hash_ptr=0;
+  info-&gt;update|=HA_STATE_AKTIV;
+#if !defined(DBUG_OFF) &amp;&amp; defined(EXTRA_HEAP_DEBUG)
+  DBUG_EXECUTE("check_heap",heap_check_heap(info, 0););
+#endif
+  if (share-&gt;auto_key)
+    heap_update_auto_increment(info, record);
+  DBUG_RETURN(0);
+
+err:
+  if (my_errno == HA_ERR_FOUND_DUPP_KEY)
+    DBUG_PRINT("info",("Duplicate key: %d", (int) (keydef - share-&gt;keydef)));
+  info-&gt;errkey= (int) (keydef - share-&gt;keydef);
+  /*
+    We don't need to delete non-inserted key from rb-tree.  Also, if
+    we got ENOMEM, the key wasn't inserted, so don't try to delete it
+    either.  Otherwise for HASH index on HA_ERR_FOUND_DUPP_KEY the key
+    was inserted and we have to delete it.
+  */
+  if (keydef-&gt;algorithm == HA_KEY_ALG_BTREE || my_errno == ENOMEM)
+  {
+    keydef--;
+  }
+  while (keydef &gt;= share-&gt;keydef)
+  {
+    if ((*keydef-&gt;delete_key)(info, keydef, record, pos, 0))
+      break;
+    keydef--;
+  } 
+
+  share-&gt;deleted++;
+  *((uchar**) pos)=share-&gt;del_link;
+  share-&gt;del_link=pos;
+  pos[share-&gt;reclength]=0;			/* Record deleted */
+
+  DBUG_RETURN(my_errno);
+} /* heap_write */
+
+/* 
+  Write a key to rb_tree-index 
+*/
+
+int hp_rb_write_key(HP_INFO *info, HP_KEYDEF *keyinfo, const uchar *record, 
+		    uchar *recpos)
+{
+  heap_rb_param custom_arg;
+  uint old_allocated;
+
+  custom_arg.keyseg= keyinfo-&gt;seg;
+  custom_arg.key_length= hp_rb_make_key(keyinfo, info-&gt;recbuf, record, recpos);
+  if (keyinfo-&gt;flag &amp; HA_NOSAME)
+  {
+    custom_arg.search_flag= SEARCH_FIND | SEARCH_UPDATE;
+    keyinfo-&gt;rb_tree.flag= TREE_NO_DUPS;
+  }
+  else
+  {
+    custom_arg.search_flag= SEARCH_SAME;
+    keyinfo-&gt;rb_tree.flag= 0;
+  }
+  old_allocated= keyinfo-&gt;rb_tree.allocated;
+  if (!tree_insert(&amp;keyinfo-&gt;rb_tree, (void*)info-&gt;recbuf,
+		   custom_arg.key_length, &amp;custom_arg))
+  {
+    my_errno= HA_ERR_FOUND_DUPP_KEY;
+    return 1;
+  }
+  info-&gt;s-&gt;index_length+= (keyinfo-&gt;rb_tree.allocated-old_allocated);
+  return 0;
+}
+
+	/* Find where to place new record */
+
+static uchar *next_free_record_pos(HP_SHARE *info)
+{
+  int block_pos;
+  uchar *pos;
+  size_t length;
+  DBUG_ENTER("next_free_record_pos");
+
+  if (info-&gt;del_link)
+  {
+    pos=info-&gt;del_link;
+    info-&gt;del_link= *((uchar**) pos);
+    info-&gt;deleted--;
+    DBUG_PRINT("exit",("Used old position: 0x%lx",(long) pos));
+    DBUG_RETURN(pos);
+  }
+  if (!(block_pos=(info-&gt;records % info-&gt;block.records_in_block)))
+  {
+    if ((info-&gt;records &gt; info-&gt;max_records &amp;&amp; info-&gt;max_records) ||
+        (info-&gt;data_length + info-&gt;index_length &gt;= info-&gt;max_table_size))
+    {
+      my_errno=HA_ERR_RECORD_FILE_FULL;
+      DBUG_RETURN(NULL);
+    }
+    if (hp_get_new_block(&amp;info-&gt;block,&amp;length))
+      DBUG_RETURN(NULL);
+    info-&gt;data_length+=length;
+  }
+  DBUG_PRINT("exit",("Used new position: 0x%lx",
+		     (long) ((uchar*) info-&gt;block.level_info[0].last_blocks+
+                             block_pos * info-&gt;block.recbuffer)));
+  DBUG_RETURN((uchar*) info-&gt;block.level_info[0].last_blocks+
+	      block_pos*info-&gt;block.recbuffer);
+}
+
+
+/*
+  Write a hash-key to the hash-index
+  SYNOPSIS
+    info     Heap table info
+    keyinfo  Key info
+    record   Table record to added
+    recpos   Memory buffer where the table record will be stored if added 
+             successfully
+  NOTE
+    Hash index uses HP_BLOCK structure as a 'growable array' of HASH_INFO 
+    structs. Array size == number of entries in hash index.
+    hp_mask(hp_rec_hashnr()) maps hash entries values to hash array positions.
+    If there are several hash entries with the same hash array position P,
+    they are connected in a linked list via HASH_INFO::next_key. The first 
+    list element is located at position P, next elements are located at 
+    positions for which there is no record that should be located at that
+    position. The order of elements in the list is arbitrary.
+
+  RETURN
+    0  - OK
+    -1 - Out of memory
+    HA_ERR_FOUND_DUPP_KEY - Duplicate record on unique key. The record was 
+    still added and the caller must call hp_delete_key for it.
+*/
+
+int hp_write_key(HP_INFO *info, HP_KEYDEF *keyinfo,
+		 const uchar *record, uchar *recpos)
+{
+  HP_SHARE *share = info-&gt;s;
+  int flag;
+  ulong halfbuff,hashnr,first_index;
+  uchar *UNINIT_VAR(ptr_to_rec),*UNINIT_VAR(ptr_to_rec2);
+  HASH_INFO *empty,*UNINIT_VAR(gpos),*UNINIT_VAR(gpos2),*pos;
+  DBUG_ENTER("hp_write_key");
+
+  flag=0;
+  if (!(empty= hp_find_free_hash(share,&amp;keyinfo-&gt;block,share-&gt;records)))
+    DBUG_RETURN(-1);				/* No more memory */
+  halfbuff= (long) share-&gt;blength &gt;&gt; 1;
+  pos= hp_find_hash(&amp;keyinfo-&gt;block,(first_index=share-&gt;records-halfbuff));
+  
+  /*
+    We're about to add one more hash array position, with hash_mask=#records.
+    The number of hash positions will change and some entries might need to 
+    be relocated to the newly added position. Those entries are currently 
+    members of the list that starts at #first_index position (this is 
+    guaranteed by properties of hp_mask(hp_rec_hashnr(X)) mapping function)
+    At #first_index position currently there may be either:
+    a) An entry with hashnr != first_index. We don't need to move it.
+    or
+    b) A list of items with hash_mask=first_index. The list contains entries
+       of 2 types:
+       1) entries that should be relocated to the list that starts at new 
+          position we're adding ('uppper' list)
+       2) entries that should be left in the list starting at #first_index 
+          position ('lower' list)
+  */
+  if (pos != empty)				/* If some records */
+  {
+    do
+    {
+      hashnr = hp_rec_hashnr(keyinfo, pos-&gt;ptr_to_rec);
+      if (flag == 0)
+      {
+        /* 
+          First loop, bail out if we're dealing with case a) from above 
+          comment
+        */
+	if (hp_mask(hashnr, share-&gt;blength, share-&gt;records) != first_index)
+	  break;
+      }
+      /*
+        flag &amp; LOWFIND - found a record that should be put into lower position
+        flag &amp; LOWUSED - lower position occupied by the record
+        Same for HIGHFIND and HIGHUSED and 'upper' position
+
+        gpos  - ptr to last element in lower position's list
+        gpos2 - ptr to last element in upper position's list
+
+        ptr_to_rec - ptr to last entry that should go into lower list.
+        ptr_to_rec2 - same for upper list.
+      */
+      if (!(hashnr &amp; halfbuff))
+      {						
+        /* Key should be put into 'lower' list */
+	if (!(flag &amp; LOWFIND))
+	{
+          /* key is the first element to go into lower position */
+	  if (flag &amp; HIGHFIND)
+	  {
+	    flag=LOWFIND | HIGHFIND;
+	    /* key shall be moved to the current empty position */
+	    gpos=empty;
+	    ptr_to_rec=pos-&gt;ptr_to_rec;
+	    empty=pos;				/* This place is now free */
+	  }
+	  else
+	  {
+            /*
+              We can only get here at first iteration: key is at 'lower' 
+              position pos and should be left here.
+            */
+	    flag=LOWFIND | LOWUSED;
+	    gpos=pos;
+	    ptr_to_rec=pos-&gt;ptr_to_rec;
+	  }
+	}
+	else
+        {
+          /* Already have another key for lower position */
+	  if (!(flag &amp; LOWUSED))
+	  {
+	    /* Change link of previous lower-list key */
+	    gpos-&gt;ptr_to_rec=ptr_to_rec;
+	    gpos-&gt;next_key=pos;
+	    flag= (flag &amp; HIGHFIND) | (LOWFIND | LOWUSED);
+	  }
+	  gpos=pos;
+	  ptr_to_rec=pos-&gt;ptr_to_rec;
+	}
+      }
+      else
+      {
+        /* key will be put into 'higher' list */
+	if (!(flag &amp; HIGHFIND))
+	{
+	  flag= (flag &amp; LOWFIND) | HIGHFIND;
+	  /* key shall be moved to the last (empty) position */
+	  gpos2= empty;
+          empty= pos;
+	  ptr_to_rec2=pos-&gt;ptr_to_rec;
+	}
+	else
+	{
+	  if (!(flag &amp; HIGHUSED))
+	  {
+	    /* Change link of previous upper-list key and save */
+	    gpos2-&gt;ptr_to_rec=ptr_to_rec2;
+	    gpos2-&gt;next_key=pos;
+	    flag= (flag &amp; LOWFIND) | (HIGHFIND | HIGHUSED);
+	  }
+	  gpos2=pos;
+	  ptr_to_rec2=pos-&gt;ptr_to_rec;
+	}
+      }
+    }
+    while ((pos=pos-&gt;next_key));
+    
+    if ((flag &amp; (LOWFIND | HIGHFIND)) == (LOWFIND | HIGHFIND))
+    {
+      /*
+        If both 'higher' and 'lower' list have at least one element, now
+        there are two hash buckets instead of one.
+      */
+      keyinfo-&gt;hash_buckets++;
+    }
+
+    if ((flag &amp; (LOWFIND | LOWUSED)) == LOWFIND)
+    {
+      gpos-&gt;ptr_to_rec=ptr_to_rec;
+      gpos-&gt;next_key=0;
+    }
+    if ((flag &amp; (HIGHFIND | HIGHUSED)) == HIGHFIND)
+    {
+      gpos2-&gt;ptr_to_rec=ptr_to_rec2;
+      gpos2-&gt;next_key=0;
+    }
+  }
+  /* Check if we are at the empty position */
+
+  pos=hp_find_hash(&amp;keyinfo-&gt;block, hp_mask(hp_rec_hashnr(keyinfo, record),
+					 share-&gt;blength, share-&gt;records + 1));
+  if (pos == empty)
+  {
+    pos-&gt;ptr_to_rec=recpos;
+    pos-&gt;next_key=0;
+    keyinfo-&gt;hash_buckets++;
+  }
+  else
+  {
+    /* Check if more records in same hash-nr family */
+    empty[0]=pos[0];
+    gpos=hp_find_hash(&amp;keyinfo-&gt;block,
+		      hp_mask(hp_rec_hashnr(keyinfo, pos-&gt;ptr_to_rec),
+			      share-&gt;blength, share-&gt;records + 1));
+    if (pos == gpos)
+    {
+      pos-&gt;ptr_to_rec=recpos;
+      pos-&gt;next_key=empty;
+    }
+    else
+    {
+      keyinfo-&gt;hash_buckets++;
+      pos-&gt;ptr_to_rec=recpos;
+      pos-&gt;next_key=0;
+      hp_movelink(pos, gpos, empty);
+    }
+
+    /* Check if duplicated keys */
+    if ((keyinfo-&gt;flag &amp; HA_NOSAME) &amp;&amp; pos == gpos &amp;&amp;
+	(!(keyinfo-&gt;flag &amp; HA_NULL_PART_KEY) ||
+	 !hp_if_null_in_key(keyinfo, record)))
+    {
+      pos=empty;
+      do
+      {
+	if (! hp_rec_key_cmp(keyinfo, record, pos-&gt;ptr_to_rec, 1))
+	{
+	  DBUG_RETURN(my_errno=HA_ERR_FOUND_DUPP_KEY);
+	}
+      } while ((pos=pos-&gt;next_key));
+    }
+  }
+  DBUG_RETURN(0);
+}
+
+	/* Returns ptr to block, and allocates block if neaded */
+
+static HASH_INFO *hp_find_free_hash(HP_SHARE *info,
+				     HP_BLOCK *block, ulong records)
+{
+  uint block_pos;
+  size_t length;
+
+  if (records &lt; block-&gt;last_allocated)
+    return hp_find_hash(block,records);
+  if (!(block_pos=(records % block-&gt;records_in_block)))
+  {
+    if (hp_get_new_block(block,&amp;length))
+      return(NULL);
+    info-&gt;index_length+=length;
+  }
+  block-&gt;last_allocated=records+1;
+  return((HASH_INFO*) ((uchar*) block-&gt;level_info[0].last_blocks+
+		       block_pos*block-&gt;recbuffer));
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/regex/regfree.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include &lt;my_global.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include "my_regex.h"
+
+#include "utils.h"
+#include "regex2.h"
+
+/*
+ - regfree - free everything
+ = extern void regfree(regex_t *);
+ */
+void
+my_regfree(preg)
+my_regex_t *preg;
+{
+	register struct re_guts *g;
+
+	if (preg-&gt;re_magic != MAGIC1)	/* oops */
+		return;			/* nice to complain, but hard */
+
+	g = preg-&gt;re_g;
+	if (g == NULL || g-&gt;magic != MAGIC2)	/* oops again */
+		return;
+	preg-&gt;re_magic = 0;		/* mark it invalid */
+	g-&gt;magic = 0;			/* mark it invalid */
+
+	if (g-&gt;strip != NULL)
+		free((char *)g-&gt;strip);
+	if (g-&gt;sets != NULL)
+		free((char *)g-&gt;sets);
+	if (g-&gt;setbits != NULL)
+		free((char *)g-&gt;setbits);
+	if (g-&gt;must != NULL)
+		free(g-&gt;must);
+	free((char *)g);
+}
+      </pre>
+    </body>
+</html>

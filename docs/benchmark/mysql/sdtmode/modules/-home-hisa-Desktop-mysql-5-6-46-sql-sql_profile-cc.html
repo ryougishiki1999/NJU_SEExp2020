@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/sql/sql_profile.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2007, 2012, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software Foundation,
+   51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
+
+
+/**
+  @file
+
+  Implement query profiling as as list of metaphorical fences, with one fence
+  per query, and each fencepost a change of thd-&gt;proc_info state (with a
+  snapshot of system statistics).  When asked, we can then iterate over the 
+  fenceposts and calculate the distance between them, to inform the user what
+  happened during a particular query or thd-&gt;proc_info state.
+
+  User variables that inform profiling behavior:
+  - "profiling", boolean, session only, "Are queries profiled?"
+  - "profiling_history_size", integer, session + global, "Num queries stored?"
+*/
+
+
+#include "sql_priv.h"
+#include "unireg.h"                    // REQUIRED: for other includes
+#include "sql_profile.h"
+#include "my_sys.h"
+#include "sql_show.h"                     // schema_table_store_record
+#include "sql_class.h"                    // THD
+
+#include &lt;algorithm&gt;
+
+using std::min;
+using std::max;
+
+#define TIME_FLOAT_DIGITS 9
+/** two vals encoded: (dec*100)+len */
+#define TIME_I_S_DECIMAL_SIZE (TIME_FLOAT_DIGITS*100)+(TIME_FLOAT_DIGITS-3)
+
+#define MAX_QUERY_LENGTH 300U
+#define MAX_QUERY_HISTORY 101U
+
+/**
+  Connects Information_Schema and Profiling.
+*/
+int fill_query_profile_statistics_info(THD *thd, TABLE_LIST *tables,
+                                       Item *cond)
+{
+#if defined(ENABLED_PROFILING)
+  return(thd-&gt;profiling.fill_statistics_info(thd, tables, cond));
+#else
+  my_error(ER_FEATURE_DISABLED, MYF(0), "SHOW PROFILE", "enable-profiling");
+  return(1);
+#endif
+}
+
+ST_FIELD_INFO query_profile_statistics_info[]=
+{
+  /* name, length, type, value, maybe_null, old_name, open_method */
+  {"QUERY_ID", 20, MYSQL_TYPE_LONG, 0, false, "Query_id", SKIP_OPEN_TABLE},
+  {"SEQ", 20, MYSQL_TYPE_LONG, 0, false, "Seq", SKIP_OPEN_TABLE},
+  {"STATE", 30, MYSQL_TYPE_STRING, 0, false, "Status", SKIP_OPEN_TABLE},
+  {"DURATION", TIME_I_S_DECIMAL_SIZE, MYSQL_TYPE_DECIMAL, 0, false, "Duration", SKIP_OPEN_TABLE},
+  {"CPU_USER", TIME_I_S_DECIMAL_SIZE, MYSQL_TYPE_DECIMAL, 0, true, "CPU_user", SKIP_OPEN_TABLE},
+  {"CPU_SYSTEM", TIME_I_S_DECIMAL_SIZE, MYSQL_TYPE_DECIMAL, 0, true, "CPU_system", SKIP_OPEN_TABLE},
+  {"CONTEXT_VOLUNTARY", 20, MYSQL_TYPE_LONG, 0, true, "Context_voluntary", SKIP_OPEN_TABLE},
+  {"CONTEXT_INVOLUNTARY", 20, MYSQL_TYPE_LONG, 0, true, "Context_involuntary", SKIP_OPEN_TABLE},
+  {"BLOCK_OPS_IN", 20, MYSQL_TYPE_LONG, 0, true, "Block_ops_in", SKIP_OPEN_TABLE},
+  {"BLOCK_OPS_OUT", 20, MYSQL_TYPE_LONG, 0, true, "Block_ops_out", SKIP_OPEN_TABLE},
+  {"MESSAGES_SENT", 20, MYSQL_TYPE_LONG, 0, true, "Messages_sent", SKIP_OPEN_TABLE},
+  {"MESSAGES_RECEIVED", 20, MYSQL_TYPE_LONG, 0, true, "Messages_received", SKIP_OPEN_TABLE},
+  {"PAGE_FAULTS_MAJOR", 20, MYSQL_TYPE_LONG, 0, true, "Page_faults_major", SKIP_OPEN_TABLE},
+  {"PAGE_FAULTS_MINOR", 20, MYSQL_TYPE_LONG, 0, true, "Page_faults_minor", SKIP_OPEN_TABLE},
+  {"SWAPS", 20, MYSQL_TYPE_LONG, 0, true, "Swaps", SKIP_OPEN_TABLE},
+  {"SOURCE_FUNCTION", 30, MYSQL_TYPE_STRING, 0, true, "Source_function", SKIP_OPEN_TABLE},
+  {"SOURCE_FILE", 20, MYSQL_TYPE_STRING, 0, true, "Source_file", SKIP_OPEN_TABLE},
+  {"SOURCE_LINE", 20, MYSQL_TYPE_LONG, 0, true, "Source_line", SKIP_OPEN_TABLE},
+  {NULL, 0,  MYSQL_TYPE_STRING, 0, true, NULL, 0}
+};
+
+
+int make_profile_table_for_show(THD *thd, ST_SCHEMA_TABLE *schema_table)
+{
+  uint profile_options = thd-&gt;lex-&gt;profile_options;
+  uint fields_include_condition_truth_values[]= {
+    FALSE, /* Query_id */
+    FALSE, /* Seq */
+    TRUE, /* Status */
+    TRUE, /* Duration */
+    profile_options &amp; PROFILE_CPU, /* CPU_user */
+    profile_options &amp; PROFILE_CPU, /* CPU_system */
+    profile_options &amp; PROFILE_CONTEXT, /* Context_voluntary */
+    profile_options &amp; PROFILE_CONTEXT, /* Context_involuntary */
+    profile_options &amp; PROFILE_BLOCK_IO, /* Block_ops_in */
+    profile_options &amp; PROFILE_BLOCK_IO, /* Block_ops_out */
+    profile_options &amp; PROFILE_IPC, /* Messages_sent */
+    profile_options &amp; PROFILE_IPC, /* Messages_received */
+    profile_options &amp; PROFILE_PAGE_FAULTS, /* Page_faults_major */
+    profile_options &amp; PROFILE_PAGE_FAULTS, /* Page_faults_minor */
+    profile_options &amp; PROFILE_SWAPS, /* Swaps */
+    profile_options &amp; PROFILE_SOURCE, /* Source_function */
+    profile_options &amp; PROFILE_SOURCE, /* Source_file */
+    profile_options &amp; PROFILE_SOURCE, /* Source_line */
+  };
+
+  ST_FIELD_INFO *field_info;
+  Name_resolution_context *context= &amp;thd-&gt;lex-&gt;select_lex.context;
+  int i;
+
+  for (i= 0; schema_table-&gt;fields_info[i].field_name != NULL; i++)
+  {
+    if (! fields_include_condition_truth_values[i])
+      continue;
+
+    field_info= &amp;schema_table-&gt;fields_info[i];
+    Item_field *field= new Item_field(context,
+                                      NullS, NullS, field_info-&gt;field_name);
+    if (field)
+    {
+      field-&gt;item_name.copy(field_info-&gt;old_name);
+      if (add_item_to_list(thd, field))
+        return 1;
+    }
+  }
+  return 0;
+}
+
+
+#if defined(ENABLED_PROFILING)
+
+#define RUSAGE_USEC(tv)  ((tv).tv_sec*1000*1000 + (tv).tv_usec)
+#define RUSAGE_DIFF_USEC(tv1, tv2) (RUSAGE_USEC((tv1))-RUSAGE_USEC((tv2)))
+
+#ifdef _WIN32
+static ULONGLONG FileTimeToQuadWord(FILETIME *ft)
+{
+  // Overlay FILETIME onto a ULONGLONG.
+  union {
+    ULONGLONG qwTime;
+    FILETIME ft;
+  } u;
+
+  u.ft = *ft;
+  return u.qwTime;
+}
+
+
+// Get time difference between to FILETIME objects in seconds.
+static double GetTimeDiffInSeconds(FILETIME *a, FILETIME *b)
+{
+  return ((FileTimeToQuadWord(a) - FileTimeToQuadWord(b)) / 1e7);
+}
+#endif
+
+PROF_MEASUREMENT::PROF_MEASUREMENT(QUERY_PROFILE *profile_arg, const char
+                                   *status_arg)
+  :profile(profile_arg)
+{
+  collect();
+  set_label(status_arg, NULL, NULL, 0);
+}
+
+PROF_MEASUREMENT::PROF_MEASUREMENT(QUERY_PROFILE *profile_arg, 
+                                   const char *status_arg, 
+                                   const char *function_arg, 
+                                   const char *file_arg,
+                                   unsigned int line_arg)
+  :profile(profile_arg)
+{
+  collect();
+  set_label(status_arg, function_arg, file_arg, line_arg);
+}
+
+PROF_MEASUREMENT::~PROF_MEASUREMENT()
+{
+  my_free(allocated_status_memory);
+  status= function= file= NULL;
+}
+
+void PROF_MEASUREMENT::set_label(const char *status_arg, 
+                                 const char *function_arg,
+                                 const char *file_arg, unsigned int line_arg)
+{
+  size_t sizes[3];                              /* 3 == status+function+file */
+  char *cursor;
+
+  /*
+    Compute all the space we'll need to allocate one block for everything
+    we'll need, instead of N mallocs.
+  */
+  sizes[0]= (status_arg == NULL) ? 0 : strlen(status_arg) + 1;
+  sizes[1]= (function_arg == NULL) ? 0 : strlen(function_arg) + 1;
+  sizes[2]= (file_arg == NULL) ? 0 : strlen(file_arg) + 1;
+
+  allocated_status_memory= (char *) my_malloc(sizes[0] + sizes[1] + sizes[2], MYF(0));
+  DBUG_ASSERT(allocated_status_memory != NULL);
+
+  cursor= allocated_status_memory;
+
+  if (status_arg != NULL)
+  {
+    strcpy(cursor, status_arg);
+    status= cursor;
+    cursor+= sizes[0];
+  }
+  else
+    status= NULL;
+
+  if (function_arg != NULL)
+  {
+    strcpy(cursor, function_arg);
+    function= cursor;
+    cursor+= sizes[1];
+  }
+  else
+    function= NULL;
+
+  if (file_arg != NULL)
+  {
+    strcpy(cursor, file_arg);
+    file= cursor;
+    cursor+= sizes[2];
+  }
+  else
+    file= NULL;
+
+  line= line_arg;
+}
+
+/**
+  This updates the statistics for this moment of time.  It captures the state
+  of the running system, so later we can compare points in time and infer what
+  happened in the mean time.  It should only be called immediately upon
+  instantiation of this PROF_MEASUREMENT.
+
+  @todo  Implement resource capture for OSes not like BSD.
+*/
+void PROF_MEASUREMENT::collect()
+{
+  time_usecs= (double) my_getsystime() / 10.0;  /* 1 sec was 1e7, now is 1e6 */
+#ifdef HAVE_GETRUSAGE
+  getrusage(RUSAGE_SELF, &amp;rusage);
+#elif defined(_WIN32)
+  FILETIME ftDummy;
+  // NOTE: Get{Process|Thread}Times has a granularity of the clock interval,
+  // which is typically ~15ms. So intervals shorter than that will not be
+  // measurable by this function.
+  GetProcessTimes(GetCurrentProcess(), &amp;ftDummy, &amp;ftDummy, &amp;ftKernel, &amp;ftUser);
+#endif
+<span style = "background-color:#fdd">}        Memory Leak:Potential memory leak at pointer field 'payload'</span>
+
+
+QUERY_PROFILE::QUERY_PROFILE(PROFILING *profiling_arg, const char *status_arg)
+  :profiling(profiling_arg), profiling_query_id(0), query_source(NULL)
+{
+  m_seq_counter= 1;
+  PROF_MEASUREMENT *prof= new PROF_MEASUREMENT(this, status_arg);
+  prof-&gt;m_seq= m_seq_counter++;
+  m_start_time_usecs= prof-&gt;time_usecs;
+  m_end_time_usecs= m_start_time_usecs;
+  entries.push_back(prof);
+}
+
+QUERY_PROFILE::~QUERY_PROFILE()
+{
+  while (! entries.is_empty())
+    delete entries.pop();
+
+  my_free(query_source);
+}
+
+/**
+  @todo  Provide a way to include the full text, as in  SHOW PROCESSLIST.
+*/
+void QUERY_PROFILE::set_query_source(char *query_source_arg,
+                                     uint query_length_arg)
+{
+  /* Truncate to avoid DoS attacks. */
+  uint length= min(MAX_QUERY_LENGTH, query_length_arg);
+
+  DBUG_ASSERT(query_source == NULL); /* we don't leak memory */
+  if (query_source_arg != NULL)
+    query_source= my_strndup(query_source_arg, length, MYF(0));
+}
+
+void QUERY_PROFILE::new_status(const char *status_arg,
+                               const char *function_arg, const char *file_arg,
+                               unsigned int line_arg)
+{
+  PROF_MEASUREMENT *prof;
+  DBUG_ENTER("QUERY_PROFILE::status");
+
+  DBUG_ASSERT(status_arg != NULL);
+
+  if ((function_arg != NULL) &amp;&amp; (file_arg != NULL))
+    prof= new PROF_MEASUREMENT(this, status_arg, function_arg, base_name(file_arg), line_arg);
+  else
+    prof= new PROF_MEASUREMENT(this, status_arg);
+
+  prof-&gt;m_seq= m_seq_counter++;
+  m_end_time_usecs= prof-&gt;time_usecs;
+  entries.push_back(prof);
+
+  /* Maintain the query history size. */
+  while (entries.elements &gt; MAX_QUERY_HISTORY)
+    delete entries.pop();
+
+  DBUG_VOID_RETURN;
+}
+
+
+
+PROFILING::PROFILING()
+  :profile_id_counter(1), current(NULL), last(NULL)
+{
+}
+
+PROFILING::~PROFILING()
+{
+  while (! history.is_empty())
+    delete history.pop();
+
+  if (current != NULL)
+    delete current;
+}
+
+/**
+  A new state is given, and that signals the profiler to start a new
+  timed step for the current query's profile.
+
+  @param  status_arg  name of this step
+  @param  function_arg  calling function (usually supplied from compiler)
+  @param  function_arg  calling file (usually supplied from compiler)
+  @param  function_arg  calling line number (usually supplied from compiler)
+*/
+void PROFILING::status_change(const char *status_arg,
+                              const char *function_arg,
+                              const char *file_arg, unsigned int line_arg)
+{
+  DBUG_ENTER("PROFILING::status_change");
+
+  if (status_arg == NULL)  /* We don't know how to handle that */
+    DBUG_VOID_RETURN;
+
+  if (current == NULL)  /* This profile was already discarded. */
+    DBUG_VOID_RETURN;
+
+  if (unlikely(enabled))
+    current-&gt;new_status(status_arg, function_arg, file_arg, line_arg);
+
+  DBUG_VOID_RETURN;
+}
+
+/**
+  Prepare to start processing a new query.  It is an error to do this
+  if there's a query already in process; nesting is not supported.
+
+  @param  initial_state  (optional) name of period before first state change
+*/
+void PROFILING::start_new_query(const char *initial_state)
+{
+  DBUG_ENTER("PROFILING::start_new_query");
+
+  /* This should never happen unless the server is radically altered. */
+  if (unlikely(current != NULL))
+  {
+    DBUG_PRINT("warning", ("profiling code was asked to start a new query "
+                           "before the old query was finished.  This is "
+                           "probably a bug."));
+    finish_current_query();
+  }
+
+  enabled= ((thd-&gt;variables.option_bits &amp; OPTION_PROFILING) != 0);
+
+  if (! enabled) DBUG_VOID_RETURN;
+
+  DBUG_ASSERT(current == NULL);
+  current= new QUERY_PROFILE(this, initial_state);
+
+  DBUG_VOID_RETURN;
+}
+
+/**
+  Throw away the current profile, because it's useless or unwanted
+  or corrupted.
+*/
+void PROFILING::discard_current_query()
+{
+  DBUG_ENTER("PROFILING::discard_current_profile");
+
+  delete current;
+  current= NULL;
+
+  DBUG_VOID_RETURN;
+}
+
+/**
+  Try to save the current profile entry, clean up the data if it shouldn't be
+  saved, and maintain the profile history size.  Naturally, this may not
+  succeed if the profile was previously discarded, and that's expected.
+*/
+void PROFILING::finish_current_query()
+{
+  DBUG_ENTER("PROFILING::finish_current_profile");
+  if (current != NULL)
+  {
+    /* The last fence-post, so we can support the span before this. */
+    status_change("ending", NULL, NULL, 0);
+
+    if ((enabled) &amp;&amp;                                    /* ON at start? */
+        ((thd-&gt;variables.option_bits &amp; OPTION_PROFILING) != 0) &amp;&amp;   /* and ON at end? */
+        (current-&gt;query_source != NULL) &amp;&amp;
+        (! current-&gt;entries.is_empty()))
+    {
+      current-&gt;profiling_query_id= next_profile_id();   /* assign an id */
+
+      history.push_back(current);
+      last= current; /* never contains something that is not in the history. */
+      current= NULL;
+    }
+    else
+    {
+<span style = "background-color:#fdd">      delete current;        Memory Leak:Potential memory leak at pointer field 'payload'</span>
+      current= NULL;
+    }
+  }
+
+  /* Maintain the history size. */
+  while (history.elements &gt; thd-&gt;variables.profiling_history_size)
+    delete history.pop();
+
+  DBUG_VOID_RETURN;
+}
+
+bool PROFILING::show_profiles()
+{
+  DBUG_ENTER("PROFILING::show_profiles");
+  QUERY_PROFILE *prof;
+  List&lt;Item&gt; field_list;
+
+  field_list.push_back(new Item_return_int("Query_ID", 10,
+                                           MYSQL_TYPE_LONG));
+  field_list.push_back(new Item_return_int("Duration", TIME_FLOAT_DIGITS-1,
+                                           MYSQL_TYPE_DOUBLE));
+  field_list.push_back(new Item_empty_string("Query", 40));
+
+  if (thd-&gt;protocol-&gt;send_result_set_metadata(&amp;field_list,
+                                 Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
+    DBUG_RETURN(TRUE);
+
+  SELECT_LEX *sel= &amp;thd-&gt;lex-&gt;select_lex;
+  SELECT_LEX_UNIT *unit= &amp;thd-&gt;lex-&gt;unit;
+  ha_rows idx= 0;
+  Protocol *protocol= thd-&gt;protocol;
+
+  unit-&gt;set_limit(sel);
+
+  void *iterator;
+  for (iterator= history.new_iterator();
+       iterator != NULL;
+       iterator= history.iterator_next(iterator))
+  {
+    prof= history.iterator_value(iterator);
+
+    String elapsed;
+
+    double query_time_usecs= prof-&gt;m_end_time_usecs - prof-&gt;m_start_time_usecs;
+
+    if (++idx &lt;= unit-&gt;offset_limit_cnt)
+      continue;
+    if (idx &gt; unit-&gt;select_limit_cnt)
+      break;
+
+    protocol-&gt;prepare_for_resend();
+    protocol-&gt;store((uint32)(prof-&gt;profiling_query_id));
+    protocol-&gt;store((double)(query_time_usecs/(1000.0*1000)),
+                    (uint32) TIME_FLOAT_DIGITS-1, &amp;elapsed);
+    if (prof-&gt;query_source != NULL)
+      protocol-&gt;store(prof-&gt;query_source, strlen(prof-&gt;query_source),
+                      system_charset_info);
+    else
+      protocol-&gt;store_null();
+
+    if (protocol-&gt;write())
+      DBUG_RETURN(TRUE);
+  }
+  my_eof(thd);
+  DBUG_RETURN(FALSE);
+}
+
+/**
+  At a point in execution where we know the query source, save the text
+  of it in the query profile.
+
+  This must be called exactly once per descrete statement.
+*/
+void PROFILING::set_query_source(char *query_source_arg, uint query_length_arg)
+{
+  DBUG_ENTER("PROFILING::set_query_source");
+
+  if (! enabled)
+    DBUG_VOID_RETURN;
+
+  if (current != NULL)
+    current-&gt;set_query_source(query_source_arg, query_length_arg);
+  else
+    DBUG_PRINT("info", ("no current profile to send query source to"));
+  DBUG_VOID_RETURN;
+}
+
+/**
+  Fill the information schema table, "query_profile", as defined in show.cc .
+  There are two ways to get to this function:  Selecting from the information
+  schema, and a SHOW command.
+*/
+int PROFILING::fill_statistics_info(THD *thd_arg, TABLE_LIST *tables, Item *cond)
+{
+  DBUG_ENTER("PROFILING::fill_statistics_info");
+  TABLE *table= tables-&gt;table;
+  ulonglong row_number= 0;
+
+  QUERY_PROFILE *query;
+  /* Go through each query in this thread's stored history... */
+  void *history_iterator;
+  for (history_iterator= history.new_iterator();
+       history_iterator != NULL;
+       history_iterator= history.iterator_next(history_iterator))
+  {
+    query= history.iterator_value(history_iterator);
+
+    /*
+      Because we put all profiling info into a table that may be reordered, let
+      us also include a numbering of each state per query.  The query_id and
+      the "seq" together are unique.
+    */
+    ulong seq;
+
+    void *entry_iterator;
+    PROF_MEASUREMENT *entry, *previous= NULL;
+    /* ...and for each query, go through all its state-change steps. */
+    for (entry_iterator= query-&gt;entries.new_iterator();
+         entry_iterator != NULL;
+         entry_iterator= query-&gt;entries.iterator_next(entry_iterator),
+         previous=entry, row_number++)
+    {
+      entry= query-&gt;entries.iterator_value(entry_iterator);
+      seq= entry-&gt;m_seq;
+
+      /* Skip the first.  We count spans of fence, not fence-posts. */
+      if (previous == NULL) continue;
+
+      if (thd_arg-&gt;lex-&gt;sql_command == SQLCOM_SHOW_PROFILE)
+      {
+        /*
+          We got here via a SHOW command.  That means that we stored
+          information about the query we wish to show and that isn't
+          in a WHERE clause at a higher level to filter out rows we
+          wish to exclude.
+
+          Because that functionality isn't available in the server yet,
+          we must filter here, at the wrong level.  Once one can con-
+          struct where and having conditions at the SQL layer, then this
+          condition should be ripped out.
+        */
+        if (thd_arg-&gt;lex-&gt;profile_query_id == 0) /* 0 == show final query */
+        {
+          if (query != last)
+            continue;
+        }
+        else
+        {
+          if (thd_arg-&gt;lex-&gt;profile_query_id != query-&gt;profiling_query_id)
+            continue;
+        }
+      }
+
+      /* Set default values for this row. */
+      restore_record(table, s-&gt;default_values);
+
+      /*
+        The order of these fields is set by the  query_profile_statistics_info
+        array.
+      */
+      table-&gt;field[0]-&gt;store((ulonglong) query-&gt;profiling_query_id, TRUE);
+      table-&gt;field[1]-&gt;store((ulonglong) seq, TRUE); /* the step in the sequence */
+      /*
+        This entry, n, has a point in time, T(n), and a status phrase, S(n).
+        The status phrase S(n) describes the period of time that begins at
+        T(n).  The previous status phrase S(n-1) describes the period of time
+        that starts at T(n-1) and ends at T(n).  Since we want to describe the
+        time that a status phrase took T(n)-T(n-1), this line must describe the
+        previous status.
+      */
+      table-&gt;field[2]-&gt;store(previous-&gt;status, strlen(previous-&gt;status),
+                             system_charset_info);
+
+      my_decimal duration_decimal;
+      double2my_decimal(E_DEC_FATAL_ERROR,
+                        (entry-&gt;time_usecs-previous-&gt;time_usecs)/(1000.0*1000),
+                        &amp;duration_decimal);
+
+      table-&gt;field[3]-&gt;store_decimal(&amp;duration_decimal);
+
+
+#ifdef HAVE_GETRUSAGE
+
+      my_decimal cpu_utime_decimal, cpu_stime_decimal;
+
+      double2my_decimal(E_DEC_FATAL_ERROR,
+                        RUSAGE_DIFF_USEC(entry-&gt;rusage.ru_utime,
+                                         previous-&gt;rusage.ru_utime) /
+                                                        (1000.0*1000),
+                        &amp;cpu_utime_decimal);
+
+      double2my_decimal(E_DEC_FATAL_ERROR,
+                        RUSAGE_DIFF_USEC(entry-&gt;rusage.ru_stime,
+                                         previous-&gt;rusage.ru_stime) /
+                                                        (1000.0*1000),
+                        &amp;cpu_stime_decimal);
+
+      table-&gt;field[4]-&gt;store_decimal(&amp;cpu_utime_decimal);
+      table-&gt;field[5]-&gt;store_decimal(&amp;cpu_stime_decimal);
+      table-&gt;field[4]-&gt;set_notnull();
+      table-&gt;field[5]-&gt;set_notnull();
+#elif defined(_WIN32)
+      my_decimal cpu_utime_decimal, cpu_stime_decimal;
+
+      double2my_decimal(E_DEC_FATAL_ERROR,
+                        GetTimeDiffInSeconds(&amp;entry-&gt;ftUser,
+                                             &amp;previous-&gt;ftUser),
+                        &amp;cpu_utime_decimal);
+      double2my_decimal(E_DEC_FATAL_ERROR,
+                        GetTimeDiffInSeconds(&amp;entry-&gt;ftKernel,
+                                             &amp;previous-&gt;ftKernel),
+                        &amp;cpu_stime_decimal);
+
+      // Store the result.
+      table-&gt;field[4]-&gt;store_decimal(&amp;cpu_utime_decimal);
+      table-&gt;field[5]-&gt;store_decimal(&amp;cpu_stime_decimal);
+      table-&gt;field[4]-&gt;set_notnull();
+      table-&gt;field[5]-&gt;set_notnull();
+#else
+      /* TODO: Add CPU-usage info for non-BSD systems */
+#endif
+
+#ifdef HAVE_GETRUSAGE
+      table-&gt;field[6]-&gt;store((uint32)(entry-&gt;rusage.ru_nvcsw -
+                             previous-&gt;rusage.ru_nvcsw));
+      table-&gt;field[6]-&gt;set_notnull();
+      table-&gt;field[7]-&gt;store((uint32)(entry-&gt;rusage.ru_nivcsw -
+                             previous-&gt;rusage.ru_nivcsw));
+      table-&gt;field[7]-&gt;set_notnull();
+#else
+      /* TODO: Add context switch info for non-BSD systems */
+#endif
+
+#ifdef HAVE_GETRUSAGE
+      table-&gt;field[8]-&gt;store((uint32)(entry-&gt;rusage.ru_inblock -
+                             previous-&gt;rusage.ru_inblock));
+      table-&gt;field[8]-&gt;set_notnull();
+      table-&gt;field[9]-&gt;store((uint32)(entry-&gt;rusage.ru_oublock -
+                             previous-&gt;rusage.ru_oublock));
+      table-&gt;field[9]-&gt;set_notnull();
+#else
+      /* TODO: Add block IO info for non-BSD systems */
+#endif
+
+#ifdef HAVE_GETRUSAGE
+      table-&gt;field[10]-&gt;store((uint32)(entry-&gt;rusage.ru_msgsnd -
+                             previous-&gt;rusage.ru_msgsnd), true);
+      table-&gt;field[10]-&gt;set_notnull();
+      table-&gt;field[11]-&gt;store((uint32)(entry-&gt;rusage.ru_msgrcv -
+                             previous-&gt;rusage.ru_msgrcv), true);
+      table-&gt;field[11]-&gt;set_notnull();
+#else
+      /* TODO: Add message info for non-BSD systems */
+#endif
+
+#ifdef HAVE_GETRUSAGE
+      table-&gt;field[12]-&gt;store((uint32)(entry-&gt;rusage.ru_majflt -
+                             previous-&gt;rusage.ru_majflt), true);
+      table-&gt;field[12]-&gt;set_notnull();
+      table-&gt;field[13]-&gt;store((uint32)(entry-&gt;rusage.ru_minflt -
+                             previous-&gt;rusage.ru_minflt), true);
+      table-&gt;field[13]-&gt;set_notnull();
+#else
+      /* TODO: Add page fault info for non-BSD systems */
+#endif
+
+#ifdef HAVE_GETRUSAGE
+      table-&gt;field[14]-&gt;store((uint32)(entry-&gt;rusage.ru_nswap -
+                             previous-&gt;rusage.ru_nswap), true);
+      table-&gt;field[14]-&gt;set_notnull();
+#else
+      /* TODO: Add swap info for non-BSD systems */
+#endif
+
+      /* Emit the location that started this step, not that ended it. */
+      if ((previous-&gt;function != NULL) &amp;&amp; (previous-&gt;file != NULL))
+      {
+        table-&gt;field[15]-&gt;store(previous-&gt;function, strlen(previous-&gt;function),
+                        system_charset_info);
+        table-&gt;field[15]-&gt;set_notnull();
+        table-&gt;field[16]-&gt;store(previous-&gt;file, strlen(previous-&gt;file), system_charset_info);
+        table-&gt;field[16]-&gt;set_notnull();
+        table-&gt;field[17]-&gt;store(previous-&gt;line, true);
+        table-&gt;field[17]-&gt;set_notnull();
+      }
+
+      if (schema_table_store_record(thd_arg, table))
+        DBUG_RETURN(1);
+
+    }
+  }
+
+  DBUG_RETURN(0);
+}
+#endif /* ENABLED_PROFILING */
+      </pre>
+    </body>
+</html>

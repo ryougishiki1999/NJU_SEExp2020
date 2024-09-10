@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Modules/_xxtestfuzz/_xxtestfuzz.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#define PY_SSIZE_T_CLEAN
+#include &lt;Python.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;inttypes.h&gt;
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
+
+static PyObject* _fuzz_run(PyObject* self, PyObject* args) {
+    const char* buf;
+    Py_ssize_t size;
+    if (!PyArg_ParseTuple(args, "s#", &amp;buf, &amp;size)) {
+        return NULL;
+    }
+    int rv = LLVMFuzzerTestOneInput((const uint8_t*)buf, size);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    if (rv != 0) {
+        // Nonzero return codes are reserved for future use.
+        PyErr_Format(
+            PyExc_RuntimeError, "Nonzero return code from fuzzer: %d", rv);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", (PyCFunction)_fuzz_run, METH_VARARGS, ""},
+    {NULL},
+};
+
+static struct PyModuleDef _fuzzmodule = {
+        PyModuleDef_HEAD_INIT,
+        "_fuzz",
+        NULL,
+        0,
+        module_methods,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+};
+
+PyMODINIT_FUNC
+PyInit__xxtestfuzz(void)
+{
+    PyObject *m = NULL;
+
+    if ((m = PyModule_Create(&amp;_fuzzmodule)) == NULL) {
+        return NULL;
+    }
+    return m;
+}
+      </pre>
+    </body>
+</html>

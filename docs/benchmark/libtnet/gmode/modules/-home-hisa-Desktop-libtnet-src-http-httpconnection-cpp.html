@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/http/httpconnection.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "httpconnection.h"
+#include "httpserver.h"
+#include "log.h"
+#include "httprequest.h"
+#include "httpresponse.h"
+#include "connection.h"
+#include "httpparser.h"
+
+using namespace std;
+
+namespace tnet
+{
+    size_t HttpConnection::ms_maxHeaderSize = 80 * 1024;
+    size_t HttpConnection::ms_maxBodySize = 10 * 1024 * 1024;
+    
+    static void dummyCallback()
+    {}
+
+    HttpConnection::HttpConnection(const ConnectionPtr_t&amp; conn, const RequestCallback_t&amp; callback)
+        : HttpParser(HTTP_REQUEST)
+        , m_conn(conn)
+        , m_callback(callback)
+    {
+        m_fd = conn-&gt;getSockFd();
+        m_sendCallback = std::bind(&amp;dummyCallback);
+    }
+
+    HttpConnection::~HttpConnection()
+    {
+        LOG_INFO("httpconnection destroyed");
+    }
+
+    void HttpConnection::onConnEvent(const ConnectionPtr_t&amp; conn, ConnEvent event, const void* context)
+    {
+        HttpConnectionPtr_t httpConn = shared_from_this();
+
+        switch(event)
+        {
+            case Conn_ReadEvent:
+                {
+                    const StackBuffer* buf = (const StackBuffer*)context;
+                    
+                    execute(buf-&gt;buffer, buf-&gt;count);    
+                }
+                break;   
+            case Conn_WriteCompleteEvent:
+                {
+                    m_sendCallback();
+                    m_sendCallback = std::bind(&amp;dummyCallback);
+                }
+                break;
+            default:
+                break; 
+        }    
+    }
+
+    void HttpConnection::shutDown(int after)
+    {
+        ConnectionPtr_t conn = m_conn.lock();
+        if(conn)
+        {
+            conn-&gt;shutDown(after);    
+        }    
+    }
+
+    void HttpConnection::send(HttpResponse&amp; resp)
+    {
+        ConnectionPtr_t conn = m_conn.lock();
+        if(!conn)
+        {
+            return;    
+        }    
+
+        conn-&gt;send(resp.dump());
+    }
+
+    void HttpConnection::send(int statusCode)
+    {
+        HttpResponse resp;
+        resp.statusCode = statusCode;
+        
+        send(resp);    
+    }
+
+    void HttpConnection::send(int statusCode, const string&amp; body)
+    {
+        HttpResponse resp;
+        resp.statusCode = statusCode;
+        resp.body = body;
+        
+        send(resp);    
+    }
+
+    void HttpConnection::send(int statusCode, const string&amp; body, const Headers_t&amp; headers)
+    {
+        HttpResponse resp;
+        resp.statusCode = statusCode;
+        resp.body = body;
+        
+        resp.headers = headers;
+
+        send(resp);
+    }
+
+    void HttpConnection::send(HttpResponse&amp; resp, const Callback_t&amp; callback)
+    {
+        m_sendCallback = callback;
+        send(resp);    
+    }
+    
+    void HttpConnection::send(int statusCode, const Callback_t&amp; callback)
+    {
+        m_sendCallback = callback;
+        send(statusCode);
+    }
+        
+    void HttpConnection::send(int statusCode, const std::string&amp; body, const Callback_t&amp; callback)
+    {
+        m_sendCallback = callback;
+        send(statusCode, body);
+    }
+        
+    void HttpConnection::send(int statusCode, const std::string&amp; body, const Headers_t&amp; headers, const Callback_t&amp; callback)
+    {
+        m_sendCallback = callback;
+        send(statusCode, body, headers);
+    }
+
+    int HttpConnection::onMessageBegin()
+    {
+        m_request.clear();
+        return 0;    
+    }
+
+    int HttpConnection::onUrl(const char* at, size_t length)
+    {
+        m_request.url.append(at, length);    
+        return 0;
+    }
+
+    int HttpConnection::onHeader(const string&amp; field, const string&amp; value)
+    {        
+        if(m_parser.nread &gt;= ms_maxHeaderSize)
+        {
+            m_errorCode = 413;
+            return -1;         
+        }
+    
+ 
+        m_request.headers.insert(make_pair(field, value));    
+        return 0;
+    }
+
+    int HttpConnection::onBody(const char* at, size_t length)
+    {
+        if(m_request.body.size() + length &gt; ms_maxBodySize)
+        {
+            m_errorCode = 413;
+            return -1;    
+        }
+
+        m_request.body.append(at, length);    
+        return 0;
+    }
+
+    int HttpConnection::onHeadersComplete()
+    {
+        m_request.majorVersion = m_parser.http_major;
+        m_request.minorVersion = m_parser.http_minor;
+        
+        m_request.method = (http_method)m_parser.method;
+
+        m_request.parseUrl();
+
+        return 0;    
+    }
+
+    int HttpConnection::onMessageComplete()
+    {
+        if(!m_parser.upgrade)
+        {
+            m_callback(shared_from_this(), m_request, Request_Complete, 0);    
+        }
+        return 0;     
+    }
+
+    int HttpConnection::onUpgrade(const char* at, size_t length)
+    {
+        StackBuffer buffer(at, length);
+        m_callback(shared_from_this(), m_request, Request_Upgrade, &amp;buffer);
+        return 0;    
+    }
+
+    int HttpConnection::onError(const HttpError&amp; error)
+    {
+        m_callback(shared_from_this(), m_request, Request_Error, (void*)&amp;error);
+        return 0;    
+    }
+
+}
+      </pre>
+    </body>
+</html>

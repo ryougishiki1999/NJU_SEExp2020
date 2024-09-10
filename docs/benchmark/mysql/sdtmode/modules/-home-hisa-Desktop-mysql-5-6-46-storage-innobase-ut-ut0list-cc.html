@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/ut/ut0list.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 2006, 2011, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/*******************************************************************//**
+@file ut/ut0list.cc
+A double-linked list
+
+Created 4/26/2006 Osku Salerma
+************************************************************************/
+
+#include "ut0list.h"
+#ifdef UNIV_NONINL
+#include "ut0list.ic"
+#endif
+
+/****************************************************************//**
+Create a new list.
+@return	list */
+UNIV_INTERN
+ib_list_t*
+ib_list_create(void)
+/*=================*/
+{
+	ib_list_t*	list;
+
+	list = static_cast&lt;ib_list_t*&gt;(mem_alloc(sizeof(*list)));
+
+	list-&gt;first = NULL;
+	list-&gt;last = NULL;
+	list-&gt;is_heap_list = FALSE;
+
+	return(list);
+}
+
+/****************************************************************//**
+Create a new list using the given heap. ib_list_free MUST NOT BE CALLED for
+lists created with this function.
+@return	list */
+UNIV_INTERN
+ib_list_t*
+ib_list_create_heap(
+/*================*/
+	mem_heap_t*	heap)	/*!&lt; in: memory heap to use */
+{
+	ib_list_t*	list;
+
+	list = static_cast&lt;ib_list_t*&gt;(mem_heap_alloc(heap, sizeof(*list)));
+
+	list-&gt;first = NULL;
+	list-&gt;last = NULL;
+	list-&gt;is_heap_list = TRUE;
+
+	return(list);
+}
+
+/****************************************************************//**
+Free a list. */
+UNIV_INTERN
+void
+ib_list_free(
+/*=========*/
+	ib_list_t*	list)	/*!&lt; in: list */
+{
+	ut_a(!list-&gt;is_heap_list);
+
+	/* We don't check that the list is empty because it's entirely valid
+	to e.g. have all the nodes allocated from a single heap that is then
+	freed after the list itself is freed. */
+
+	mem_free(list);
+}
+
+/****************************************************************//**
+Add the data to the start of the list.
+@return	new list node */
+UNIV_INTERN
+ib_list_node_t*
+ib_list_add_first(
+/*==============*/
+	ib_list_t*	list,	/*!&lt; in: list */
+	void*		data,	/*!&lt; in: data */
+	mem_heap_t*	heap)	/*!&lt; in: memory heap to use */
+{
+	return(ib_list_add_after(list, ib_list_get_first(list), data, heap));
+}
+
+/****************************************************************//**
+Add the data to the end of the list.
+@return	new list node */
+UNIV_INTERN
+ib_list_node_t*
+ib_list_add_last(
+/*=============*/
+	ib_list_t*	list,	/*!&lt; in: list */
+	void*		data,	/*!&lt; in: data */
+	mem_heap_t*	heap)	/*!&lt; in: memory heap to use */
+{
+	return(ib_list_add_after(list, ib_list_get_last(list), data, heap));
+}
+
+/****************************************************************//**
+Add the data after the indicated node.
+@return	new list node */
+UNIV_INTERN
+ib_list_node_t*
+ib_list_add_after(
+/*==============*/
+	ib_list_t*	list,		/*!&lt; in: list */
+	ib_list_node_t*	prev_node,	/*!&lt; in: node preceding new node (can
+					be NULL) */
+	void*		data,		/*!&lt; in: data */
+	mem_heap_t*	heap)		/*!&lt; in: memory heap to use */
+{
+	ib_list_node_t*	node;
+
+	node = static_cast&lt;ib_list_node_t*&gt;(
+		mem_heap_alloc(heap, sizeof(*node)));
+
+	node-&gt;data = data;
+
+	if (!list-&gt;first) {
+		/* Empty list. */
+
+		ut_a(!prev_node);
+
+		node-&gt;prev = NULL;
+		node-&gt;next = NULL;
+
+		list-&gt;first = node;
+		list-&gt;last = node;
+	} else if (!prev_node) {
+		/* Start of list. */
+
+		node-&gt;prev = NULL;
+		node-&gt;next = list-&gt;first;
+
+		list-&gt;first-&gt;prev = node;
+
+		list-&gt;first = node;
+	} else {
+		/* Middle or end of list. */
+
+		node-&gt;prev = prev_node;
+		node-&gt;next = prev_node-&gt;next;
+
+		prev_node-&gt;next = node;
+
+		if (node-&gt;next) {
+			node-&gt;next-&gt;prev = node;
+		} else {
+			list-&gt;last = node;
+		}
+	}
+
+	return(node);
+}
+
+/****************************************************************//**
+Remove the node from the list. */
+UNIV_INTERN
+void
+ib_list_remove(
+/*===========*/
+	ib_list_t*	list,	/*!&lt; in: list */
+	ib_list_node_t*	node)	/*!&lt; in: node to remove */
+{
+	if (node-&gt;prev) {
+		node-&gt;prev-&gt;next = node-&gt;next;
+	} else {
+		/* First item in list. */
+
+		ut_ad(list-&gt;first == node);
+
+		list-&gt;first = node-&gt;next;
+	}
+
+	if (node-&gt;next) {
+		node-&gt;next-&gt;prev = node-&gt;prev;
+	} else {
+		/* Last item in list. */
+
+		ut_ad(list-&gt;last == node);
+
+		list-&gt;last = node-&gt;prev;
+	}
+
+	node-&gt;prev = node-&gt;next = NULL;
+}
+      </pre>
+    </body>
+</html>

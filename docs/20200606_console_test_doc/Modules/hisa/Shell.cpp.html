@@ -1,0 +1,50 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>Shell.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "Shell.h"
+#include &lt;sstream&gt;
+#include &lt;string&gt;
+void Shell::exec(std::istream &amp;is)
+<span style = "background-color:#dfd">{
+    std::string cmd_line;
+    std::vector&lt;std::string&gt; argv;
+    std::string command;
+    ShellContext shell_context;
+    std::cout &lt;&lt; "Welcome to HiSA REPL\nType 'quit' to stop.\n";
+    while (1)</span>
+    {
+<span style = "background-color:#dfd">        std::cout &lt;&lt; "HiSA&gt;&gt;&gt; ";
+        std::getline(is, cmd_line);
+        std::istringstream ss(cmd_line);
+        ss &gt;&gt; command;
+        while (!ss.eof())</span>
+        {
+<span style = "background-color:#dfd">            std::string s;
+            ss &gt;&gt; s;
+            argv.push_back(s);
+        }
+        auto cmd_it = command_map.find(command);
+        if (cmd_it != command_map.end())</span>
+        {
+<span style = "background-color:#dfd">            if (cmd_it-&gt;second.second(shell_context, argv) != 0)</span>
+            {
+<span style = "background-color:#dfd">                return;</span>
+            }
+<span style = "background-color:#dfd">        }</span>
+        else
+        {
+<span style = "background-color:#fdd">            std::cout &lt;&lt; "\tUnknown command. Type 'help' for command infomation.\n";</span>
+        }
+<span style = "background-color:#dfd">        argv.clear();
+    }
+}</span></pre>
+	</body>
+</html>

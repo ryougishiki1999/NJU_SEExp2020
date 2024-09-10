@@ -1,0 +1,39 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>DivModZeroChecker.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#pragma once
+#include "../CSADriver.h"
+#include &lt;clang/StaticAnalyzer/Checkers/BuiltinCheckerRegistration.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/BugReporter/BugType.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/Checker.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/CheckerManager.h&gt;
+#include &lt;clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h&gt;
+
+class DivModZeroChecker : public clang::ento::Checker&lt;clang::ento::check::PreStmt&lt;clang::BinaryOperator&gt;&gt;
+{
+    mutable std::unique_ptr&lt;clang::ento::BuiltinBug&gt; btin;
+    void report_div_zero(const char *msg, clang::ento::ProgramStateRef state_zero, clang::ento::CheckerContext &amp;ctx,
+                         std::unique_ptr&lt;clang::ento::BugReporterVisitor&gt; visitor = nullptr) const;
+
+  public:
+    void checkPreStmt(const clang::BinaryOperator *bop, clang::ento::CheckerContext &amp;ctx) const;
+};
+
+static const clang::Expr *getDenomExpr(const clang::ento::ExplodedNode *node)
+<span style = "background-color:#dfd">{
+    const clang::Stmt *stmt = node-&gt;getLocationAs&lt;clang::PreStmt&gt;()-&gt;getStmt();
+    if (const auto *bexpr = clang::dyn_cast&lt;clang::BinaryOperator&gt;(stmt))
+        return bexpr-&gt;getRHS();</span>
+<span style = "background-color:#fdd">    return nullptr;</span>
+<span style = "background-color:#dfd">}</span>
+CSA_GENERATE_REGISTER_FUNCTION_DECL(DivModZeroChecker)</pre>
+	</body>
+</html>

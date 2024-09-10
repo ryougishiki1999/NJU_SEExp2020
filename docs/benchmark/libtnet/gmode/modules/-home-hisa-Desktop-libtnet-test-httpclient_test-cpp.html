@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/test/httpclient_test.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include &lt;iostream&gt;
+
+#include "httpclient.h"
+
+#include "httprequest.h"
+#include "httpresponse.h"
+#include "ioloop.h"
+
+using namespace std;
+using namespace tnet;
+
+void onResponse(IOLoop* loop, const HttpResponse&amp; resp)
+{
+    cout &lt;&lt; resp.statusCode &lt;&lt; endl;
+    
+    Headers_t::const_iterator iter = resp.headers.begin();
+
+    while(iter != resp.headers.end())
+    {
+        cout &lt;&lt; iter-&gt;first &lt;&lt; ": " &lt;&lt; iter-&gt;second &lt;&lt; endl;
+        ++iter;    
+    }
+
+    cout &lt;&lt; resp.body.size() &lt;&lt; endl &lt;&lt; endl;    
+
+    loop-&gt;stop();
+}
+
+int main()
+{
+    IOLoop loop;
+    
+    HttpClientPtr_t client = std::make_shared&lt;HttpClient&gt;(&amp;loop);
+    
+    client-&gt;request("http://127.0.0.1:11181/abc", std::bind(&amp;onResponse, &amp;loop, _1));
+    
+    loop.start(); 
+
+    cout &lt;&lt; "exit" &lt;&lt; endl;
+    
+    return 0;   
+}
+      </pre>
+    </body>
+</html>

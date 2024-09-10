@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/dyn/dyn0dyn.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 1996, 2013, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/**************************************************//**
+@file dyn/dyn0dyn.cc
+The dynamically allocated array
+
+Created 2/5/1996 Heikki Tuuri
+*******************************************************/
+
+#include "dyn0dyn.h"
+#ifdef UNIV_NONINL
+#include "dyn0dyn.ic"
+#endif
+
+/************************************************************//**
+Adds a new block to a dyn array.
+@return	created block */
+UNIV_INTERN
+dyn_block_t*
+dyn_array_add_block(
+/*================*/
+	dyn_array_t*	arr)	/*!&lt; in/out: dyn array */
+{
+	mem_heap_t*	heap;
+	dyn_block_t*	block;
+
+	ut_ad(arr);
+	ut_ad(arr-&gt;magic_n == DYN_BLOCK_MAGIC_N);
+
+	if (arr-&gt;heap == NULL) {
+		UT_LIST_INIT(arr-&gt;base);
+		UT_LIST_ADD_FIRST(list, arr-&gt;base, arr);
+
+		arr-&gt;heap = mem_heap_create(sizeof(dyn_block_t));
+	}
+
+	block = dyn_array_get_last_block(arr);
+	block-&gt;used = block-&gt;used | DYN_BLOCK_FULL_FLAG;
+
+	heap = arr-&gt;heap;
+
+	block = static_cast&lt;dyn_block_t*&gt;(
+		mem_heap_alloc(heap, sizeof(dyn_block_t)));
+
+	block-&gt;used = 0;
+
+	UT_LIST_ADD_LAST(list, arr-&gt;base, block);
+
+	return(block);
+}
+      </pre>
+    </body>
+</html>

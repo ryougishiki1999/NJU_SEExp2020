@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/libmysqld/libmysqld.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2001, 2018, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+#include &lt;my_global.h&gt;
+#include &lt;mysql.h&gt;
+#include &lt;mysqld_error.h&gt;
+#include &lt;my_pthread.h&gt;
+#include &lt;my_sys.h&gt;
+#include &lt;mysys_err.h&gt;
+#include &lt;m_string.h&gt;
+#include &lt;m_ctype.h&gt;
+#include "errmsg.h"
+#include &lt;violite.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;time.h&gt;
+#include &lt;sql_common.h&gt;
+#include "embedded_priv.h"
+#include "client_settings.h"
+#ifdef	 HAVE_PWD_H
+#include &lt;pwd.h&gt;
+#endif
+#if !defined(__WIN__)
+#ifdef HAVE_SELECT_H
+#  include &lt;select.h&gt;
+#endif
+#ifdef HAVE_SYS_SELECT_H
+#include &lt;sys/select.h&gt;
+#endif
+#endif
+#ifdef HAVE_SYS_UN_H
+#  include &lt;sys/un.h&gt;
+#endif
+#ifndef INADDR_NONE
+#define INADDR_NONE	-1
+#endif
+
+extern ulong net_buffer_length;
+extern ulong max_allowed_packet;
+
+#if defined(__WIN__)
+#define ERRNO WSAGetLastError()
+#define perror(A)
+#else
+#include &lt;errno.h&gt;
+#define ERRNO errno
+#define SOCKET_ERROR -1
+#define closesocket(A) close(A)
+#endif
+
+#ifdef HAVE_GETPWUID
+struct passwd *getpwuid(uid_t);
+char* getlogin(void);
+#endif
+
+#ifdef __WIN__
+static my_bool is_NT(void)
+{
+  char *os=getenv("OS");
+  return (os &amp;&amp; !strcmp(os, "Windows_NT")) ? 1 : 0;
+}
+#endif
+
+
+int mysql_init_character_set(MYSQL *mysql);
+
+MYSQL * STDCALL
+mysql_real_connect(MYSQL *mysql,const char *host, const char *user,
+		   const char *passwd, const char *db,
+		   uint port, const char *unix_socket,ulong client_flag)
+{
+  char name_buff[USERNAME_LENGTH + 1];
+
+  DBUG_ENTER("mysql_real_connect");
+  DBUG_PRINT("enter",("host: %s  db: %s  user: %s (libmysqld)",
+		      host ? host : "(Null)",
+		      db ? db : "(Null)",
+		      user ? user : "(Null)"));
+
+  /* Test whether we're already connected */
+  if (mysql-&gt;server_version)
+  {
+    set_mysql_error(mysql, CR_ALREADY_CONNECTED, unknown_sqlstate);
+    DBUG_RETURN(0);
+  }
+
+  if (!host || !host[0])
+    host= mysql-&gt;options.host;
+
+  if (mysql-&gt;options.methods_to_use == MYSQL_OPT_USE_REMOTE_CONNECTION ||
+      (mysql-&gt;options.methods_to_use == MYSQL_OPT_GUESS_CONNECTION &amp;&amp;
+       host &amp;&amp; *host &amp;&amp; strcmp(host,LOCAL_HOST)))
+    DBUG_RETURN(cli_mysql_real_connect(mysql, host, user, 
+				       passwd, db, port, 
+				       unix_socket, client_flag));
+
+  mysql-&gt;methods= &amp;embedded_methods;
+
+  /* use default options */
+  if (mysql-&gt;options.my_cnf_file || mysql-&gt;options.my_cnf_group)
+  {
+    mysql_read_default_options(&amp;mysql-&gt;options,
+			       (mysql-&gt;options.my_cnf_file ?
+				mysql-&gt;options.my_cnf_file : "my"),
+			       mysql-&gt;options.my_cnf_group);
+    my_free(mysql-&gt;options.my_cnf_file);
+    my_free(mysql-&gt;options.my_cnf_group);
+    mysql-&gt;options.my_cnf_file=mysql-&gt;options.my_cnf_group=0;
+  }
+
+  if (!db || !db[0])
+    db=mysql-&gt;options.db;
+
+  if (!user || !user[0])
+    user=mysql-&gt;options.user;
+
+#ifndef NO_EMBEDDED_ACCESS_CHECKS
+  if (!passwd)
+  {
+    passwd=mysql-&gt;options.password;
+#if !defined(DONT_USE_MYSQL_PWD)
+    if (!passwd)
+      passwd=getenv("MYSQL_PWD");		/* get it from environment */
+#endif
+  }
+  mysql-&gt;passwd= passwd ? my_strdup(passwd,MYF(0)) : NULL;
+#endif /*!NO_EMBEDDED_ACCESS_CHECKS*/
+  if (!user || !user[0])
+  {
+    read_user_name(name_buff);
+    if (name_buff[0])
+      user= name_buff;
+  }
+
+  if (!user)
+    user= "";
+   /* 
+      We need to alloc some space for mysql-&gt;info but don't want to
+      put extra 'my_free's in mysql_close.
+      So we alloc it with the 'user' string to be freed at once
+   */
+  mysql-&gt;user= my_strdup(user, MYF(0));
+
+<span style = "background-color:#fdd">  port=0;        Dead assignment:Value stored to 'port' is never read</span>
+  unix_socket=0;
+
+  client_flag|=mysql-&gt;options.client_flag;
+  /* Send client information for access check */
+  client_flag|=CLIENT_CAPABILITIES;
+  if (client_flag &amp; CLIENT_MULTI_STATEMENTS)
+    client_flag|= CLIENT_MULTI_RESULTS;
+  /*
+    no compression in embedded as we don't send any data,
+    and no pluggable auth, as we cannot do a client-server dialog
+  */
+  client_flag&amp;= ~(CLIENT_COMPRESS | CLIENT_PLUGIN_AUTH);
+  if (db)
+    client_flag|=CLIENT_CONNECT_WITH_DB;
+
+  if (embedded_ssl_check(mysql))
+    goto error;
+
+  mysql-&gt;info_buffer= my_malloc(MYSQL_ERRMSG_SIZE, MYF(0));
+  mysql-&gt;thd= create_embedded_thd(client_flag);
+
+  init_embedded_mysql(mysql, client_flag);
+
+  if (mysql_init_character_set(mysql))
+    goto error;
+
+  if (check_embedded_connection(mysql, db))
+    goto error;
+
+  mysql-&gt;server_status= SERVER_STATUS_AUTOCOMMIT;
+
+  if (mysql-&gt;options.init_commands)
+  {
+    DYNAMIC_ARRAY *init_commands= mysql-&gt;options.init_commands;
+    char **ptr= (char**)init_commands-&gt;buffer;
+    char **end= ptr + init_commands-&gt;elements;
+
+    for (; ptr&lt;end; ptr++)
+    {
+      MYSQL_RES *res;
+      if (mysql_query(mysql,*ptr))
+	goto error;
+      if (mysql-&gt;fields)
+      {
+	if (!(res= (*mysql-&gt;methods-&gt;use_result)(mysql)))
+	  goto error;
+	mysql_free_result(res);
+      }
+    }
+  }
+
+  DBUG_PRINT("exit",("Mysql handler: 0x%lx", (long) mysql));
+  DBUG_RETURN(mysql);
+
+error:
+  DBUG_PRINT("error",("message: %u (%s)",
+                      mysql-&gt;net.last_errno,
+                      mysql-&gt;net.last_error));
+  {
+    /* Free alloced memory */
+    my_bool free_me=mysql-&gt;free_me;
+    free_old_query(mysql); 
+    mysql-&gt;free_me=0;
+    mysql_close(mysql);
+    mysql-&gt;free_me=free_me;
+  }
+  DBUG_RETURN(0);
+}
+
+      </pre>
+    </body>
+</html>

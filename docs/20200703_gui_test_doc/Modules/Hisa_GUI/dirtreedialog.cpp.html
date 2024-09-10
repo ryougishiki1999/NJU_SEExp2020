@@ -1,0 +1,374 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>dirtreedialog.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#include "dirtreedialog.h"
+#include&lt;QTreeWidgetItem&gt;
+#include&lt;QString&gt;
+#include&lt;QMessageBox&gt;
+#include&lt;QDebug&gt;
+using namespace std;
+
+/*****************************************************************************
+This is source coode of DirTreeDialog.
+DirTreeDialog shows the compile_commands.json file list to user to choose
+and then use the chosen json file to generate DocumentTree for user to choose
+the file he wants to analyze.
+This file contains the initialization of all the members of DirTreeDialog 
+and the implementation of all of its functions
+******************************************************************************/
+
+//const value of DirTreeDialog
+const int DIALOG_WIDTH=720;
+const int DIALOG_HEIGHT=700;
+const int AFFIRM_BUTTON_X=170;
+const int AFFIRM_BUTTON_Y=650;
+const int AFFIRM_BUTTON_WIDTH=120;
+const int AFFIRM_BUTTON_HEIGHT=40;
+const int BUTTON_INTERVAL=250;
+const int WIDGET_BUTTON_X=20;
+const int WIDGET_BUTTON_Y=20;
+const int WIDGET_BUTTON_WIDTH=680;
+const int WIDGET_BUTTON_HEIGHT=610;
+const int FONT_SIZE = 14;
+
+//initialize DirTreeDialog and its widgets
+DirTreeDialog::DirTreeDialog(set&lt;string&gt; * file_list,string source,Language lan,QWidget *parent) :
+<span style = "background-color:#dfd">    QDialog(parent)
+{
+    this-&gt;lan=lan;
+    this-&gt;file_list=file_list;
+    if (!this-&gt;file_list-&gt;empty())</span>
+<span style = "background-color:#fdd">        this-&gt;file_list-&gt;clear();</span>
+
+    // this is used to differentiate status of the dialog
+    //different status will lead to different actions when users click "confirm" button
+<span style = "background-color:#dfd">    this-&gt;status=INIT;</span>
+
+    //initialize the dialog window
+<span style = "background-color:#dfd">    Qt::WindowFlags flags=Qt::Dialog;flags |=Qt::WindowCloseButtonHint;setWindowFlags(flags);
+    this-&gt;setWindowFlags(flags);
+    this-&gt;setFixedWidth(DIALOG_WIDTH);
+    this-&gt;setFixedHeight(DIALOG_HEIGHT);</span>
+
+    //initialize button text font
+<span style = "background-color:#dfd">    QFont font;
+    font.setFamily(QStringLiteral("Cambria"));
+    font.setPointSize(FONT_SIZE);</span>
+
+    //initialize affirm_button
+<span style = "background-color:#dfd">     affirm_button = new QPushButton(this);
+    affirm_button-&gt;setObjectName(QStringLiteral("affirm_button"));
+     affirm_button-&gt;setGeometry(QRect(AFFIRM_BUTTON_X, AFFIRM_BUTTON_Y,</span>
+                                                    AFFIRM_BUTTON_WIDTH, AFFIRM_BUTTON_HEIGHT));
+<span style = "background-color:#dfd">     affirm_button-&gt;setFont(font);
+     connect(affirm_button,SIGNAL(clicked()),this,SLOT(confirm()));</span>
+
+     //initialize cancel button
+<span style = "background-color:#dfd">     cancel_button = new QPushButton(this);
+     cancel_button-&gt;setObjectName(QStringLiteral ("cancel_button"));
+     cancel_button-&gt;setGeometry(QRect(AFFIRM_BUTTON_X+BUTTON_INTERVAL, AFFIRM_BUTTON_Y,</span>
+                                            AFFIRM_BUTTON_WIDTH, AFFIRM_BUTTON_HEIGHT));
+<span style = "background-color:#dfd">     cancel_button-&gt;setFont(font);
+     connect(cancel_button,SIGNAL(clicked()),this,SLOT(cancel()));</span>
+
+     //Sets the text content of the widget according to the language
+<span style = "background-color:#dfd">     switch (this-&gt;lan) {</span>
+     case Chinese:
+<span style = "background-color:#dfd">         this-&gt;setWindowTitle(QStringLiteral ("æä»¶åè¡¨"));
+         affirm_button-&gt;setText(QStringLiteral("ç¡®è®¤"));
+         cancel_button-&gt;setText(QStringLiteral("åæ¶"));
+         break;</span>
+     default:
+<span style = "background-color:#dfd">         this-&gt;setWindowTitle(QStringLiteral ("File List"));
+         affirm_button-&gt;setText(QStringLiteral("Affirm"));
+         cancel_button-&gt;setText(QStringLiteral("Cancel"));</span>
+     }
+
+     //initialize tree wdget
+<span style = "background-color:#dfd">     tree_widget = new QTreeWidget(this);
+     tree_widget-&gt;setObjectName(QStringLiteral ("tree_widget"));
+     tree_widget-&gt;setGeometry(QRect(WIDGET_BUTTON_X, WIDGET_BUTTON_Y,</span>
+                                                WIDGET_BUTTON_WIDTH, WIDGET_BUTTON_HEIGHT));
+<span style = "background-color:#dfd">     tree_widget-&gt;setHeaderHidden(true);
+     connect(tree_widget,SIGNAL(itemClicked(QTreeWidgetItem*,int)),</span>
+             this,SLOT(tree_item_clicked(QTreeWidgetItem*,int)));
+     //start to generate documents tree
+<span style = "background-color:#dfd">        Preprocessor::instance();
+        if (Preprocessor::instance()-&gt;resolve_source(source))</span>
+        {
+<span style = "background-color:#dfd">            Preprocessor::instance()-&gt;search_compile_commands_json_entry();
+            if (!Preprocessor::instance()</span>
+                     -&gt;get_compile_commands_list()
+                     .empty()) // é¡¹ç®æä»¶å¤¹ä¸å­å¨compile_commands.jsonï¼å¯è½ä¸ºå¤æ°
+            {
+<span style = "background-color:#dfd">                Preprocessor::instance()-&gt;parse_compile_commands_json_entry();</span>
+                // è¿åcompile_commands,jsonåå¶å¯¹åºçæä»¶åè¡¨ï¼å¯è½ä¸ºå¤æ°
+<span style = "background-color:#dfd">                map&lt;filesystem::path, set&lt;filesystem::path&gt;&gt; compiledb_mp=Preprocessor::instance()-&gt;get_corres_file_map();</span>
+                // TODO: ç¨æ·äº¤äºçé¢ï¼æå®compile_commands.jsonï¼è¿åå¶å¯¹åºçæä»¶åè¡¨
+<span style = "background-color:#dfd">                load_comiple_dbs(compiledb_mp);
+            }</span>
+            else // é¡¹ç®æä»¶ä¸ä¸å­å¨compile_commands.json
+            {
+<span style = "background-color:#dfd">                status=INIT_FAIL;
+                Preprocessor::instance()-&gt;clear();</span>
+                //Sets the text content of the MessageBox according to the language
+<span style = "background-color:#dfd">                switch(this-&gt;lan){</span>
+                case Chinese:
+<span style = "background-color:#dfd">                    QMessageBox::warning(tree_widget, QStringLiteral("éè¯¯"),QStringLiteral("HISA ä¸æ¯æè¯¥é¡¹ç®,\n"</span>
+                                                             "æ¨åºè¯¥åæä»¬æä¾ compile_commands.json æä»¶,\n"
+<span style = "background-color:#dfd">                                                            "æ¨å¯ä»¥ä» www.Hisa.com ç½ç«è·å¾æ´å¤ä¿¡æ¯"));
+                    break;</span>
+                default:
+<span style = "background-color:#dfd">                    QMessageBox::warning(tree_widget, "Error",QStringLiteral("HISA does not support this kind of project,\n"</span>
+                                                             "you should provide compile_commands.json,\n"
+<span style = "background-color:#dfd">                                                            "and you can get mroe information from www.Hisa.com"));</span>
+                }
+<span style = "background-color:#dfd">                return;</span>
+            }
+<span style = "background-color:#dfd">        }</span>
+        else
+        {
+<span style = "background-color:#dfd">            status=INIT_FAIL;
+            Preprocessor::instance()-&gt;clear();</span>
+            //Sets the text content of the MessageBox according to the language
+<span style = "background-color:#dfd">            switch(this-&gt;lan){</span>
+            case Chinese:
+<span style = "background-color:#dfd">                QMessageBox::warning(tree_widget, QStringLiteral ("éè¯¯"), QStringLiteral ("æ¨æä¾çè·¯å¾ä¸æ­£ç¡®,\n"
+                                                     "æ¨å¯ä»¥ä» www.Hisa.com ç½ç«è·å¾æ´å¤ä¿¡æ¯"));
+                break;</span>
+            default:
+<span style = "background-color:#dfd">                QMessageBox::warning(tree_widget, QStringLiteral ("Error"), QStringLiteral ("Your path is not correct,\n"
+                                                     "get mroe information from www.Hisa.com"));</span>
+            }
+        }
+<span style = "background-color:#dfd">}</span>
+
+//build compile_commands.json file list 
+//user can only choose one file in the list
+void DirTreeDialog::load_comiple_dbs(map&lt;filesystem::path, set&lt;filesystem::path&gt;&gt; &amp;compiledb_mp)
+<span style = "background-color:#dfd">{
+    for(map&lt;filesystem::path, set&lt;filesystem::path&gt;&gt;::iterator i=compiledb_mp.begin();i!=compiledb_mp.end();i++)</span>
+    {
+<span style = "background-color:#dfd">        QTreeWidgetItem* group = new QTreeWidgetItem(tree_widget);
+        group-&gt;setText(0,QString::fromLocal8Bit(( i-&gt;first).string().c_str()));
+        group-&gt;setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        group-&gt;setCheckState(0,Qt::Unchecked);
+        group-&gt;setToolTip(0,QString::fromLocal8Bit(( i-&gt;first).string().c_str()));
+    }
+}</span>
+
+//when one node is chosen all of its child node will be chosen
+//use bfs to update
+//update file list at the same timme
+void DirTreeDialog::update_children(QTreeWidgetItem* root,
+<span style = "background-color:#dfd">                                    Qt::CheckState state,set&lt;string&gt;*file_list){</span>
+    //bfs
+<span style = "background-color:#dfd">    queue&lt;QTreeWidgetItem*&gt; q;
+    q.push(root);
+    while(!q.empty()){
+        QTreeWidgetItem* item=q.front();
+        q.pop();
+        item-&gt;setCheckState(0,state);
+        int child_count=item-&gt;childCount();
+        if(child_count==0)</span>
+        {
+<span style = "background-color:#dfd">            if(Qt::Checked == state)</span>
+            {
+<span style = "background-color:#dfd">                if(file_list-&gt;find(item-&gt;text(0).toStdString()) ==file_list-&gt;end()){
+                     file_list-&gt;insert(item-&gt;text(0).toStdString());
+                }
+            }else if(Qt::Unchecked == state)</span>
+            {
+<span style = "background-color:#dfd">                set&lt;string&gt;::iterator it=file_list-&gt;find(item-&gt;text(0).toStdString());
+                if(it!=file_list-&gt;end())</span>
+                {
+<span style = "background-color:#dfd">                    file_list-&gt;erase(it);</span>
+                }
+<span style = "background-color:#dfd">            }
+        }</span>
+        else
+        {
+<span style = "background-color:#dfd">            for(int i=0;i&lt;child_count;i++)q.push(item-&gt;child(i));</span>
+        }
+<span style = "background-color:#dfd">    }
+}</span>
+
+// when one node is chosen we mush check its parent
+// judge if all child nodes of its parent is chosen
+// and then update its parent
+void DirTreeDialog::update_parent(QTreeWidgetItem* leaf,
+                                  Qt::CheckState state)
+<span style = "background-color:#dfd">{
+    QTreeWidgetItem* parent=leaf-&gt;parent();
+    while(parent!=NULL)</span>
+    {
+<span style = "background-color:#dfd">         if(state==Qt::Unchecked)</span>
+         {
+<span style = "background-color:#dfd">                    bool flag=true;
+                    for(int i=0;i&lt;parent-&gt;childCount();i++)</span>
+                    {
+<span style = "background-color:#dfd">                            if(parent-&gt;child(i)-&gt;checkState(0)==Qt::Checked ||</span>
+                                    parent-&gt;child(i)-&gt;checkState(0)==Qt::PartiallyChecked)
+                            {
+<span style = "background-color:#dfd">                                flag=false;
+                                break;</span>
+                            }
+<span style = "background-color:#dfd">                    }
+                    if(!flag)parent-&gt;setCheckState(0,Qt::PartiallyChecked);
+                    else parent-&gt;setCheckState(0,Qt::Unchecked);
+        }else if(state==Qt::Checked)</span>
+        {
+<span style = "background-color:#dfd">             bool flag=true;
+             for(int i=0;i&lt;parent-&gt;childCount();i++)</span>
+             {
+<span style = "background-color:#dfd">                     if(parent-&gt;child(i)-&gt;checkState(0)==Qt::Unchecked ||</span>
+                             parent-&gt;child(i)-&gt;checkState(0)==Qt::PartiallyChecked)
+                     {
+<span style = "background-color:#dfd">                         flag=false;
+                         break;</span>
+                     }
+<span style = "background-color:#dfd">             }
+             if(!flag)parent-&gt;setCheckState(0,Qt::PartiallyChecked);
+             else parent-&gt;setCheckState(0,Qt::Checked);</span>
+         }
+<span style = "background-color:#dfd">    parent=parent-&gt;parent();
+    }
+}</span>
+
+//change the CheckStatus of the clicked item
+//update chosen file list
+void DirTreeDialog:: tree_item_clicked(QTreeWidgetItem* item,int col)
+<span style = "background-color:#dfd">{
+    if(Qt::Checked == item-&gt;checkState(0))</span>
+    {
+<span style = "background-color:#dfd">           if(status==INIT)</span>
+           {
+<span style = "background-color:#dfd">                compile_db=item-&gt;text(col);
+                QTreeWidgetItemIterator it(this-&gt;tree_widget);
+                while(*it)</span>
+                {
+<span style = "background-color:#dfd">                    if(*it!=item)</span>
+                    {
+<span style = "background-color:#fdd">                       (*it)-&gt;setCheckState(0,Qt::Unchecked);</span>
+                    }
+<span style = "background-color:#dfd">                    it++;
+                }
+           }else if(status==CHOSEN_COMPILE_DB)</span>
+           {
+<span style = "background-color:#dfd">               update_children(item,Qt::Checked,file_list);
+               update_parent(item,Qt::Checked);</span>
+           }
+<span style = "background-color:#dfd">    }
+    else if(Qt::Unchecked == item-&gt;checkState(0))</span>
+    {
+<span style = "background-color:#dfd">            if(status==INIT)</span>
+            {
+<span style = "background-color:#dfd">                this-&gt;compile_db="";
+            }
+            else if(status==CHOSEN_COMPILE_DB){
+                update_children(item,Qt::Unchecked,file_list);
+                update_parent(item,Qt::Unchecked);</span>
+            }
+    }
+<span style = "background-color:#dfd">}</span>
+
+//bfs to build document tree
+void DirTreeDialog::build_file_tree(const FileTreeNode *root)
+<span style = "background-color:#dfd">{
+    queue&lt;const FileTreeNode*&gt;  q;
+    q.push(root);
+    map&lt;const FileTreeNode*, QTreeWidgetItem*&gt; file_wdigt_mp;
+    QTreeWidgetItem* item = new QTreeWidgetItem(this-&gt;tree_widget);
+    item-&gt;setText(0,QString::fromLocal8Bit(root-&gt;get_file_path().string().c_str()));
+    item-&gt;setToolTip(0, QString::fromLocal8Bit(root-&gt;get_file_path().string().c_str()));
+    item-&gt;setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    item-&gt;setCheckState(0,Qt::Checked);
+    file_wdigt_mp[root]=item;
+    while(!q.empty())</span>
+    {
+<span style = "background-color:#dfd">        const FileTreeNode* node=q.front();
+        q.pop();
+        if(!node-&gt;is_leaf()){
+            vector&lt;FileTreeNode*&gt; children=node-&gt;get_children();
+            for (unsigned int i=0;i&lt;children.size();i++)</span>
+            {
+<span style = "background-color:#dfd">                const FileTreeNode*child=children[i];
+                QTreeWidgetItem* item = new QTreeWidgetItem(file_wdigt_mp[node]);
+                item-&gt;setText(0, QString::fromLocal8Bit(child-&gt;get_file_path().string().c_str()));
+                item-&gt;setToolTip(0, QString::fromLocal8Bit(child-&gt;get_file_path().filename().string().c_str()));
+                item-&gt;setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+                item-&gt;setCheckState(0,Qt::Checked);
+                if(child-&gt;is_leaf())</span>
+                {
+<span style = "background-color:#dfd">                    file_list-&gt;insert(child-&gt;get_file_path().string());</span>
+                }
+<span style = "background-color:#dfd">                q.push(child);
+                file_wdigt_mp[child]=item;
+            }
+        }
+    }
+}</span>
+
+//when status is INIT,check if compile_commands.json file has been chosen
+//if compile_commands.json file has been selected,change the status to FINISHED
+void DirTreeDialog::confirm()
+<span style = "background-color:#dfd">{
+    if(status==INIT)</span>
+    {
+<span style = "background-color:#dfd">        if(compile_db=="")</span>
+        {
+<span style = "background-color:#dfd">            switch (this-&gt;lan)</span>
+            {
+            case Chinese:
+<span style = "background-color:#dfd">                QMessageBox::warning(this,  QStringLiteral ("è­¦å"),  QStringLiteral ("è¯·éæ©ä¸ä¸ª compile_jason.json æä»¶"));
+                break;</span>
+            default:
+<span style = "background-color:#dfd">                QMessageBox::warning(this-&gt;tree_widget, QStringLiteral("warning"),  QStringLiteral ("Please choose a compile_commands.json file"));</span>
+            }                         
+<span style = "background-color:#dfd">        }else</span>
+        {
+<span style = "background-color:#dfd">            filesystem:: path command_db_path=compile_db.toStdString();
+            map&lt;filesystem::path, set&lt;filesystem::path&gt;&gt; compiledb_mp=Preprocessor::instance()-&gt;get_corres_file_map();
+            Preprocessor::instance()-&gt;set_target_source_file_list(compiledb_mp[command_db_path]);
+            Preprocessor::instance()-&gt;build_file_tree();
+            const FileSystemTree *tree = Preprocessor::instance()-&gt;get_file_tree();
+            const FileTreeNode *root = tree-&gt;get_root();
+            this-&gt;tree_widget-&gt;clear();
+            build_file_tree(root);
+            this-&gt;status=CHOSEN_COMPILE_DB;
+        }
+    }else if(status==CHOSEN_COMPILE_DB)</span>
+    {
+<span style = "background-color:#dfd">        this-&gt;status = FINISHED;
+        this-&gt;close();</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+//canel analyse,clear chosen file list
+void DirTreeDialog::cancel()
+<span style = "background-color:#dfd">{
+    if(status==CHOSEN_COMPILE_DB){
+        file_list-&gt;clear();</span>
+    }
+<span style = "background-color:#dfd">    this-&gt;close();
+}</span>
+
+//clear preprocessor's file system to prepare for the next analysis
+void DirTreeDialog::closeEvent(QCloseEvent *event)
+<span style = "background-color:#dfd">{
+    Preprocessor::instance()-&gt;clear();
+}</span>
+
+DirTreeDialog::~DirTreeDialog()
+<span style = "background-color:#dfd">{
+}</span></pre>
+	</body>
+</html>

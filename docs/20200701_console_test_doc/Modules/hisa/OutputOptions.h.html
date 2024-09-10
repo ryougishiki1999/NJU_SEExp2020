@@ -1,0 +1,52 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>OutputOptions.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef CORE_OUTPUT_OPTIONS_H
+#define CORE_OUTPUT_OPTIONS_H
+
+#include &lt;cstdint&gt;
+#include &lt;iostream&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
+/*! \brief Output Options
+
+    This class stores all the options user can customize to control the output manager.
+*/
+class OutputOptions
+{
+  public:
+    OutputOptions();
+    /*! \brief dump the options to the output stream
+        \param[in] os output stream
+    */
+    void dump(std::ostream &amp;os);
+    /*! \brief reset the options to default values.
+     */
+    void reset();
+    /*! \brief add a new output format
+        \param[in] f output format you want to add
+    */
+    void add_output_format(const std::string &amp;f);
+    /*! \brief clear the output formats
+     */
+    void clear_output_format();
+
+  public:
+    std::uint32_t output_time : 1;           //! output time info in the report
+    std::uint32_t output_checker : 1;        //! output checker info in the report
+    std::uint32_t output_description : 1;    //! output diagnostic description in the report
+    std::uint32_t output_stats : 1;          //! output stats in the report
+<span style = "background-color:#dfd">    std::string output_path = "";            //! the path of the report</span>
+    std::vector&lt;std::string&gt; output_formats; //! report's formats
+};
+#endif</pre>
+	</body>
+</html>

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Modules/_decimal/libmpdec/context.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*
+ * Copyright (c) 2008-2016 Stefan Krah. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+
+#include "mpdecimal.h"
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;signal.h&gt;
+
+
+void
+mpd_dflt_traphandler(mpd_context_t *ctx UNUSED)
+{
+    raise(SIGFPE);
+}
+
+void (* mpd_traphandler)(mpd_context_t *) = mpd_dflt_traphandler;
+
+
+/* Set guaranteed minimum number of coefficient words. The function may
+   be used once at program start. Setting MPD_MINALLOC to out-of-bounds
+   values is a catastrophic error, so in that case the function exits rather
+   than relying on the user to check a return value. */
+void
+mpd_setminalloc(mpd_ssize_t n)
+{
+    static int minalloc_is_set = 0;
+
+    if (minalloc_is_set) {
+        mpd_err_warn("mpd_setminalloc: ignoring request to set "
+                     "MPD_MINALLOC a second time\n");
+        return;
+    }
+    if (n &lt; MPD_MINALLOC_MIN || n &gt; MPD_MINALLOC_MAX) {
+        mpd_err_fatal("illegal value for MPD_MINALLOC"); /* GCOV_NOT_REACHED */
+    }
+    MPD_MINALLOC = n;
+    minalloc_is_set = 1;
+}
+
+void
+mpd_init(mpd_context_t *ctx, mpd_ssize_t prec)
+{
+    mpd_ssize_t ideal_minalloc;
+
+    mpd_defaultcontext(ctx);
+
+    if (!mpd_qsetprec(ctx, prec)) {
+        mpd_addstatus_raise(ctx, MPD_Invalid_context);
+        return;
+    }
+
+    ideal_minalloc = 2 * ((prec+MPD_RDIGITS-1) / MPD_RDIGITS);
+    if (ideal_minalloc &lt; MPD_MINALLOC_MIN) ideal_minalloc = MPD_MINALLOC_MIN;
+    if (ideal_minalloc &gt; MPD_MINALLOC_MAX) ideal_minalloc = MPD_MINALLOC_MAX;
+
+    mpd_setminalloc(ideal_minalloc);
+}
+
+void
+mpd_maxcontext(mpd_context_t *ctx)
+{
+    ctx-&gt;prec=MPD_MAX_PREC;
+    ctx-&gt;emax=MPD_MAX_EMAX;
+    ctx-&gt;emin=MPD_MIN_EMIN;
+    ctx-&gt;round=MPD_ROUND_HALF_EVEN;
+    ctx-&gt;traps=MPD_Traps;
+    ctx-&gt;status=0;
+    ctx-&gt;newtrap=0;
+    ctx-&gt;clamp=0;
+    ctx-&gt;allcr=1;
+}
+
+void
+mpd_defaultcontext(mpd_context_t *ctx)
+{
+    ctx-&gt;prec=2*MPD_RDIGITS;
+    ctx-&gt;emax=MPD_MAX_EMAX;
+    ctx-&gt;emin=MPD_MIN_EMIN;
+    ctx-&gt;round=MPD_ROUND_HALF_UP;
+    ctx-&gt;traps=MPD_Traps;
+    ctx-&gt;status=0;
+    ctx-&gt;newtrap=0;
+    ctx-&gt;clamp=0;
+    ctx-&gt;allcr=1;
+}
+
+void
+mpd_basiccontext(mpd_context_t *ctx)
+{
+    ctx-&gt;prec=9;
+    ctx-&gt;emax=MPD_MAX_EMAX;
+    ctx-&gt;emin=MPD_MIN_EMIN;
+    ctx-&gt;round=MPD_ROUND_HALF_UP;
+    ctx-&gt;traps=MPD_Traps|MPD_Clamped;
+    ctx-&gt;status=0;
+    ctx-&gt;newtrap=0;
+    ctx-&gt;clamp=0;
+    ctx-&gt;allcr=1;
+}
+
+int
+mpd_ieee_context(mpd_context_t *ctx, int bits)
+{
+    if (bits &lt;= 0 || bits &gt; MPD_IEEE_CONTEXT_MAX_BITS || bits % 32) {
+        return -1;
+    }
+
+    ctx-&gt;prec = 9 * (bits/32) - 2;
+    ctx-&gt;emax = 3 * ((mpd_ssize_t)1&lt;&lt;(bits/16+3));
+    ctx-&gt;emin = 1 - ctx-&gt;emax;
+    ctx-&gt;round=MPD_ROUND_HALF_EVEN;
+    ctx-&gt;traps=0;
+    ctx-&gt;status=0;
+    ctx-&gt;newtrap=0;
+    ctx-&gt;clamp=1;
+    ctx-&gt;allcr=1;
+
+    return 0;
+}
+
+mpd_ssize_t
+mpd_getprec(const mpd_context_t *ctx)
+{
+    return ctx-&gt;prec;
+}
+
+mpd_ssize_t
+mpd_getemax(const mpd_context_t *ctx)
+{
+    return ctx-&gt;emax;
+}
+
+mpd_ssize_t
+mpd_getemin(const mpd_context_t *ctx)
+{
+    return ctx-&gt;emin;
+}
+
+int
+mpd_getround(const mpd_context_t *ctx)
+{
+    return ctx-&gt;round;
+}
+
+uint32_t
+mpd_gettraps(const mpd_context_t *ctx)
+{
+    return ctx-&gt;traps;
+}
+
+uint32_t
+mpd_getstatus(const mpd_context_t *ctx)
+{
+    return ctx-&gt;status;
+}
+
+int
+mpd_getclamp(const mpd_context_t *ctx)
+{
+    return ctx-&gt;clamp;
+}
+
+int
+mpd_getcr(const mpd_context_t *ctx)
+{
+    return ctx-&gt;allcr;
+}
+
+
+int
+mpd_qsetprec(mpd_context_t *ctx, mpd_ssize_t prec)
+{
+    if (prec &lt;= 0 || prec &gt; MPD_MAX_PREC) {
+        return 0;
+    }
+    ctx-&gt;prec = prec;
+    return 1;
+}
+
+int
+mpd_qsetemax(mpd_context_t *ctx, mpd_ssize_t emax)
+{
+    if (emax &lt; 0 || emax &gt; MPD_MAX_EMAX) {
+        return 0;
+    }
+    ctx-&gt;emax = emax;
+    return 1;
+}
+
+int
+mpd_qsetemin(mpd_context_t *ctx, mpd_ssize_t emin)
+{
+    if (emin &gt; 0 || emin &lt; MPD_MIN_EMIN) {
+        return 0;
+    }
+    ctx-&gt;emin = emin;
+    return 1;
+}
+
+int
+mpd_qsetround(mpd_context_t *ctx, int round)
+{
+    if (!(0 &lt;= round &amp;&amp; round &lt; MPD_ROUND_GUARD)) {
+        return 0;
+    }
+    ctx-&gt;round = round;
+    return 1;
+}
+
+int
+mpd_qsettraps(mpd_context_t *ctx, uint32_t traps)
+{
+    if (traps &gt; MPD_Max_status) {
+        return 0;
+    }
+    ctx-&gt;traps = traps;
+    return 1;
+}
+
+int
+mpd_qsetstatus(mpd_context_t *ctx, uint32_t flags)
+{
+    if (flags &gt; MPD_Max_status) {
+        return 0;
+    }
+    ctx-&gt;status = flags;
+    return 1;
+}
+
+int
+mpd_qsetclamp(mpd_context_t *ctx, int c)
+{
+    if (c != 0 &amp;&amp; c != 1) {
+        return 0;
+    }
+    ctx-&gt;clamp = c;
+    return 1;
+}
+
+int
+mpd_qsetcr(mpd_context_t *ctx, int c)
+{
+    if (c != 0 &amp;&amp; c != 1) {
+        return 0;
+    }
+    ctx-&gt;allcr = c;
+    return 1;
+}
+
+
+void
+mpd_addstatus_raise(mpd_context_t *ctx, uint32_t flags)
+{
+    ctx-&gt;status |= flags;
+    if (flags&amp;ctx-&gt;traps) {
+        ctx-&gt;newtrap = (flags&amp;ctx-&gt;traps);
+        mpd_traphandler(ctx);
+    }
+}
+
+
+      </pre>
+    </body>
+</html>

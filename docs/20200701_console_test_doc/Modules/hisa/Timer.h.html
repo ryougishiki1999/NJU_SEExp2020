@@ -1,0 +1,47 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>Timer.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef UTILITY_TIMER_H
+#define UTILITY_TIMER_H
+
+#include &lt;chrono&gt;
+
+class Timer
+{
+  public:
+    /*! \brief record the 'start time'
+     */
+    void start() noexcept
+<span style = "background-color:#dfd">    {
+        start_t = std::chrono::steady_clock::now();
+    }</span>
+    /*! \brief record the 'stop time'
+     */
+    void stop() noexcept
+<span style = "background-color:#dfd">    {
+        end_t = std::chrono::steady_clock::now();
+    }</span>
+    /*! \brief get the duration('stop time' - 'start time')
+     */
+    double used_time()
+<span style = "background-color:#dfd">    {
+        duration = std::chrono::duration_cast&lt;std::chrono::duration&lt;double&gt;&gt;(end_t - start_t);
+        return duration.count();
+    }</span>
+
+  private:
+    std::chrono::steady_clock::time_point start_t;
+    std::chrono::steady_clock::time_point end_t;
+    std::chrono::duration&lt;double&gt; duration;
+};
+#endif</pre>
+	</body>
+</html>

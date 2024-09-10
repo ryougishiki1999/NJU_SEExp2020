@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/test/timer_test.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include &lt;iostream&gt;
+#include &lt;timer.h&gt;
+
+#include "timer.h"
+#include "ioloop.h"
+#include "tnet.h"
+
+using namespace std;
+using namespace tnet;
+
+int i = 0;
+
+void onTimer(const TimerPtr_t&amp; timer)
+{
+    cout &lt;&lt; "onTimer\t" &lt;&lt; time(0) &lt;&lt; endl;
+    if(++i &gt;= 10)
+    {
+        IOLoop* loop = timer-&gt;loop();
+        
+        timer-&gt;stop();
+        
+        loop-&gt;stop();    
+    } 
+}
+
+void onOnceTimer(const TimerPtr_t&amp; timer)
+{
+    cout &lt;&lt; "onOnceTimer" &lt;&lt; endl;    
+}
+
+void run(IOLoop* loop)
+{
+    TimerPtr_t timer1 = std::make_shared&lt;Timer&gt;(std::bind(&amp;onTimer, _1), 1000, 1000);
+    TimerPtr_t timer2 = std::make_shared&lt;Timer&gt;(std::bind(&amp;onOnceTimer, _1), 0, 5000);
+
+    timer1-&gt;start(loop);
+    timer2-&gt;start(loop);
+}
+
+int main()
+{
+
+    IOLoop loop;
+
+    run(&amp;loop);
+
+    cout &lt;&lt; "start" &lt;&lt; endl;
+
+    loop.start();
+
+    cout &lt;&lt; "end" &lt;&lt; endl;
+
+    return 0;
+    
+}
+      </pre>
+    </body>
+</html>

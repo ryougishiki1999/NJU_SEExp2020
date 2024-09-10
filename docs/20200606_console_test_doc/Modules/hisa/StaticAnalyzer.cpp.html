@@ -1,0 +1,93 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>StaticAnalyzer.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "StaticAnalyzer.h"
+#include "CSADriver.h"
+#include "Logger.h"
+#include &lt;clang/Frontend/FrontendActions.h&gt;
+#include &lt;clang/StaticAnalyzer/Frontend/FrontendActions.h&gt;
+#include &lt;clang/Tooling/Tooling.h&gt;
+
+<span style = "background-color:#dfd">llvm::cl::OptionCategory StaticAnalyzer::opt_category("hisa options");</span>
+
+<span style = "background-color:#dfd">StaticAnalyzer::StaticAnalyzer(const EventCallbackTable &amp;ev_tb) : event_table(ev_tb)
+{
+}</span>
+clang::tooling::CommonOptionsParser StaticAnalyzer::process_argv(const std::vector&lt;std::string&gt; &amp;srcs,
+                                                                 const AnalyzerOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    std::vector&lt;const char *&gt; args;
+    args.push_back("hisa");
+    if (opts.compilation_database_path.length())</span>
+    {
+<span style = "background-color:#dfd">        args.push_back("-p");
+        args.push_back(opts.compilation_database_path.c_str());</span>
+    }
+    // clang need at least 1 positional argument, let it happy
+<span style = "background-color:#dfd">    if (srcs.size() == 0)
+        args.push_back("placeholder");
+    for (auto &amp;src : srcs)
+        args.push_back(src.c_str());
+    if (opts.compilation_database_path.length() == 0)</span>
+<span style = "background-color:#fdd">        args.push_back("--");</span>
+<span style = "background-color:#dfd">    int argc = args.size();</span>
+    // clang init
+    // llvm::cl::OptionCategory opt_category("hisa options");
+<span style = "background-color:#dfd">    return clang::tooling::CommonOptionsParser(argc, args.data(), opt_category);
+}</span>
+
+int StaticAnalyzer::analyze(const std::vector&lt;std::string&gt; &amp;srcs, const AnalyzerOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    if (opts.compilation_database_path.length() == 0 &amp;&amp; srcs.size() == 0)</span>
+    {
+<span style = "background-color:#fdd">        ERROR("No input.\n");
+        return 1;</span>
+    }
+<span style = "background-color:#dfd">    clang::tooling::CommonOptionsParser opt_parser = process_argv(srcs, opts);</span>
+
+<span style = "background-color:#dfd">    clang::tooling::ClangTool tool(opt_parser.getCompilations(), srcs.size() == 0</span>
+                                                                     ? opt_parser.getCompilations().getAllFiles()
+                                                                     : opt_parser.getSourcePathList());
+    // must clear args first, because it appends -fsyntax-only as default.
+<span style = "background-color:#dfd">    tool.clearArgumentsAdjusters();
+    tool.appendArgumentsAdjuster(clang::tooling::getClangStripOutputAdjuster());
+    tool.appendArgumentsAdjuster(</span>
+        clang::tooling::getInsertArgumentAdjuster("--analyze", clang::tooling::ArgumentInsertPosition::BEGIN));
+
+    // run
+<span style = "background-color:#dfd">    std::unique_ptr&lt;CSAFactory&gt; factory = std::make_unique&lt;CSAFactory&gt;(opts, event_table);
+    return tool.run(factory.get());
+}</span>
+
+std::vector&lt;std::string&gt; StaticAnalyzer::get_available_sources(const std::vector&lt;std::string&gt; &amp;srcs,
+                                                               const AnalyzerOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    if (opts.compilation_database_path.length() == 0 &amp;&amp; srcs.size() == 0)</span>
+    {
+<span style = "background-color:#fdd">        ERROR("No input.\n");
+        return std::vector&lt;std::string&gt;();</span>
+    }
+<span style = "background-color:#dfd">    clang::tooling::CommonOptionsParser opt_parser = process_argv(srcs, opts);
+    return opt_parser.getCompilations().getAllFiles();
+}</span>
+
+std::vector&lt;std::string&gt; StaticAnalyzer::get_sources(const std::vector&lt;std::string&gt; &amp;srcs, const AnalyzerOptions &amp;opts)
+<span style = "background-color:#fdd">{
+    if (opts.compilation_database_path.length() == 0 &amp;&amp; srcs.size() == 0)</span>
+    {
+<span style = "background-color:#fdd">        ERROR("No input.\n");
+        return std::vector&lt;std::string&gt;();</span>
+    }
+<span style = "background-color:#fdd">    clang::tooling::CommonOptionsParser opt_parser = process_argv(srcs, opts);
+    return srcs.size() == 0 ? opt_parser.getCompilations().getAllFiles() : opt_parser.getSourcePathList();
+}</span></pre>
+	</body>
+</html>

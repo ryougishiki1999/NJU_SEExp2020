@@ -1,0 +1,92 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>FileSystemTree.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "FileSystemTree.h"
+#include &lt;cassert&gt;
+
+////////////////////////////////////////////////////////////////////////////////
+//                      class FileSystemTree method def
+////////////////////////////////////////////////////////////////////////////////
+void FileSystemTree::build_tree(const std::set&lt;std::filesystem::path&gt; &amp;file_list)
+<span style = "background-color:#dfd">{
+    std::set&lt;std::filesystem::path&gt;::iterator file_list_iter = file_list.begin();
+    FileTreeNode *tree_iter = _root;</span>
+
+<span style = "background-color:#dfd">    while (file_list_iter != file_list.end())</span>
+    {
+<span style = "background-color:#dfd">        const std::filesystem::path file_path = file_list_iter.operator*();
+        assert(std::filesystem::exists(file_path) &amp;&amp; "does not exist corresponding file path");
+        std::stack&lt;std::filesystem::path&gt; node_list = parse_file_path(file_path);</span>
+
+<span style = "background-color:#dfd">        while (!node_list.empty())</span>
+        {
+<span style = "background-color:#dfd">            const std::filesystem::path node_path = node_list.top();
+            const std::filesystem::path node_parent_path = node_path.parent_path();
+            node_list.pop();</span>
+
+<span style = "background-color:#dfd">            if (_tree_nodes_map.find(node_path) != _tree_nodes_map.end())</span>
+            {
+<span style = "background-color:#dfd">                continue;</span>
+<span style = "background-color:#fdd">            }</span>
+            else
+            {
+<span style = "background-color:#dfd">                if (_tree_nodes_map.find(node_parent_path) != _tree_nodes_map.end())</span>
+                {
+<span style = "background-color:#dfd">                    tree_iter = _tree_nodes_map.at(node_parent_path);</span>
+
+                    FileTreeNode *new_node;
+
+<span style = "background-color:#dfd">                    if (std::filesystem::exists(node_path))</span>
+                    {
+<span style = "background-color:#dfd">                        if (std::filesystem::is_directory(node_path))</span>
+                        {
+<span style = "background-color:#dfd">                            new_node = new DirectoryNode(node_path, tree_iter);
+                        }
+                        else if (std::filesystem::is_regular_file(node_path))</span>
+                        {
+<span style = "background-color:#dfd">                            new_node = new RegularFileNode(node_path, tree_iter);
+                        }</span>
+                        else
+                        {
+<span style = "background-color:#fdd">                            new_node = new OtherFileNode(node_path, tree_iter);</span>
+                        }
+                    }
+
+<span style = "background-color:#dfd">                    if (tree_iter-&gt;is_directory())</span>
+                    {
+<span style = "background-color:#dfd">                        tree_iter-&gt;add_node(new_node);</span>
+                    }
+
+<span style = "background-color:#dfd">                    _tree_nodes_map.insert(std::pair&lt;std::filesystem::path, FileTreeNode *&gt;(node_path, new_node));</span>
+                }
+            }
+<span style = "background-color:#dfd">        }</span>
+
+<span style = "background-color:#dfd">        file_list_iter.operator++();
+    }
+}</span>
+
+std::stack&lt;std::filesystem::path&gt; FileSystemTree::parse_file_path(const std::filesystem::path &amp;file_path)
+<span style = "background-color:#dfd">{
+    std::filesystem::path path = file_path;
+    std::stack&lt;std::filesystem::path&gt; path_list;</span>
+
+<span style = "background-color:#dfd">    while (path != _entry_path)</span>
+    {
+<span style = "background-color:#dfd">        path_list.push(path);
+        path = path.parent_path();
+    }</span>
+
+<span style = "background-color:#dfd">    return path_list;
+}</span>
+</pre>
+	</body>
+</html>

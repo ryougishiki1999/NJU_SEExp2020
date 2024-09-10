@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/ut/ut0dbg.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 1994, 2009, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/*****************************************************************//**
+@file ut/ut0dbg.cc
+Debug utilities for Innobase.
+
+Created 1/30/1994 Heikki Tuuri
+**********************************************************************/
+
+#include "univ.i"
+#include "ut0dbg.h"
+#ifndef UNIV_HOTBACKUP
+# include "ha_prototypes.h"
+#endif /* !UNIV_HOTBACKUP */
+
+#if defined(__GNUC__) &amp;&amp; (__GNUC__ &gt; 2)
+#else
+/** This is used to eliminate compiler warnings */
+UNIV_INTERN ulint	ut_dbg_zero	= 0;
+#endif
+
+/*************************************************************//**
+Report a failed assertion. */
+UNIV_INTERN
+void
+ut_dbg_assertion_failed(
+/*====================*/
+	const char* expr,	/*!&lt; in: the failed assertion (optional) */
+	const char* file,	/*!&lt; in: source file containing the assertion */
+	ulint line)		/*!&lt; in: line number of the assertion */
+{
+	ut_print_timestamp(stderr);
+#ifdef UNIV_HOTBACKUP
+	fprintf(stderr, "  InnoDB: Assertion failure in file %s line %lu\n",
+		file, line);
+#else /* UNIV_HOTBACKUP */
+	fprintf(stderr,
+		"  InnoDB: Assertion failure in thread %lu"
+		" in file %s line %lu\n",
+		os_thread_pf(os_thread_get_curr_id()),
+		innobase_basename(file), line);
+#endif /* UNIV_HOTBACKUP */
+	if (expr) {
+		fprintf(stderr,
+			"InnoDB: Failing assertion: %s\n", expr);
+	}
+
+	fputs("InnoDB: We intentionally generate a memory trap.\n"
+	      "InnoDB: Submit a detailed bug report"
+	      " to http://bugs.mysql.com.\n"
+	      "InnoDB: If you get repeated assertion failures"
+	      " or crashes, even\n"
+	      "InnoDB: immediately after the mysqld startup, there may be\n"
+	      "InnoDB: corruption in the InnoDB tablespace. Please refer to\n"
+	      "InnoDB: " REFMAN "forcing-innodb-recovery.html\n"
+	      "InnoDB: about forcing recovery.\n", stderr);
+}
+
+#ifdef UNIV_COMPILE_TEST_FUNCS
+
+#include &lt;sys/types.h&gt;
+#include &lt;sys/time.h&gt;
+#include &lt;sys/resource.h&gt;
+
+#include &lt;unistd.h&gt;
+
+#ifndef timersub
+#define timersub(a, b, r)						\
+	do {								\
+		(r)-&gt;tv_sec = (a)-&gt;tv_sec - (b)-&gt;tv_sec;		\
+		(r)-&gt;tv_usec = (a)-&gt;tv_usec - (b)-&gt;tv_usec;		\
+		if ((r)-&gt;tv_usec &lt; 0) {					\
+			(r)-&gt;tv_sec--;					\
+			(r)-&gt;tv_usec += 1000000;			\
+		}							\
+	} while (0)
+#endif /* timersub */
+
+/*******************************************************************//**
+Resets a speedo (records the current time in it). */
+UNIV_INTERN
+void
+speedo_reset(
+/*=========*/
+	speedo_t*	speedo)	/*!&lt; out: speedo */
+{
+	gettimeofday(&amp;speedo-&gt;tv, NULL);
+
+	getrusage(RUSAGE_SELF, &amp;speedo-&gt;ru);
+}
+
+/*******************************************************************//**
+Shows the time elapsed and usage statistics since the last reset of a
+speedo. */
+UNIV_INTERN
+void
+speedo_show(
+/*========*/
+	const speedo_t*	speedo)	/*!&lt; in: speedo */
+{
+	struct rusage	ru_now;
+	struct timeval	tv_now;
+	struct timeval	tv_diff;
+
+	getrusage(RUSAGE_SELF, &amp;ru_now);
+
+	gettimeofday(&amp;tv_now, NULL);
+
+#define PRINT_TIMEVAL(prefix, tvp)		\
+	fprintf(stderr, "%s% 5ld.%06ld sec\n",	\
+		prefix, (tvp)-&gt;tv_sec, (tvp)-&gt;tv_usec)
+
+	timersub(&amp;tv_now, &amp;speedo-&gt;tv, &amp;tv_diff);
+	PRINT_TIMEVAL("real", &amp;tv_diff);
+
+	timersub(&amp;ru_now.ru_utime, &amp;speedo-&gt;ru.ru_utime, &amp;tv_diff);
+	PRINT_TIMEVAL("user", &amp;tv_diff);
+
+	timersub(&amp;ru_now.ru_stime, &amp;speedo-&gt;ru.ru_stime, &amp;tv_diff);
+	PRINT_TIMEVAL("sys ", &amp;tv_diff);
+}
+
+#endif /* UNIV_COMPILE_TEST_FUNCS */
+      </pre>
+    </body>
+</html>

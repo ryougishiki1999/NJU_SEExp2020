@@ -1,0 +1,298 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>StatisticsHelper.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef CORE_STATISTICS_STATISTICSHELPER_H
+#define CORE_STATISTICS_STATISTICSHELPER_H
+#include "../ResultCollector.h"
+#include &lt;map&gt;
+#include &lt;memory&gt;
+#include &lt;mutex&gt;
+#include &lt;set&gt;
+#include &lt;vector&gt;
+
+class StatsHelper;
+class FileStats;
+class BugStats;
+class BugStatsDesc;
+
+//===----------------------------------------------------------------------------
+//                      class StatsHelper decl
+//===----------------------------------------------------------------------------
+
+class StatsHelper
+{
+    typedef std::shared_ptr&lt;StatsHelper&gt; StatsHelperPtr;
+
+  public:
+    static StatsHelperPtr instance(); // this class is a kind of singleton...
+
+    StatsHelper(const StatsHelper &amp;) = delete;
+    StatsHelper &amp;operator=(const StatsHelper &amp;) = delete;
+    ~StatsHelper() = default;
+
+    void collect_generate(const std::vector&lt;Diagnostic&gt; &amp;diagnostics, const std::vector&lt;Stats&gt; &amp;stats);
+
+    void clear();
+
+    const std::set&lt;std::string&gt; &amp;get_filename_list() const
+<span style = "background-color:#dfd">    {
+        return _filename_list;
+    }</span>
+
+    const std::vector&lt;FileStats&gt; &amp;get_file_stats_list() const
+<span style = "background-color:#dfd">    {
+        return _file_stats_list;
+    }</span>
+
+    const std::set&lt;std::string&gt; &amp;get_all_bug_type_list() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_type_list;
+    }</span>
+
+    const std::vector&lt;BugStats&gt; &amp;get_all_bug_stats_list() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_stats_list;
+    }</span>
+
+    int get_all_bug_num() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_num;
+    }</span>
+    int get_all_bug_type_num() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_type_num;
+    }</span>
+    int get_all_file_num() const
+<span style = "background-color:#dfd">    {
+        return _all_file_num;
+    }</span>
+
+    double get_all_analysis_time() const
+<span style = "background-color:#dfd">    {
+        return _all_analysis_time;
+    }</span>
+
+  private:
+<span style = "background-color:#dfd">    StatsHelper()</span>
+    {
+<span style = "background-color:#dfd">        _all_analysis_time = NULL;
+        _all_bug_num = NULL;
+        _all_bug_type_num = NULL;
+        _all_file_num = NULL;
+    }</span>
+
+    void collect_statistic(const std::vector&lt;Diagnostic&gt; &amp;diagnostics, const std::vector&lt;Stats&gt; &amp;stats);
+    void collect_stats(const std::vector&lt;Stats&gt; &amp;stats);
+    void collect_diagnostic(const std::vector&lt;Diagnostic&gt; &amp;diagnostics);
+
+    void generate();
+    void generate_file_stats_list();
+    const FileStats &amp;get_file_stats(const std::string &amp;filename) const;
+    void all_file_stats_generated();
+    void generate_all_bug_num();
+    void generate_all_file_num();
+    void generate_all_bug_type_num();
+    void generate_all_bug_stats_list();
+    void generate_all_analysis_time();
+
+  private:
+    static StatsHelperPtr _sh;
+    static std::mutex _m_mutex;
+
+    int _all_bug_num;
+    int _all_bug_type_num;
+    int _all_file_num;
+    double _all_analysis_time;
+
+    std::set&lt;std::string&gt; _filename_list;
+    std::vector&lt;FileStats&gt; _file_stats_list;
+    std::set&lt;std::string&gt; _all_bug_type_list;
+    std::vector&lt;BugStats&gt; _all_bug_stats_list;
+
+    // This container is set to collect,not to be provided for
+    // outsider caller
+    std::map&lt;std::string, FileStats&gt; _file_stats_map;
+    std::map&lt;std::string, BugStats&gt; _all_bug_stats_map;
+};
+
+//===----------------------------------------------------------------------------
+//                      class FileStats decl
+//===----------------------------------------------------------------------------
+
+class FileStats final
+{
+    friend StatsHelper;
+
+  public:
+<span style = "background-color:#fdd">    FileStats()</span>
+    {
+<span style = "background-color:#fdd">        _analysis_time = NULL;
+        _all_bug_num = NULL;
+        _bug_type_num = NULL;
+    }</span>
+<span style = "background-color:#dfd">    FileStats(const std::string &amp;filename) : _filename(filename)
+    {
+        _analysis_time = NULL;
+        _all_bug_num = NULL;
+        _bug_type_num = NULL;
+    }</span>
+    FileStats &amp;operator=(const FileStats &amp;) = default;
+    ~FileStats() = default;
+
+    void clear();
+
+    double get_analysis_time() const
+<span style = "background-color:#dfd">    {
+        return _analysis_time;
+    }</span>
+
+    int get_all_bug_num() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_num;
+    }</span>
+
+    int get_bug_type_num() const
+<span style = "background-color:#dfd">    {
+        return _bug_type_num;
+    }</span>
+
+    const std::vector&lt;BugStats&gt; &amp;get_bug_stats_list() const
+<span style = "background-color:#dfd">    {
+        return _bug_stats_list;
+    }</span>
+
+    const std::set&lt;std::string&gt; &amp;get_bug_type_list() const
+<span style = "background-color:#dfd">    {
+        return _bug_type_list;
+    }</span>
+
+  public:
+    const std::string _filename;
+
+  private:
+    void generate();
+    void generate_bug_stats_list();
+    const BugStats &amp;get_bug_stats(const std::string &amp;bug_type) const;
+    void generate_all_bug_num();
+    void generate_bug_type_num();
+
+    void set_analysis_time(const double analysis_time)
+<span style = "background-color:#dfd">    {
+        this-&gt;_analysis_time = analysis_time;
+    }</span>
+
+  private:
+    int _all_bug_num;
+    int _bug_type_num;
+    double _analysis_time;
+
+    std::set&lt;std::string&gt; _bug_type_list;
+
+    std::vector&lt;BugStats&gt; _bug_stats_list;
+
+    // This container is set to collect,not to be supplyed to
+    // caller
+    std::map&lt;std::string, BugStats&gt; _bug_stats_map;
+};
+
+//===----------------------------------------------------------------------------
+//                      class BugStats decl
+//===----------------------------------------------------------------------------
+
+class BugStats final
+{
+    friend StatsHelper;
+    friend FileStats;
+
+  public:
+<span style = "background-color:#fdd">    BugStats()</span>
+    {
+<span style = "background-color:#fdd">        _num = NULL;
+    }</span>
+<span style = "background-color:#dfd">    BugStats(const std::string &amp;bugtype, const int num) : _bug_type(bugtype), _num(num){};</span>
+    BugStats &amp;operator=(const BugStats &amp;)
+    {
+        return *this;
+    }
+    ~BugStats() = default;
+
+    void clear();
+
+    int get_num() const
+<span style = "background-color:#dfd">    {
+        return _num;
+    }</span>
+
+    const std::vector&lt;BugStatsDesc&gt; &amp;get_bug_desc_list() const
+<span style = "background-color:#dfd">    {
+        return _bug_desc_list;
+    }</span>
+
+  public:
+    const std::string _bug_type;
+
+  private:
+    void num_inc_by_one()
+<span style = "background-color:#dfd">    {
+        _num = _num + 1;
+    }</span>
+
+    void num_inc_by(int inc)
+<span style = "background-color:#dfd">    {
+        _num = _num + inc;
+    }</span>
+
+    void set_bug_desc_list(const std::vector&lt;BugStatsDesc&gt; &amp;bug_desc_list)
+<span style = "background-color:#dfd">    {
+        _bug_desc_list.assign(bug_desc_list.begin(), bug_desc_list.end());
+    }</span>
+
+  private:
+    int _num;
+
+    std::vector&lt;BugStatsDesc&gt; _bug_desc_list;
+};
+
+class BugStatsDesc final
+{
+    friend StatsHelper;
+    friend FileStats;
+    friend BugStats;
+
+  public:
+    BugStatsDesc() = default;
+    BugStatsDesc(const std::string &amp;file_name, const std::string &amp;checker_name, const std::string &amp;description,
+                 const unsigned int line_number, const unsigned int column_number)
+<span style = "background-color:#dfd">        : _file_name(file_name), _checker_name(checker_name), _description(description), _line_number(line_number),
+          _column_number(column_number)
+    {
+    }</span>
+    BugStatsDesc &amp;operator=(const BugStatsDesc &amp;)
+<span style = "background-color:#fdd">    {
+        return *this;
+    }</span>
+    ~BugStatsDesc() = default;
+
+    void clear();
+
+  public:
+    const std::string _file_name;
+    const std::string _checker_name;
+    const std::string _description;
+    const unsigned int _line_number;
+    const unsigned int _column_number;
+
+  private:
+};
+
+#endif</pre>
+	</body>
+</html>

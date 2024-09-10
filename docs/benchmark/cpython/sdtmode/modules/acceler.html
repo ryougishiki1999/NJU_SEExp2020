@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Parser/acceler.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+
+/* Parser accelerator module */
+
+/* The parser as originally conceived had disappointing performance.
+   This module does some precomputation that speeds up the selection
+   of a DFA based upon a token, turning a search through an array
+   into a simple indexing operation.  The parser now cannot work
+   without the accelerators installed.  Note that the accelerators
+   are installed dynamically when the parser is initialized, they
+   are not part of the static data structure written on graminit.[ch]
+   by the parser generator. */
+
+#include "Python.h"
+#include "grammar.h"
+#include "node.h"
+#include "token.h"
+#include "parser.h"
+
+/* Forward references */
+static void fixdfa(grammar *, const dfa *);
+static void fixstate(grammar *, state *);
+
+void
+PyGrammar_AddAccelerators(grammar *g)
+{
+    int i;
+    const dfa *d = g-&gt;g_dfa;
+    for (i = g-&gt;g_ndfas; --i &gt;= 0; d++)
+        fixdfa(g, d);
+    g-&gt;g_accel = 1;
+}
+
+void
+PyGrammar_RemoveAccelerators(grammar *g)
+{
+    int i;
+    g-&gt;g_accel = 0;
+    const dfa *d = g-&gt;g_dfa;
+    for (i = g-&gt;g_ndfas; --i &gt;= 0; d++) {
+        state *s;
+        int j;
+        s = d-&gt;d_state;
+        for (j = 0; j &lt; d-&gt;d_nstates; j++, s++) {
+            if (s-&gt;s_accel)
+                PyObject_FREE(s-&gt;s_accel);
+            s-&gt;s_accel = NULL;
+        }
+    }
+}
+
+static void
+fixdfa(grammar *g, const dfa *d)
+{
+    state *s;
+    int j;
+    s = d-&gt;d_state;
+    for (j = 0; j &lt; d-&gt;d_nstates; j++, s++)
+        fixstate(g, s);
+}
+
+static void
+fixstate(grammar *g, state *s)
+{
+    const arc *a;
+    int k;
+    int *accel;
+    int nl = g-&gt;g_ll.ll_nlabels;
+    s-&gt;s_accept = 0;
+    accel = (int *) PyObject_MALLOC(nl * sizeof(int));
+    if (accel == NULL) {
+        fprintf(stderr, "no mem to build parser accelerators\n");
+        exit(1);
+    }
+    for (k = 0; k &lt; nl; k++)
+        accel[k] = -1;
+    a = s-&gt;s_arc;
+    for (k = s-&gt;s_narcs; --k &gt;= 0; a++) {
+        int lbl = a-&gt;a_lbl;
+        const label *l = &amp;g-&gt;g_ll.ll_label[lbl];
+        int type = l-&gt;lb_type;
+        if (a-&gt;a_arrow &gt;= (1 &lt;&lt; 7)) {
+            printf("XXX too many states!\n");
+            continue;
+        }
+        if (ISNONTERMINAL(type)) {
+            const dfa *d1 = PyGrammar_FindDFA(g, type);
+            int ibit;
+            if (type - NT_OFFSET &gt;= (1 &lt;&lt; 7)) {
+                printf("XXX too high nonterminal number!\n");
+                continue;
+            }
+            for (ibit = 0; ibit &lt; g-&gt;g_ll.ll_nlabels; ibit++) {
+                if (testbit(d1-&gt;d_first, ibit)) {
+                    if (accel[ibit] != -1)
+                        printf("XXX ambiguity!\n");
+                    accel[ibit] = a-&gt;a_arrow | (1 &lt;&lt; 7) |
+                        ((type - NT_OFFSET) &lt;&lt; 8);
+                }
+            }
+        }
+        else if (lbl == EMPTY)
+            s-&gt;s_accept = 1;
+        else if (lbl &gt;= 0 &amp;&amp; lbl &lt; nl)
+            accel[lbl] = a-&gt;a_arrow;
+    }
+    while (nl &gt; 0 &amp;&amp; accel[nl-1] == -1)
+        nl--;
+    for (k = 0; k &lt; nl &amp;&amp; accel[k] == -1;)
+        k++;
+    if (k &lt; nl) {
+        int i;
+        s-&gt;s_accel = (int *) PyObject_MALLOC((nl-k) * sizeof(int));
+        if (s-&gt;s_accel == NULL) {
+            fprintf(stderr, "no mem to add parser accelerators\n");
+            exit(1);
+        }
+        s-&gt;s_lower = k;
+        s-&gt;s_upper = nl;
+        for (i = 0; k &lt; nl; i++, k++)
+            s-&gt;s_accel[i] = accel[k];
+    }
+    PyObject_FREE(accel);
+}
+      </pre>
+    </body>
+</html>

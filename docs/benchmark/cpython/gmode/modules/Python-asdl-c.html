@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Python/asdl.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "Python.h"
+#include "asdl.h"
+
+asdl_seq *
+_Py_asdl_seq_new(Py_ssize_t size, PyArena *arena)
+{
+    asdl_seq *seq = NULL;
+    size_t n;
+
+    /* check size is sane */
+    if (size &lt; 0 ||
+        (size &amp;&amp; (((size_t)size - 1) &gt; (SIZE_MAX / sizeof(void *))))) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    n = (size ? (sizeof(void *) * (size - 1)) : 0);
+
+    /* check if size can be added safely */
+    if (n &gt; SIZE_MAX - sizeof(asdl_seq)) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    n += sizeof(asdl_seq);
+
+    seq = (asdl_seq *)PyArena_Malloc(arena, n);
+    if (!seq) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    memset(seq, 0, n);
+    seq-&gt;size = size;
+    return seq;
+}
+
+asdl_int_seq *
+_Py_asdl_int_seq_new(Py_ssize_t size, PyArena *arena)
+{
+    asdl_int_seq *seq = NULL;
+    size_t n;
+
+    /* check size is sane */
+    if (size &lt; 0 ||
+        (size &amp;&amp; (((size_t)size - 1) &gt; (SIZE_MAX / sizeof(void *))))) {
+            PyErr_NoMemory();
+            return NULL;
+    }
+    n = (size ? (sizeof(void *) * (size - 1)) : 0);
+
+    /* check if size can be added safely */
+    if (n &gt; SIZE_MAX - sizeof(asdl_seq)) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    n += sizeof(asdl_seq);
+
+    seq = (asdl_int_seq *)PyArena_Malloc(arena, n);
+    if (!seq) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    memset(seq, 0, n);
+    seq-&gt;size = size;
+    return seq;
+}
+      </pre>
+    </body>
+</html>

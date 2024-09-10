@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/myisammrg/myrg_rrnd.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000-2002, 2005-2007 MySQL AB
+   Use is subject to license terms
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA */
+
+/*
+  Read a record with random-access. The position to the record must
+  get by myrg_info(). The next record can be read with pos= -1 */
+
+
+#include "myrg_def.h"
+
+static MYRG_TABLE *find_table(MYRG_TABLE *start,MYRG_TABLE *end,ulonglong pos);
+
+/*
+	If filepos == HA_OFFSET_ERROR, read next
+	Returns same as mi_rrnd:
+	   0 = Ok.
+	   HA_ERR_RECORD_DELETED = Record is deleted.
+	   HA_ERR_END_OF_FILE = EOF.
+*/
+
+int myrg_rrnd(MYRG_INFO *info,uchar *buf,ulonglong filepos)
+{
+  int error;
+  MI_INFO *isam_info;
+  DBUG_ENTER("myrg_rrnd");
+  DBUG_PRINT("info",("offset: %lu", (ulong) filepos));
+
+  if (filepos == HA_OFFSET_ERROR)
+  {
+    if (!info-&gt;current_table)
+    {
+      if (info-&gt;open_tables == info-&gt;end_table)
+      {						/* No tables */
+	DBUG_RETURN(my_errno=HA_ERR_END_OF_FILE);
+      }
+      isam_info=(info-&gt;current_table=info-&gt;open_tables)-&gt;table;
+      if (info-&gt;cache_in_use)
+	mi_extra(isam_info,HA_EXTRA_CACHE,(uchar*) &amp;info-&gt;cache_size);
+      filepos=isam_info-&gt;s-&gt;pack.header_length;
+      isam_info-&gt;lastinx= (uint) -1;	/* Can't forward or backward */
+    }
+    else
+    {
+      isam_info=info-&gt;current_table-&gt;table;
+      filepos= isam_info-&gt;nextpos;
+    }
+
+    for (;;)
+    {
+      isam_info-&gt;update&amp;= HA_STATE_CHANGED;
+      if ((error=(*isam_info-&gt;s-&gt;read_rnd)(isam_info,(uchar*) buf,
+					   (my_off_t) filepos,1)) !=
+	  HA_ERR_END_OF_FILE)
+	DBUG_RETURN(error);
+      if (info-&gt;cache_in_use)
+	mi_extra(info-&gt;current_table-&gt;table, HA_EXTRA_NO_CACHE,
+		 (uchar*) &amp;info-&gt;cache_size);
+      if (info-&gt;current_table+1 == info-&gt;end_table)
+	DBUG_RETURN(HA_ERR_END_OF_FILE);
+      info-&gt;current_table++;
+      info-&gt;last_used_table=info-&gt;current_table;
+      if (info-&gt;cache_in_use)
+	mi_extra(info-&gt;current_table-&gt;table, HA_EXTRA_CACHE,
+		 (uchar*) &amp;info-&gt;cache_size);
+      info-&gt;current_table-&gt;file_offset=
+	info-&gt;current_table[-1].file_offset+
+	info-&gt;current_table[-1].table-&gt;state-&gt;data_file_length;
+
+      isam_info=info-&gt;current_table-&gt;table;
+      filepos=isam_info-&gt;s-&gt;pack.header_length;
+      isam_info-&gt;lastinx= (uint) -1;
+    }
+  }
+  info-&gt;current_table=find_table(info-&gt;open_tables,
+				 info-&gt;end_table-1,filepos);
+  isam_info=info-&gt;current_table-&gt;table;
+  isam_info-&gt;update&amp;= HA_STATE_CHANGED;
+  DBUG_RETURN((*isam_info-&gt;s-&gt;read_rnd)
+              (isam_info, (uchar*) buf,
+	      (my_off_t) (filepos - info-&gt;current_table-&gt;file_offset),
+	      0));
+}
+
+
+	/* Find which table to use according to file-pos */
+
+static MYRG_TABLE *find_table(MYRG_TABLE *start, MYRG_TABLE *end,
+			      ulonglong pos)
+{
+  MYRG_TABLE *mid;
+  DBUG_ENTER("find_table");
+
+  while (start != end)
+  {
+    mid=start+((uint) (end-start)+1)/2;
+    if (mid-&gt;file_offset &gt; pos)
+      end=mid-1;
+    else
+      start=mid;
+  }
+  DBUG_PRINT("info",("offset: %lu, table: %s",
+		     (ulong) pos, start-&gt;table-&gt;filename));
+  DBUG_RETURN(start);
+}
+      </pre>
+    </body>
+</html>

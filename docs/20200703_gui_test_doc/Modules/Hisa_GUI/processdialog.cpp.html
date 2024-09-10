@@ -1,0 +1,213 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>processdialog.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#include "processdialog.h"
+#include&lt;QApplication&gt;
+#include&lt;QMessageBox&gt;
+#include &lt;QCloseEvent&gt;
+#include &lt;cstdlib&gt;
+#include &lt;ctime&gt;
+#include&lt;QDebug&gt;
+
+// const value of ProcessDialog
+const int DIALOG_HEIHGT=700;
+const int DIALOG_WIDTH=900;
+const int TITLE_X_COORD=0;
+const int TITLE_Y_COORD=0;
+const int TITLE_WIDTH=DIALOG_WIDTH;
+const int TITLE_HEIGHT=70;
+const int FONT_SIZE=18;
+const int FONT_WEIGHT=75;
+const int TEXT_BROWSER_X_COORD=20;
+const int TEXT_BROWSER_Y_COORD=120;
+const int TEXT_BROWSER_WIDTH=860;
+const int TEXT_BROWSER_HEIGHT=510;
+const int PROGRESS_BAR_X_COORD=20;
+const int PROGRESS_BAR_Y_COORD=80;
+const int PROGRESS_BAR_WIDTH=880;
+const int PROGRESS_BAR_HEIGHT=30;
+const int CANCEL_BUTTON_X_COORD=760;
+const int CANCEL_BUTTON_Y_COORD=640;
+const int CANCEL_BUTTON_WIDTH=120;
+const int CANCEL_BUTTON_HEIGHT=40;
+const int WAIT_TIME=3;
+const int PROCRSS_UPDATE_MARGIN = 1500;
+
+//initialize ProcessDialog and its Widget
+ProcessDialog::ProcessDialog(Language lan,QWidget *parent) :
+<span style = "background-color:#dfd">    QDialog(parent)
+{
+    this-&gt;lan=lan;</span>
+    //initialize the status of the process
+<span style = "background-color:#dfd">    is_finished=false;
+    is_canceled=false;
+    Qt::WindowFlags flags=Qt::Dialog;flags |=Qt::WindowCloseButtonHint;setWindowFlags(flags);
+    this-&gt;setWindowFlags(flags);
+    this-&gt;setFixedSize(DIALOG_WIDTH, DIALOG_HEIHGT);</span>
+
+    //initialize title label
+<span style = "background-color:#dfd">    title_label = new QLabel(this);
+    title_label-&gt;setObjectName(QStringLiteral("title_label"));
+    title_label-&gt;setGeometry(QRect(TITLE_X_COORD, TITLE_Y_COORD, TITLE_WIDTH, TITLE_HEIGHT));</span>
+
+    //initialize title label font
+<span style = "background-color:#dfd">    QFont font;
+    font.setFamily(QStringLiteral("Bahnschrift Light"));
+    font.setPointSize(FONT_SIZE);
+    font.setBold(true);
+    font.setWeight(FONT_WEIGHT);</span>
+
+    //initialize title label
+<span style = "background-color:#dfd">    title_label-&gt;setFont(font);
+    title_label-&gt;setStyleSheet(QStringLiteral("background-color: rgb(255, 255, 255);"));
+    title_label-&gt;setAlignment(Qt::AlignCenter);</span>
+
+    //initialize text browser
+<span style = "background-color:#dfd">    text_browser = new QTextBrowser(this);
+    text_browser-&gt;setObjectName(QStringLiteral("text_browser"));
+    text_browser-&gt;setGeometry(QRect(TEXT_BROWSER_X_COORD, TEXT_BROWSER_Y_COORD,</span>
+                                    TEXT_BROWSER_WIDTH, TEXT_BROWSER_HEIGHT));
+<span style = "background-color:#dfd">    text_browser-&gt;setStyleSheet(QStringLiteral("background-color: rgb(240, 240, 240);\n"
+    "border-color: rgb(240, 240, 240);"));</span>
+
+    //initialize progress bar
+<span style = "background-color:#dfd">     progress_bar = new QProgressBar(this);
+     progress_bar-&gt;setObjectName(QStringLiteral("progress_bar"));
+     progress_bar-&gt;setGeometry(QRect(PROGRESS_BAR_X_COORD,PROGRESS_BAR_Y_COORD,</span>
+                                     PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT));
+<span style = "background-color:#dfd">     progress_bar-&gt;setValue(0);</span>
+
+     //initialize cancel button
+<span style = "background-color:#dfd">     cancel_button = new QPushButton(this);
+     cancel_button-&gt;setObjectName(QStringLiteral("cancel_button"));
+     cancel_button-&gt;setGeometry(QRect(CANCEL_BUTTON_X_COORD, CANCEL_BUTTON_Y_COORD,</span>
+                                      CANCEL_BUTTON_WIDTH, CANCEL_BUTTON_HEIGHT));
+<span style = "background-color:#dfd">     connect(cancel_button,SIGNAL(clicked(bool)),this,SLOT(cancel()));</span>
+
+     //Sets the text content of the widget according to the language
+<span style = "background-color:#dfd">     switch(this-&gt;lan)</span>
+     {
+     case Chinese:
+<span style = "background-color:#dfd">         this-&gt;setWindowTitle(QStringLiteral("åæè¿åº¦"));
+         title_label-&gt;setText(QStringLiteral("Hisaæ­£å¨è¿è¡åæ"));
+         cancel_button-&gt;setText(QStringLiteral("åæ¶"));
+         break;</span>
+     default:
+<span style = "background-color:#dfd">         this-&gt;setWindowTitle(QStringLiteral("Analyzing Information"));
+         title_label-&gt;setText(QStringLiteral("Hisa Analyzing"));
+         cancel_button-&gt;setText(QStringLiteral("Cancel"));</span>
+     }
+<span style = "background-color:#dfd">    cmd=new QProcess(this);
+    connect(cmd, SIGNAL(readyRead()), this, SLOT(read_output()));
+    connect(cmd, SIGNAL(finished(int, QProcess::ExitStatus)), this, SLOT(analyze_finish()));
+    cmd-&gt;setReadChannel(QProcess::StandardOutput);
+    timer = new QTimer(this);
+    connect(timer, SIGNAL(timeout()), this, SLOT(update()));
+    timer-&gt;start(PROCRSS_UPDATE_MARGIN);
+}</span>
+
+//wait and judge if start successfully
+//then return flag
+bool ProcessDialog::exec_command(QString command)
+<span style = "background-color:#dfd">{
+       cmd-&gt;start(command);
+       if(!cmd-&gt;waitForStarted(WAIT_TIME))</span>
+       {
+<span style = "background-color:#dfd">          return false;</span>
+       }
+<span style = "background-color:#dfd">       output ="";
+       text_browser-&gt;setText(output);
+       return true;
+}</span>
+
+void ProcessDialog::read_output()
+<span style = "background-color:#dfd">{
+   output += cmd-&gt;readAllStandardOutput();
+   text_browser-&gt;setText(output);
+}</span>
+
+//show MessageBox to User to judge if he really wants to cancel
+void ProcessDialog::cancel()
+<span style = "background-color:#dfd">{
+    if(!is_finished)</span>
+    {
+        int r;
+        //Sets the text content of the MessageBox according to the language
+<span style = "background-color:#dfd">        switch(this-&gt;lan)</span>
+        {
+        case Chinese:
+<span style = "background-color:#dfd">            r=QMessageBox::warning(this,QStringLiteral("è­¦å"),
+                         QStringLiteral("é¡¹ç®åæè¿æªå®æï¼æ¨ç¡®å®è¦åæ¶åï¼"),
+                                     QStringLiteral("ç¡®è®¤"), QStringLiteral("åæ¶"));
+            break;</span>
+        default:
+<span style = "background-color:#dfd">            r=QMessageBox::warning(this,QStringLiteral("warning"),
+                         QStringLiteral("The program is not finished yet. Are you sure to cancel it?"),
+                                     QStringLiteral("Yes"), QStringLiteral("No"));</span>
+        }
+<span style = "background-color:#dfd">        if (r == QStringLiteral("Yes").toInt() 
+            || r == QStringLiteral("ç¡®è®¤").toInt())</span>
+        {
+<span style = "background-color:#dfd">            cmd-&gt;kill();
+            this-&gt;close();
+            is_canceled=true;</span>
+        }
+<span style = "background-color:#dfd">    }</span>
+    else
+    {
+<span style = "background-color:#dfd">    cmd-&gt;kill();
+    this-&gt;close();</span>
+    }
+<span style = "background-color:#dfd">}</span>
+
+//update progress bar every 1.5 seconds
+void ProcessDialog::update()
+<span style = "background-color:#dfd">{   
+    srand(time(NULL));
+    int new_value =progress_bar-&gt;value()+ (rand() % 6);
+    if (new_value &gt; 99)
+        new_value = 99;
+    progress_bar-&gt;setValue(new_value);
+}</span>
+
+//remind user that analysis has been finished
+void ProcessDialog::analyze_finish()
+<span style = "background-color:#dfd">{
+    timer-&gt;stop();
+    if(!is_canceled)</span>
+    {
+<span style = "background-color:#dfd">    is_finished=true;
+    progress_bar-&gt;setValue(100);</span>
+    //Sets the text content of the MessageBox according to the language
+<span style = "background-color:#dfd">    switch(this-&gt;lan)</span>
+    {
+    case Chinese:
+<span style = "background-color:#dfd">        QMessageBox::information(this, QStringLiteral("å®æ!"), QStringLiteral("é¡¹ç®å·²ç»åæå®æ!"),
+                                 QStringLiteral("ç¡®è®¤"));
+        break;</span>
+    default:
+<span style = "background-color:#dfd">        QMessageBox::information(this, QStringLiteral("Done!"),
+                                 QStringLiteral("The project analysis has been finished"),
+                                 QStringLiteral("OK"));</span>
+    }
+    }
+<span style = "background-color:#dfd">}</span>
+
+void ProcessDialog::closeEvent(QCloseEvent *)
+<span style = "background-color:#dfd">{
+    cmd-&gt;kill();
+}</span>
+
+ProcessDialog::~ProcessDialog()
+<span style = "background-color:#dfd">{
+}</span></pre>
+	</body>
+</html>

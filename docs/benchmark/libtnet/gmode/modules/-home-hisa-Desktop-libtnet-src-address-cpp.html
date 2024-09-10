@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/address.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "address.h"
+
+#include &lt;string.h&gt;
+#include &lt;arpa/inet.h&gt;
+
+#include "sockutil.h"
+#include "log.h"
+
+using namespace std;
+
+namespace tnet
+{
+    Address::Address(uint16_t port)
+    {
+        bzero(&amp;m_addr, sizeof(m_addr));
+
+        m_addr.sin_family = AF_INET; 
+        m_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        m_addr.sin_port = htons(port);
+    }
+
+    Address::Address(const string&amp; ip, uint16_t port)
+    {
+        bzero(&amp;m_addr, sizeof(m_addr));
+        
+        m_addr.sin_family = AF_INET;
+        m_addr.sin_port = htons(port);
+        
+        if(inet_pton(AF_INET, ip.c_str(), &amp;m_addr.sin_addr) &lt;= 0)
+        {
+            //may be domain
+            uint32_t ret = SockUtil::getHostByName(ip);
+            if(ret != uint32_t(-1))
+            {
+                m_addr.sin_addr.s_addr = ret;
+                return;
+            }
+
+            LOG_ERROR("invalid ip %s, use 0.0.0.0 instead", ip.c_str());
+            //error, may log later, now use INADDR_ANY
+            m_addr.sin_addr.s_addr = htonl(INADDR_ANY);    
+        }
+    }
+
+    Address::Address(const struct sockaddr_in&amp; addr)
+    {
+        memcpy(&amp;m_addr, &amp;addr, sizeof(addr)); 
+    }
+
+    uint32_t Address::ip() const
+    {
+        return ntohl(m_addr.sin_addr.s_addr);    
+    }
+
+    string Address::ipstr() const
+    {
+        char buf[32] = {'\0'};
+        inet_ntop(AF_INET, &amp;m_addr.sin_addr, buf, static_cast&lt;socklen_t&gt; (sizeof(buf)));
+
+        return string(buf, 32);
+    }
+
+    uint16_t Address::port() const
+    {
+        return ntohs(m_addr.sin_port);    
+    }
+}
+      </pre>
+    </body>
+</html>

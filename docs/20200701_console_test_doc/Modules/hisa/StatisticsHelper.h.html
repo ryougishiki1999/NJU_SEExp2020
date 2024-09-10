@@ -1,0 +1,485 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>StatisticsHelper.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+/**
+ *  @file StatisticsHelper.h
+ *  @brief Declarations of StatsHelper and its Utils
+ *  @author Zhou RuoHeng
+ *  @email  171860634@smail.nju.edu.cn
+ */
+
+#ifndef CORE_STATISTICS_STATISTICSHELPER_H
+#define CORE_STATISTICS_STATISTICSHELPER_H
+#include "../ResultCollector.h"
+#include &lt;map&gt;
+#include &lt;memory&gt;
+#include &lt;mutex&gt;
+#include &lt;set&gt;
+#include &lt;vector&gt;
+
+//---------------------------------------------------------------------------
+// Platform Declaration
+//---------------------------------------------------------------------------
+
+class StatsHelper;
+class FileStats;
+class BugStats;
+class BugStatsDesc;
+
+/* @brief StatsHelper
+ *  This class counts the entire results of project as a singleton.
+ */
+class StatsHelper
+{
+    typedef std::shared_ptr&lt;StatsHelper&gt; StatsHelperPtr;
+
+  public:
+    /**
+     * @brief  instance
+     * @details get the instance of the singleton class
+     * @return  return the instance of StatsHelper as a pointer
+     */
+    static StatsHelperPtr instance();
+
+    StatsHelper(const StatsHelper &amp;) = delete;
+    StatsHelper &amp;operator=(const StatsHelper &amp;) = delete;
+    ~StatsHelper() = default;
+
+    /**
+     * @brief collect and generate all analysis statistics
+     * @details interface of the StatsHelper to collect results of statistics
+     */
+    void collect_generate(const std::vector&lt;Diagnostic&gt; &amp;diagnostics, const std::vector&lt;Stats&gt; &amp;stats);
+
+    /**
+     * @brief clear Statistics
+     * @details clear all statistics whether it is generated or not
+     */
+    void clear();
+
+    /**
+     * @brief get the list of filename
+     * @details counts the files which are analyzed by analyzer
+     * @return set of filename consisting of std::string
+     */
+    const std::set&lt;std::string&gt; &amp;get_filename_list() const
+<span style = "background-color:#dfd">    {
+        return _filename_list;
+    }</span>
+
+    /**
+     * @brief get the list of statistics of every single file
+     * @details FileStats is the util class which aims to collect statistics of separate file
+     * @return vector of FileStats
+     */
+    const std::vector&lt;FileStats&gt; &amp;get_file_stats_list() const
+<span style = "background-color:#dfd">    {
+        return _file_stats_list;
+    }</span>
+
+    /**
+     * @brief get the list of bug types
+     * @details counts all occurrences of bug types
+     * @return et of bug types consisting of std::string
+     */
+    const std::set&lt;std::string&gt; &amp;get_all_bug_type_list() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_type_list;
+    }</span>
+    /**
+     * @brief get the list of BugStats
+     * @details BugStats is the util class which aims to collect statistics of the specify bug type
+     * @return vector of BugStats
+     */
+    const std::vector&lt;BugStats&gt; &amp;get_all_bug_stats_list() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_stats_list;
+    }</span>
+
+    /**
+     * @brief get num of bugs
+     * @details counts the number of bugs detected
+     * @return int, num of bugs
+     */
+    int get_all_bug_num() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_num;
+    }</span>
+    /**
+     * @brief get num of bug types
+     * @return int, num of bug types
+     */
+    int get_all_bug_type_num() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_type_num;
+    }</span>
+
+    /**
+     * @brief get num of files analyzed
+     * @return int, num of files
+     */
+    int get_all_file_num() const
+<span style = "background-color:#dfd">    {
+        return _all_file_num;
+    }</span>
+
+    /**
+     * @brief get total time of analysis
+     * @return double, analysis time
+     */
+    double get_all_analysis_time() const
+<span style = "background-color:#dfd">    {
+        return _all_analysis_time;
+    }</span>
+
+  private:
+<span style = "background-color:#dfd">    StatsHelper()</span>
+    {
+<span style = "background-color:#dfd">        _all_analysis_time = NULL;
+        _all_bug_num = NULL;
+        _all_bug_type_num = NULL;
+        _all_file_num = NULL;
+    }</span>
+    /**
+     * @brief collect diags and stats from Result collector
+     * @param diagnostics, vector of diagnostics
+     * @param stats, vector of stats
+     */
+    void collect_statistic(const std::vector&lt;Diagnostic&gt; &amp;diagnostics, const std::vector&lt;Stats&gt; &amp;stats);
+    /**
+     * @brief collect stats
+     * @param stats, vector of stats
+     */
+    void collect_stats(const std::vector&lt;Stats&gt; &amp;stats);
+    /**
+     * @brief collect diags
+     * @param diagnostics, vector of digas
+     */
+    void collect_diagnostic(const std::vector&lt;Diagnostic&gt; &amp;diagnostics);
+
+    /**
+     * @brief generate total statistics
+     * @details after collecting, generate total statistics with collecting information
+     */
+    void generate();
+    /**
+     * @brief generate list of FileStats
+     * @details A part of `generate`, generate a vector of FileStats
+     */
+    void generate_file_stats_list();
+    /**
+     * @brief get correct FileStats with filename(std::string)
+     * @param filename, the name of file consisting of std::string
+     * @return FileStats
+     */
+    const FileStats &amp;get_file_stats(const std::string &amp;filename) const;
+    /**
+     * @brief FileStats generates its statistics
+     * @details after constructing list of FileStats, FileStats generate its statistics
+     */
+    void all_file_stats_generated();
+    /**
+     * @brief generate total num of bugs detected
+     */
+    void generate_all_bug_num();
+    /**
+     * @brief generate total num of files analyzed
+     */
+    void generate_all_file_num();
+    /**
+     * @brief generate total num of bug types
+     */
+    void generate_all_bug_type_num();
+    /**
+     * @brief generate list of BugStats
+     */
+    void generate_all_bug_stats_list();
+    /**
+     * @brief generate total analysis time
+     */
+    void generate_all_analysis_time();
+
+  private:
+    static StatsHelperPtr _sh; ///&lt; the instance of pointer of StatsHelper
+    static std::mutex _m_mutex;
+
+    int _all_bug_num;          ///&lt; the num of bugs
+    int _all_bug_type_num;     ///&lt; the num of bug types
+    int _all_file_num;         ///&lt; the num of analysis files
+    double _all_analysis_time; ///&lt; the time of ananlysis
+
+    std::set&lt;std::string&gt; _filename_list;      ///&lt; the list of name of files analyzed
+    std::vector&lt;FileStats&gt; _file_stats_list;   ///&lt; the list of FileStats totally
+    std::set&lt;std::string&gt; _all_bug_type_list;  ///&lt; the list of bug types totally
+    std::vector&lt;BugStats&gt; _all_bug_stats_list; ///&lt; the list of BugStats totally
+
+    // This container is set to collect,not to be provided for
+    // outsider caller
+    std::map&lt;std::string, FileStats&gt; _file_stats_map;   ///&lt; map of filename and its corresponding FileStats
+    std::map&lt;std::string, BugStats&gt; _all_bug_stats_map; ///&lt; map of bugname and its corresponding BugStats!!
+};
+
+//===----------------------------------------------------------------------------
+//                      class FileStats decl
+//===----------------------------------------------------------------------------
+/**
+ * @brief FileStats, statistics in this FileStats
+ * @details collect all related statistics information for this FileStats, FileStats differs from its filename
+ */
+class FileStats final
+{
+    friend StatsHelper;
+
+  public:
+<span style = "background-color:#fdd">    FileStats()</span>
+    {
+<span style = "background-color:#fdd">        _analysis_time = NULL;
+        _all_bug_num = NULL;
+        _bug_type_num = NULL;
+    }</span>
+<span style = "background-color:#dfd">    FileStats(const std::string &amp;filename) : _filename(filename)
+    {
+        _analysis_time = NULL;
+        _all_bug_num = NULL;
+        _bug_type_num = NULL;
+    }</span>
+    FileStats &amp;operator=(const FileStats &amp;) = default;
+    ~FileStats() = default;
+
+    /**
+     * @brief clear Statistics of this FileStats
+     * @details clear all statistics of the FileStats
+     */
+    void clear();
+
+    /**
+     * @brief count analysis time of this FileStats
+     */
+    double get_analysis_time() const
+<span style = "background-color:#dfd">    {
+        return _analysis_time;
+    }</span>
+    /**
+     * @brief count num of bugs of this FileStats
+     */
+    int get_all_bug_num() const
+<span style = "background-color:#dfd">    {
+        return _all_bug_num;
+    }</span>
+
+    /**
+     * @brief count num of bug types of this FileStats
+     */
+    int get_bug_type_num() const
+<span style = "background-color:#dfd">    {
+        return _bug_type_num;
+    }</span>
+
+    /**
+     * @brief get list of BugStats of this FileStats
+     * @details count this FileStats and generate its Bug Diagnositc statistics
+     * @return vector of BugStats
+     */
+    const std::vector&lt;BugStats&gt; &amp;get_bug_stats_list() const
+<span style = "background-color:#dfd">    {
+        return _bug_stats_list;
+    }</span>
+
+    /**
+     * @brief get list of bug types consisting of std::string
+     * @return vector of bug types(std::string)
+     */
+    const std::set&lt;std::string&gt; &amp;get_bug_type_list() const
+<span style = "background-color:#dfd">    {
+        return _bug_type_list;
+    }</span>
+
+  public:
+    const std::string _filename; ///&lt; the filename of this FileStats
+
+  private:
+    /**
+     * @brief generate statistics of this FileStats
+     * @details normally called by `StatsHelper.generate`
+     */
+    void generate();
+    /**
+     * @brief generate list of BugStats of this FileStats
+     * @details normally called by `FileStats.generate`
+     */
+    void generate_bug_stats_list();
+    /**
+     * @brief get BugStats by bug type
+     * @param bug_type, type of bug
+     * @return BugStats
+     */
+    const BugStats &amp;get_bug_stats(const std::string &amp;bug_type) const;
+    /**
+     * @brief generate num of bugs in this FileStats
+     */
+    void generate_all_bug_num();
+    /**
+     * @brief generate num of bug types in this FileStats
+     */
+    void generate_bug_type_num();
+
+    /**
+     * @brief set analysis time of this FileStats
+     * @details get analysis time from `StatsHelper`
+     * @param analysis_time
+     */
+    void set_analysis_time(const double analysis_time)
+<span style = "background-color:#dfd">    {
+        this-&gt;_analysis_time = analysis_time;
+    }</span>
+
+  private:
+    int _all_bug_num;      ///&lt; num of bugs in this FileStats
+    int _bug_type_num;     ///&lt; num of bug types in this FileStats
+    double _analysis_time; ///&lt; analysis time of this FileStats
+
+    std::set&lt;std::string&gt; _bug_type_list; ///&lt; list of bug types(std::string)
+
+    std::vector&lt;BugStats&gt; _bug_stats_list; ///&lt; list of BugStats in this FileStats
+
+    // This container is set to collect,not to be supplyed to
+    // caller
+    std::map&lt;std::string, BugStats&gt; _bug_stats_map; ///&lt; map of bug type and corresponding BugStats
+};
+
+//===----------------------------------------------------------------------------
+//                      class BugStats decl
+//===----------------------------------------------------------------------------
+/**
+ * @brief BugStats, statistics in this BugStats
+ * @details collect all related statistics information for this BugStats, BugStats differs from its bug type
+ */
+class BugStats final
+{
+    friend StatsHelper;
+    friend FileStats;
+
+  public:
+<span style = "background-color:#fdd">    BugStats()</span>
+    {
+<span style = "background-color:#fdd">        _num = NULL;
+    }</span>
+<span style = "background-color:#dfd">    BugStats(const std::string &amp;bugtype, const int num) : _bug_type(bugtype), _num(num){};</span>
+    BugStats &amp;operator=(const BugStats &amp;)
+    {
+        return *this;
+    }
+    ~BugStats() = default;
+
+    /**
+     * @brief clear Statistics
+     * @details clear statistics in this BugStats whether it is generated or not
+     */
+    void clear();
+
+    /**
+     * @brief get num of bug in this BugStats
+     * @return int, num of bugs
+     */
+    int get_num() const
+<span style = "background-color:#dfd">    {
+        return _num;
+    }</span>
+    /**
+     * @brief get list of BugStatsDesc
+     * @details BugStatsDesc collect every detailed information, like analysis checker, location filename...
+     * @return vector of BugStatsDesc
+     */
+    const std::vector&lt;BugStatsDesc&gt; &amp;get_bug_desc_list() const
+<span style = "background-color:#dfd">    {
+        return _bug_desc_list;
+    }</span>
+
+  public:
+    const std::string _bug_type; ///&lt; bug type of this BugStats, primary key of this BugStats
+
+  private:
+    /**
+     * @brief increase num of bugs by one
+     */
+    void num_inc_by_one()
+<span style = "background-color:#dfd">    {
+        _num = _num + 1;
+    }</span>
+
+    /**
+     * @brief increase num of bug by param(inc)
+     * @param inc(int)
+     */
+    void num_inc_by(int inc)
+<span style = "background-color:#dfd">    {
+        _num = _num + inc;
+    }</span>
+
+    /**
+     * @brief set list of BugStatsDesc of this BugStats
+     * @detail extend original _bug_desc_list of this BugStats gradually
+     * @param bug_desc_list(vector&lt;BugStatsDesc&gt;)
+     */
+    void set_bug_desc_list(const std::vector&lt;BugStatsDesc&gt; &amp;bug_desc_list)
+<span style = "background-color:#dfd">    {
+        _bug_desc_list.assign(bug_desc_list.begin(), bug_desc_list.end());
+    }</span>
+
+  private:
+    int _num; ///&lt; num of bugs in this BugStats
+
+    std::vector&lt;BugStatsDesc&gt;
+        _bug_desc_list; ///&lt; list of BugStatsDesc, collecting detailed description of this BugStats
+};
+
+/**
+ * @brief BugStatsDesc, description of the BugStats which the BugStatsDesc belongs to
+ * @details This class collect detailed description of BugStats, like location filename, location line and so on
+ */
+class BugStatsDesc final
+{
+    friend StatsHelper;
+    friend FileStats;
+    friend BugStats;
+
+  public:
+    BugStatsDesc() = default;
+    BugStatsDesc(const std::string &amp;file_name, const std::string &amp;checker_name, const std::string &amp;description,
+                 const unsigned int line_number, const unsigned int column_number)
+<span style = "background-color:#dfd">        : _file_name(file_name), _checker_name(checker_name), _description(description), _line_number(line_number),
+          _column_number(column_number)
+    {
+    }</span>
+    BugStatsDesc &amp;operator=(const BugStatsDesc &amp;)
+<span style = "background-color:#fdd">    {
+        return *this;
+    }</span>
+    ~BugStatsDesc() = default;
+
+    /**
+     * @brief clear statistics in this Description part
+     */
+    void clear();
+
+  public:
+    const std::string _file_name;      ///&lt; the name of file where bug locates
+    const std::string _checker_name;   ///&lt; the name of checker which detects this bug
+    const std::string _description;    ///&lt; the description of this bug
+    const unsigned int _line_number;   ///&lt; the line number of file where bug locates
+    const unsigned int _column_number; ///&lt; the column number of file where bug locates
+
+  private:
+};
+
+#endif</pre>
+	</body>
+</html>

@@ -1,0 +1,1901 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>HtmlPrinter.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "HtmlPrinter.h"
+
+HtmlPrinter::HtmlPrinter(std::string output_path, bool analy_time, bool bug_type, bool loc, bool checker,
+            bool note, bool statis)
+<span style = "background-color:#dfd">{</span>
+    //init the output information options
+<span style = "background-color:#dfd">    this-&gt;output_path = output_path;
+    this-&gt;analy_time = analy_time;
+    this-&gt;bug_type = bug_type;
+    this-&gt;loc = loc;
+    this-&gt;checker = checker;
+    this-&gt;note = note;
+    this-&gt;statis = statis;
+    if (output_path.back() == '/')</span>
+    {
+<span style = "background-color:#fdd">        output_path = output_path.substr(0, output_path.size() - 1);
+    }</span>
+    else
+    {
+<span style = "background-color:#dfd">        output_path = output_path;</span>
+    }
+    //Create the necessary folders
+    //./css store css files(style.css,stats.css,prettyprint.css)
+<span style = "background-color:#dfd">    std::string css_path = output_path + "/css";</span>
+    //./js store js file(prettyprint.js)
+<span style = "background-color:#dfd">    std::string js_path = output_path + "/js";</span>
+    //./modules store detailed information html
+<span style = "background-color:#dfd">    std::string module_path = output_path + "/modules";
+    if (access(css_path.c_str(), 0) != 0)</span>
+    {
+#ifdef _WIN32
+<span style = "background-color:#fdd">        mkdir(css_path.c_str());</span>
+#else
+        mkdir(css_path.c_str(), FILEMODE);
+#endif
+    }
+<span style = "background-color:#dfd">    if (access(js_path.c_str(), 0) != 0)</span>
+    {
+#ifdef _WIN32
+<span style = "background-color:#fdd">        mkdir(js_path.c_str());</span>
+#else
+        mkdir(js_path.c_str(), FILEMODE);
+#endif
+    }
+<span style = "background-color:#dfd">    if (access(module_path.c_str(), 0) != 0)</span>
+    {
+#ifdef _WIN32
+<span style = "background-color:#fdd">        mkdir(module_path.c_str());</span>
+#else
+        mkdir(module_path.c_str(), FILEMODE);
+#endif
+    }
+<span style = "background-color:#dfd">}</span>
+// generate style css for index.html
+void HtmlPrinter::generate_style_css()
+<span style = "background-color:#dfd">{
+    std::string out_filename = output_path + "/css/style.css";</span>
+    //create sytle.css file
+<span style = "background-color:#dfd">    std::ofstream out(out_filename, std::ios::out | std::ios::trunc);
+    if (!out.is_open())</span>
+    {
+<span style = "background-color:#fdd">        INFO("Error when creating the style.css file\n");
+        return;</span>
+    }
+    //set table style
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "	font-family: \"Lucida Sans Unicode\", \"Lucida Grande\", "</span>
+           "Sans-Serif;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "	font-size: 12px;" &lt;&lt; std::endl;
+    out &lt;&lt; "	margin: 45px;" &lt;&lt; std::endl;
+    out &lt;&lt; "	width: 90%;" &lt;&lt; std::endl;
+    out &lt;&lt; "  text-align: left;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-collapse: collapse;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-radius: 15px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  overflow: hidden;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the top-left corner style of the table style
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner thead th.rounded-left" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #b9c9fd;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the top-right corner style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner thead th.rounded-right" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #b9c9fd;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the th style of the table style
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner th" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding: 8px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  font-weight: normal;" &lt;&lt; std::endl;
+    out &lt;&lt; "  font-size: 13px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  color: #039;" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #b9c9fd;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the td style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner td" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding: 8px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top: 1px solid #fff;" &lt;&lt; std::endl;
+    out &lt;&lt; "  color: #669;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the bottom-left corner style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner tfoot td.rounded-foot-left" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the bottom-right corner style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner tfoot td.rounded-foot-right" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the td style when mousr move on it 
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner tbody tr:hover td" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #cad4fc;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the button wrapper div style
+<span style = "background-color:#dfd">    out &lt;&lt; "#button-wrapper" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-left: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-right: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-top: 20px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-bottom: 20px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-top: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-bottom: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-left: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-right: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-align: center;" &lt;&lt; std::endl;
+    out &lt;&lt; "    width: 200px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    background-color: #fff;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-left: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-right: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-top: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-bottom: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the jump button style
+<span style = "background-color:#dfd">    out &lt;&lt; ".click-button" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-width: 1px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-style: solid;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-color: #eee;" &lt;&lt; std::endl;
+    out &lt;&lt; "    background-color: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "    color:#038;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-radius: 15px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-align: center;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-decoration: none;" &lt;&lt; std::endl;
+    out &lt;&lt; "    font-size: 16px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    cursor: pointer;" &lt;&lt; std::endl;
+    out &lt;&lt; "    width: 200px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    height: 50px;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the jump button style when mouse move on it
+<span style = "background-color:#dfd">    out &lt;&lt; ".click-button:hover" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "    background-color: #039;" &lt;&lt; std::endl;
+    out &lt;&lt; "    color:white;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;
+    out.close();
+}</span>
+// generate statistic style for stats.html
+void HtmlPrinter::generate_stats_css()
+<span style = "background-color:#dfd">{</span>
+    //create stats.css file
+<span style = "background-color:#dfd">    std::string out_filename = output_path + "/css/stats.css";
+    std::ofstream out(out_filename, std::ios::out | std::ios::trunc);
+    if (!out.is_open())</span>
+    {
+<span style = "background-color:#fdd">        INFO("Error when creating the stats.css file\n");
+        return;</span>
+    }
+    //set the thanks info div style
+<span style = "background-color:#dfd">    out &lt;&lt; "#thanks-info" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-left: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-right: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-top: 20px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-bottom: 20px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-top: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-bottom: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-left: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-right: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-align: center;" &lt;&lt; std::endl;
+    out &lt;&lt; "    width: 1000px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    background-color: #fff;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-left: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-right: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-top: 3px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-bottom: 3px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-style: solid;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-color: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the overall result info div style
+<span style = "background-color:#dfd">    out &lt;&lt; "#result-info" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-left: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-right: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-top: 20px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-bottom: 20px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-top: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-bottom: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-left: 10px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-right: 10px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-align: left;" &lt;&lt; std::endl;
+    out &lt;&lt; "    width: 1000px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    background-color: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-left: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-right: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-top: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-bottom: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-style: outset;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-color: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set table style
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "	font-family: \"Lucida Sans Unicode\", \"Lucida Grande\", "</span>
+           "Sans-Serif;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "	font-size: 12px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-left: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-right: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-top: 40px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-bottom: 40px;" &lt;&lt; std::endl;
+    out &lt;&lt; "	width: 90%;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-align: left;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-collapse: collapse;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-radius: 15px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    overflow: hidden;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the top-left corner style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner thead th.rounded-left" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #b9c9fd;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the top-right corner style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner thead th.rounded-right" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #b9c9fd;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the th style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner th" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding: 8px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  font-weight: normal;" &lt;&lt; std::endl;
+    out &lt;&lt; "  font-size: 13px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  color: #039;" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #b9c9fd;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the td style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner td" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding: 8px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top: 1px solid #fff;" &lt;&lt; std::endl;
+    out &lt;&lt; "  color: #669;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the bottom-left corner style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner tfoot td.rounded-foot-left" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the bottom-right corner style of the table
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner tfoot td.rounded-foot-right" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the td style when mousr move on it 
+<span style = "background-color:#dfd">    out &lt;&lt; "#rounded-corner tbody tr:hover td" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #cad4fc;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the button wrapper div style
+<span style = "background-color:#dfd">    out &lt;&lt; "#button-wrapper" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-left: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-right: auto;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-top: 20px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    margin-bottom: 20px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-top: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-bottom: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-left: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    padding-right: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-align: center;" &lt;&lt; std::endl;
+    out &lt;&lt; "    width: 200px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    background-color: #fff;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-left: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-right: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-top: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-bottom: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the jump button style
+<span style = "background-color:#dfd">    out &lt;&lt; ".click-button" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-width: 1px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-style: solid;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-color: #eee;" &lt;&lt; std::endl;
+    out &lt;&lt; "    background-color: #e5e9f8;" &lt;&lt; std::endl;
+    out &lt;&lt; "    color:#038;" &lt;&lt; std::endl;
+    out &lt;&lt; "    border-radius: 15px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-align: center;" &lt;&lt; std::endl;
+    out &lt;&lt; "    text-decoration: none;" &lt;&lt; std::endl;
+    out &lt;&lt; "    font-size: 16px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    cursor: pointer;" &lt;&lt; std::endl;
+    out &lt;&lt; "    width: 200px;" &lt;&lt; std::endl;
+    out &lt;&lt; "    height: 50px;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    // set the jump button style when mouse move on it
+<span style = "background-color:#dfd">    out &lt;&lt; ".click-button:hover" &lt;&lt; std::endl;
+    out &lt;&lt; "{" &lt;&lt; std::endl;
+    out &lt;&lt; "    background-color: #039;" &lt;&lt; std::endl;
+    out &lt;&lt; "    color:white;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;
+}</span>
+// generate prettyprint css for detail.html
+void HtmlPrinter::generate_prettyprint_css()
+<span style = "background-color:#dfd">{</span>
+    //create prettyprint.css file
+<span style = "background-color:#dfd">    std::string out_filename = output_path + "/css/prettyprint.css";
+    std::ofstream out(out_filename, std::ios::out | std::ios::trunc);
+    if (!out.is_open())</span>
+    {
+<span style = "background-color:#fdd">        INFO("Error when creating the prettyprint.css file\n");
+        return;</span>
+    }
+    //set color for different key words
+<span style = "background-color:#dfd">    out &lt;&lt; ".pln{" &lt;&lt; std::endl;
+    out &lt;&lt; "  color: #000" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;
+    out &lt;&lt; "@media screen {" &lt;&lt; std::endl;
+    out &lt;&lt; "  .str {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #080" &lt;&lt; std::endl;
+    out &lt;&lt; "   }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .kwd {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #008" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .com {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #800" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .typ {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #606" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .lit {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #066" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .pun,.opn,.clo {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #660" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .tag {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #008" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .atn {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #606" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .atv {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #080" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .dec,.var {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #606" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .fun {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: red" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;
+    out &lt;&lt; "@media print,projection {" &lt;&lt; std::endl;
+    out &lt;&lt; "  .str {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #060" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .kwd {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #006;" &lt;&lt; std::endl;
+    out &lt;&lt; "      font-weight: bold" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .com {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #600;" &lt;&lt; std::endl;
+    out &lt;&lt; "      font-style: italic" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .typ {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #404;" &lt;&lt; std::endl;
+    out &lt;&lt; "      font-weight: bold" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .lit {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #044" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .pun,.opn,.clo {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #440" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .tag {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #006;" &lt;&lt; std::endl;
+    out &lt;&lt; "      font-weight: bold" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .atn {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #404" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "  .atv {" &lt;&lt; std::endl;
+    out &lt;&lt; "      color: #060" &lt;&lt; std::endl;
+    out &lt;&lt; "  }" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //The detailed information outputs the source code in the form 
+    //of a list, and each line of html code corresponds to the 
+    //corresponding line of code in the source code file.
+    //set the list wrapper style
+<span style = "background-color:#dfd">    out &lt;&lt; "pre.prettyprint {" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-top: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-bottom: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-left: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-right: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-top: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-bottom: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-left: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-right: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top-width: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-bottom-width: 10px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-left-width: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-right-width: 10px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-color: #eee;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-style: outset;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top-left-radius: 10px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top-right-radius: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-bottom-left-radius: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-bottom-right-radius: 2px;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set the line number entry style
+<span style = "background-color:#dfd">    out &lt;&lt; "ol.linenums {" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-top: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-bottom: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-left: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-right: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-top: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-bottom: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-left: 50px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-right: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  color:#008;" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #ddd;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top-left-radius: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top-right-radius: 2px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-bottom-left-radius: 2px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-bottom-right-radius: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set source code list node style
+<span style = "background-color:#dfd">    out &lt;&lt; "li{" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #fff;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-top: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-bottom: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-left: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  margin-right: 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top-width: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-bottom-width: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-left-width: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-right-width: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-top: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-bottom: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-left: 5px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  padding-right: 1px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-style: solid;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-color: #ddd;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top-left-radius: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-top-right-radius: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-bottom-left-radius: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "  border-bottom-right-radius: 0px;" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set white for even lines
+<span style = "background-color:#dfd">    out &lt;&lt; "li.L0,li.L2,li.L4,li.L6,li.L8 {" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #fff" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;</span>
+    //set gray for odd lines
+<span style = "background-color:#dfd">    out &lt;&lt; "li.L1,li.L3,li.L5,li.L7,li.L9 {" &lt;&lt; std::endl;
+    out &lt;&lt; "  background: #eee" &lt;&lt; std::endl;
+    out &lt;&lt; "}" &lt;&lt; std::endl;
+    out.close();
+}</span>
+// generate prettyprint javascript for detail.html
+void HtmlPrinter::generate_prettyprint_js()
+<span style = "background-color:#dfd">{</span>
+    //create prettyprint.js file
+<span style = "background-color:#dfd">    std::string out_filename = output_path + "/js/prettyprint.js";
+    std::ofstream out(out_filename, std::ios::out | std::ios::trunc);
+    if (!out.is_open())</span>
+    {
+<span style = "background-color:#fdd">        INFO("Error when creating the prettyprint.js file\n");
+        return;</span>
+    }
+    //inspired from google pretty print js.
+<span style = "background-color:#dfd">    out &lt;&lt; "!" &lt;&lt; std::endl;
+    out &lt;&lt; "function() {" &lt;&lt; std::endl;
+    out &lt;&lt; "	var q = null;" &lt;&lt; std::endl;
+    out &lt;&lt; "	window.PR_SHOULD_USE_CONTINUATION = !0;" &lt;&lt; std::endl;
+    out &lt;&lt; "	(function() {" &lt;&lt; std::endl;
+    out &lt;&lt; "		function S(a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			function d(e) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				var b = e.charCodeAt(0);" &lt;&lt; std::endl;
+    out &lt;&lt; "				if (b !== 92) return b;" &lt;&lt; std::endl;
+    out &lt;&lt; "				var a = e.charAt(1);" &lt;&lt; std::endl;
+    out &lt;&lt; "				return (b = r[a]) ? b : \"0\" &lt;= a &amp;&amp; "</span>
+           "a &lt;= \"7\" ? parseInt(e.substring(1), 8) : a === \"u\" || a === "
+           "\"x\" ? parseInt(e.substring(2), 16) : e.charCodeAt(1)"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			function g(e) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				if (e &lt; 32) return (e &lt; 16 ? "</span>
+           "\"\\\\x0\" : \"\\\\x\") + e.toString(16);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				e = String.fromCharCode(e);" &lt;&lt; std::endl;
+    out &lt;&lt; "				return e === \"\\\\\" || e === \"-\" "</span>
+           "|| e === \"]\" || e === \"^\" ? \"\\\\\" + e : e"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			function b(e) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				var b = e.substring(1, e.length - "</span>
+           "1).match(/"
+           "\\\\u[\\dA-Fa-f]{4}|\\\\x[\\dA-Fa-f]{2}|\\\\[0-3][0-7]{0,2}|\\\\[0-7]"
+           "{1,2}|\\\\[\\S\\s]|[^\\\\]/g),"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					e = []," &lt;&lt; std::endl;
+    out &lt;&lt; "					a = b[0] === \"^\"," &lt;&lt; std::endl;
+    out &lt;&lt; "					c = [\"[\"];" &lt;&lt; std::endl;
+    out &lt;&lt; "				a &amp;&amp; c.push(\"^\");" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (var a = a ? 1 : 0, f = b.length; "</span>
+           "a &lt; f; ++a) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					var h = b[a];" &lt;&lt; std::endl;
+    out &lt;&lt; "					if (/\\\\[bdsw]/i.test(h)) c.push(h);" &lt;&lt; std::endl;
+    out &lt;&lt; "					else {" &lt;&lt; std::endl;
+    out &lt;&lt; "						var h = d(h)," &lt;&lt; std::endl;
+    out &lt;&lt; "							l;" &lt;&lt; std::endl;
+    out &lt;&lt; "						a + 2 &lt; f &amp;&amp; \"-\" === "</span>
+           "b[a + 1] ? (l = d(b[a + 2]), a += 2) : l = h;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						e.push([h, l]);" &lt;&lt; std::endl;
+    out &lt;&lt; "						l &lt; 65 || h &gt; 122 || "</span>
+           "(l &lt; 65 || h &gt; 90 || e.push([Math.max(65, h) | 32, Math.min(l, 90) | "
+           "32]), l &lt; 97 || h &gt; 122 || e.push([Math.max(97, h) &amp; -33, "
+           "Math.min(l, 122) &amp; -33]))"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					}" &lt;&lt; std::endl;
+    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "				e.sort(function(e, a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "					return e[0] - a[0] || a[1] - "</span>
+           "e[1]"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				});" &lt;&lt; std::endl;
+    out &lt;&lt; "				b = [];" &lt;&lt; std::endl;
+    out &lt;&lt; "				f = [];" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (a = 0; a &lt; e.length; ++a) h = "</span>
+           "e[a], h[0] &lt;= f[1] + 1 ? f[1] = Math.max(f[1], h[1]) : b.push(f = h);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				for (a = 0; a &lt; b.length; ++a) h = "</span>
+           "b[a], c.push(g(h[0])), h[1] &gt; h[0] &amp;&amp; (h[1] + 1 &gt; h[0] &amp;&amp; "
+           "c.push(\"-\"), c.push(g(h[1])));"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				c.push(\"]\");" &lt;&lt; std::endl;
+    out &lt;&lt; "				return c.join(\"\")" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			function s(e) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (var a = "</span>
+           "e.source.match(/"
+           "\\[(?:[^\\\\\\]]|\\\\[\\S\\s])*]|\\\\u[\\dA-Fa-f]{4}|\\\\x[\\dA-Fa-f]"
+           "{2}|\\\\\\d+|\\\\[^\\dux]|\\(\\?[!:=]|[()^]|[^()[\\\\^]+/g), c = "
+           "a.length, d = [], f = 0, h = 0; f &lt; c; ++f) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					var l = a[f];" &lt;&lt; std::endl;
+    out &lt;&lt; "					l === \"(\" ? ++h : \"\\\\\" "</span>
+           "=== l.charAt(0) &amp;&amp; (l = +l.substring(1)) &amp;&amp; (l &lt;= h ? d[l] = -1 : "
+           "a[f] = g(l))"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (f = 1; f &lt; d.length; ++f) - 1 === "</span>
+           "d[f] &amp;&amp; (d[f] = ++x);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				for (h = f = 0; f &lt; c; ++f) l = a[f], "</span>
+           "l === \"(\" ? (++h, d[h] || (a[f] = \"(?:\")) : \"\\\\\" === "
+           "l.charAt(0) &amp;&amp; (l = +l.substring(1)) &amp;&amp; l &lt;= h &amp;&amp; (a[f] = \"\\\\\" + "
+           "d[l]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				for (f = 0; f &lt; c; ++f)\"^\" === a[f] "</span>
+           "&amp;&amp; \"^\" !== a[f + 1] &amp;&amp; (a[f] = \"\");"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				if (e.ignoreCase &amp;&amp; m) for (f = 0; f &lt; "</span>
+           "c; ++f) l = a[f], e = l.charAt(0), l.length &gt;= 2 &amp;&amp; e === \"[\" ? "
+           "a[f] = b(l) : e !== \"\\\\\" &amp;&amp; (a[f] = l.replace(/[A-Za-z]/g, "
+           "function(a) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					a = a.charCodeAt(0);" &lt;&lt; std::endl;
+    out &lt;&lt; "					return \"[\" + "</span>
+           "String.fromCharCode(a &amp; -33, a | 32) + \"]\""
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				}));" &lt;&lt; std::endl;
+    out &lt;&lt; "				return a.join(\"\")" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			for (var x = 0, m = !1, j = !1, k = 0, c = "</span>
+           "a.length; k &lt; c; ++k) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				var i = a[k];" &lt;&lt; std::endl;
+    out &lt;&lt; "				if (i.ignoreCase) j = !0;" &lt;&lt; std::endl;
+    out &lt;&lt; "				else if "</span>
+           "(/[a-z]/i.test(i.source.replace(/"
+           "\\\\u[\\da-f]{4}|\\\\x[\\da-f]{2}|\\\\[^UXux]/gi, \"\"))) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					m = !0;" &lt;&lt; std::endl;
+    out &lt;&lt; "					j = !1;" &lt;&lt; std::endl;
+    out &lt;&lt; "					break" &lt;&lt; std::endl;
+    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			for (var r = {" &lt;&lt; std::endl;
+    out &lt;&lt; "				b: 8," &lt;&lt; std::endl;
+    out &lt;&lt; "				t: 9," &lt;&lt; std::endl;
+    out &lt;&lt; "				n: 10," &lt;&lt; std::endl;
+    out &lt;&lt; "				v: 11," &lt;&lt; std::endl;
+    out &lt;&lt; "				f: 12," &lt;&lt; std::endl;
+    out &lt;&lt; "				r: 13" &lt;&lt; std::endl;
+    out &lt;&lt; "			}, n = [], k = 0, c = a.length; k &lt; c; ++k) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				i = a[k];" &lt;&lt; std::endl;
+    out &lt;&lt; "				if (i.global || i.multiline) throw "</span>
+           "Error(\"\" + i);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				n.push(\"(?:\" + s(i) + \")\")" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			return RegExp(n.join(\"|\"), j ? \"gi\" : "</span>
+           "\"g\")"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function T(a, d) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			function g(a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				var c = a.nodeType;" &lt;&lt; std::endl;
+    out &lt;&lt; "				if (c == 1) {" &lt;&lt; std::endl;
+    out &lt;&lt; "					if (!b.test(a.className)) {" &lt;&lt; std::endl;
+    out &lt;&lt; "						for (c = a.firstChild; "</span>
+           "c; c = c.nextSibling) g(c);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						c = "</span>
+           "a.nodeName.toLowerCase();"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						if (\"br\" === c || "</span>
+           "\"li\" === c) s[j] = \"\\n\", m[j &lt;&lt; 1] = x++, m[j++ &lt;&lt; 1 | 1] = a"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					}" &lt;&lt; std::endl;
+    out &lt;&lt; "				} else if (c == 3 || c == 4) c = "</span>
+           "a.nodeValue, c.length &amp;&amp; (c = d ? c.replace(/\\r\\n?/g, \"\\n\") : "
+           "c.replace(/[\\t\\n\\r ]+/g, \" \"), s[j] = c, m[j &lt;&lt; 1] = x, x += "
+           "c.length, m[j++ &lt;&lt; 1 | 1] = a)"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			var b = /(?:^|\\s)nocode(?:\\s|$)/," &lt;&lt; std::endl;
+    out &lt;&lt; "				s = []," &lt;&lt; std::endl;
+    out &lt;&lt; "				x = 0," &lt;&lt; std::endl;
+    out &lt;&lt; "				m = []," &lt;&lt; std::endl;
+    out &lt;&lt; "				j = 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "			g(a);" &lt;&lt; std::endl;
+    out &lt;&lt; "			return {" &lt;&lt; std::endl;
+    out &lt;&lt; "				a: s.join(\"\").replace(/\\n$/, \"\")," &lt;&lt; std::endl;
+    out &lt;&lt; "				d: m" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function H(a, d, g, b) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			d &amp;&amp; (a = {" &lt;&lt; std::endl;
+    out &lt;&lt; "				a: d," &lt;&lt; std::endl;
+    out &lt;&lt; "				e: a" &lt;&lt; std::endl;
+    out &lt;&lt; "			}, g(a), b.push.apply(b, a.g))" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function U(a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			for (var d = void 0, g = a.firstChild; g; g = "</span>
+           "g.nextSibling) var b = g.nodeType,"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				d = b === 1 ? d ? a : g : b === 3 ? "</span>
+           "V.test(g.nodeValue) ? a : d : d;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			return d === a ? void 0 : d" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function C(a, d) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			function g(a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (var j = a.e, k = [j, \"pln\"], c "</span>
+           "= 0, i = a.a.match(s) || [], r = {}, n = 0, e = i.length; n &lt; e; "
+           "++n) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					var z = i[n]," &lt;&lt; std::endl;
+    out &lt;&lt; "						w = r[z]," &lt;&lt; std::endl;
+    out &lt;&lt; "						t = void 0," &lt;&lt; std::endl;
+    out &lt;&lt; "						f;" &lt;&lt; std::endl;
+    out &lt;&lt; "					if (typeof w === \"string\") f "</span>
+           "= !1;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					else {" &lt;&lt; std::endl;
+    out &lt;&lt; "						var h = b[z.charAt(0)];" &lt;&lt; std::endl;
+    out &lt;&lt; "						if (h) t = "</span>
+           "z.match(h[1]), w = h[0];"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						else {" &lt;&lt; std::endl;
+    out &lt;&lt; "							for (f = 0; f "</span>
+           "&lt; x; ++f) if (h = d[f], t = z.match(h[1])) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "								w = h[0];" &lt;&lt; std::endl;
+    out &lt;&lt; "								break" &lt;&lt; std::endl;
+    out &lt;&lt; "							}" &lt;&lt; std::endl;
+    out &lt;&lt; "							t || (w = \"pln\")" &lt;&lt; std::endl;
+    out &lt;&lt; "						}" &lt;&lt; std::endl;
+    out &lt;&lt; "						if ((f = w.length &gt;= 5 "</span>
+           "&amp;&amp; \"lang-\" === w.substring(0, 5)) &amp;&amp; !(t &amp;&amp; typeof t[1] === "
+           "\"string\")) f = !1, w = \"src\";"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						f || (r[z] = w)" &lt;&lt; std::endl;
+    out &lt;&lt; "					}" &lt;&lt; std::endl;
+    out &lt;&lt; "					h = c;" &lt;&lt; std::endl;
+    out &lt;&lt; "					c += z.length;" &lt;&lt; std::endl;
+    out &lt;&lt; "					if (f) {" &lt;&lt; std::endl;
+    out &lt;&lt; "						f = t[1];" &lt;&lt; std::endl;
+    out &lt;&lt; "						var l = z.indexOf(f)," &lt;&lt; std::endl;
+    out &lt;&lt; "							B = l + f.length;" &lt;&lt; std::endl;
+    out &lt;&lt; "						t[2] &amp;&amp; (B = z.length "</span>
+           "- t[2].length, l = B - f.length);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						w = w.substring(5);" &lt;&lt; std::endl;
+    out &lt;&lt; "						H(j + h, "</span>
+           "z.substring(0, l), g, k);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						H(j + h + l, f, I(w, "</span>
+           "f), k);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						H(j + h + B, "</span>
+           "z.substring(B), g, k)"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					} else k.push(j + h, w)" &lt;&lt; std::endl;
+    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "				a.g = k" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			var b = {}," &lt;&lt; std::endl;
+    out &lt;&lt; "				s;" &lt;&lt; std::endl;
+    out &lt;&lt; "			(function() {" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (var g = a.concat(d), j = [], k = "</span>
+           "{}, c = 0, i = g.length; c &lt; i; ++c) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					var r = g[c]," &lt;&lt; std::endl;
+    out &lt;&lt; "						n = r[3];" &lt;&lt; std::endl;
+    out &lt;&lt; "					if (n) for (var e = n.length; "</span>
+           "--e &gt;= 0;) b[n.charAt(e)] = r;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					r = r[1];" &lt;&lt; std::endl;
+    out &lt;&lt; "					n = \"\" + r;" &lt;&lt; std::endl;
+    out &lt;&lt; "					k.hasOwnProperty(n) || "</span>
+           "(j.push(r), k[n] = q)"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "				j.push(/[\\S\\s]/);" &lt;&lt; std::endl;
+    out &lt;&lt; "				s = S(j)" &lt;&lt; std::endl;
+    out &lt;&lt; "			})();" &lt;&lt; std::endl;
+    out &lt;&lt; "			var x = d.length;" &lt;&lt; std::endl;
+    out &lt;&lt; "			return g" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function v(a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			var d = []," &lt;&lt; std::endl;
+    out &lt;&lt; "				g = [];" &lt;&lt; std::endl;
+    out &lt;&lt; "			a.tripleQuotedStrings ? d.push([\"str\", "</span>
+           "/^(?:\'\'\'(?:[^\'\\\\]|\\\\[\\S\\s]|\'\'?(?=[^\']))*(?:\'\'\'|$)|"
+           "\"\"\"(?:[^\"\\\\]|\\\\[\\S\\s]|\"\"?(?=[^\"]))*(?:\"\"\"|$)|\'(?:[^"
+           "\'\\\\]|\\\\[\\S\\s])*(?:\'|$)|\"(?:[^\"\\\\]|\\\\[\\S\\s])*(?:\"|$))"
+           "/, q, \"\'\\\"\"]) : a.multiLineStrings ? d.push([\"str\", "
+           "/^(?:\'(?:[^\'\\\\]|\\\\[\\S\\s])*(?:\'|$)|\"(?:[^\"\\\\]|\\\\["
+           "\\S\\s])*(?:\"|$)|`(?:[^\\\\`]|\\\\[\\S\\s])*(?:`|$))/, q, "
+           "\"\'\\\"`\"]) : d.push([\"str\", "
+           "/^(?:\'(?:[^\\n\\r'\\\\]|\\\\.)*(?:\'|$)|\"(?:[^\\n\\r\"\\\\]|\\\\.)*"
+           "(?:\"|$))/, q, \"\\\"\'\"]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			a.verbatimStrings &amp;&amp; g.push([\"str\", "</span>
+           "/^@\"(?:[^\"]|\"\")*(?:\"|$)/, q]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			var b = a.hashComments;" &lt;&lt; std::endl;
+    out &lt;&lt; "			b &amp;&amp; (a.cStyleComments ? (b &gt; 1 ? "</span>
+           "d.push([\"com\", /^#(?:##(?:[^#]|#(?!##))*(?:###|$)|.*)/, q, \"#\"]) "
+           ": d.push([\"com\", "
+           "/^#(?:(?:define|e(?:l|nd)if|else|error|ifn?def|include|line|pragma|"
+           "undef|warning)\\b|[^\\n\\r]*)/, q, \"#\"]), g.push([\"str\", "
+           "/^&lt;(?:(?:(?:\\.\\.\\/)*|\\/?)(?:[\\w-]+(?:\\/"
+           "[\\w-]+)+)?[\\w-]+\\.h(?:h|pp|\\+\\+)?|[a-z]\\w*)&gt;/, q])) : "
+           "d.push([\"com\", /^#[^\\n\\r]*/, q, \"#\"]));"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			a.cStyleComments &amp;&amp; (g.push([\"com\", "</span>
+           "/^\\/\\/[^\\n\\r]*/, q]), g.push([\"com\", "
+           "/^\\/\\*[\\S\\s]*?(?:\\*\\/|$)/, q]));"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			if (b = a.regexLiterals) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				var s = (b = b &gt; 1 ? \"\" : "</span>
+           "\"\\n\\r\") ? \".\" : \"[\\\\S\\\\s]\";"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				g.push([\"lang-regex\", "</span>
+           "RegExp(\"^(?:^^\\\\.?|[+-]|[!=]=?=?|\\\\#|%=?|&amp;&amp;?=?|\\\\(|\\\\*=?|[+"
+           "\\\\-]=|-&gt;|\\\\/"
+           "=?|::?|&lt;&lt;?=?|&gt;&gt;?&gt;?=?|,|;|\\\\?|@|\\\\[|~|{|\\\\^\\\\^?=?|\\\\|\\\\|?="
+           "?|break|case|continue|delete|do|else|finally|instanceof|return|throw|"
+           "try|typeof)\\\\s*(\" + (\"/(?=[^/*\" + b + "
+           "\"])(?:[^/\\\\x5B\\\\x5C\" + b + \"]|\\\\x5C\" + s + "
+           "\"|\\\\x5B(?:[^\\\\x5C\\\\x5D\" + b + \"]|\\\\x5C\" + s + "
+           "\")*(?:\\\\x5D|$))+/\") + \")\")])"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			}(b = a.types) &amp;&amp; g.push([\"typ\", b]);" &lt;&lt; std::endl;
+    out &lt;&lt; "			b = (\"\" + a.keywords).replace(/^ | $/g, "</span>
+           "\"\");"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			b.length &amp;&amp; g.push([\"kwd\", RegExp(\"^(?:\" + "</span>
+           "b.replace(/[\\s,]+/g, \"|\") + \")\\\\b\"), q]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			d.push([\"pln\", /^\\s+/, q, \" "</span>
+           "\\r\\n\\t\\u00a0\"]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			b = \"^.[^\\\\s\\\\w.$@'\\\"`/\\\\\\\\]*\";" &lt;&lt; std::endl;
+    out &lt;&lt; "			a.regexLiterals &amp;&amp; (b += \"(?!s*/)\");" &lt;&lt; std::endl;
+    out &lt;&lt; "			g.push([\"lit\", /^@[$_a-z][\\w$@]*/i, q], "</span>
+           "[\"typ\", /^(?:[@_]?[A-Z]+[a-z][\\w$@]*|\\w+_t\\b)/, q], [\"pln\", "
+           "/^[$_a-z][\\w$@]*/i, q], [\"lit\", "
+           "/^(?:0x[\\da-f]+|(?:\\d(?:_\\d+)*\\d*(?:\\.\\d*)?|\\.\\d\\+)(?:e[+-]?"
+           "\\d+)?)[a-z]*/i, q, \"0123456789\"], [\"pln\", /^\\\\[\\S\\s]?/, q], "
+           "[\"pun\", RegExp(b), q]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			return C(d, g)" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function J(a, d, g) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			function b(a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				var c = a.nodeType;" &lt;&lt; std::endl;
+    out &lt;&lt; "				if (c == 1 &amp;&amp; !x.test(a.className)) if "</span>
+           "(\"br\" === a.nodeName) s(a), a.parentNode &amp;&amp; "
+           "a.parentNode.removeChild(a);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				else for (a = a.firstChild; a; a = "</span>
+           "a.nextSibling) b(a);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				else if ((c == 3 || c == 4) &amp;&amp; g) {" &lt;&lt; std::endl;
+    out &lt;&lt; "					var d = a.nodeValue," &lt;&lt; std::endl;
+    out &lt;&lt; "						i = d.match(m);" &lt;&lt; std::endl;
+    out &lt;&lt; "					if (i) c = d.substring(0, "</span>
+           "i.index), a.nodeValue = c, (d = d.substring(i.index + i[0].length)) "
+           "&amp;&amp; a.parentNode.insertBefore(j.createTextNode(d), a.nextSibling), "
+           "s(a), c || a.parentNode.removeChild(a)"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			function s(a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				function b(a, c) {" &lt;&lt; std::endl;
+    out &lt;&lt; "					var d = c ? a.cloneNode(!1) : a," &lt;&lt; std::endl;
+    out &lt;&lt; "						e = a.parentNode;" &lt;&lt; std::endl;
+    out &lt;&lt; "					if (e) {" &lt;&lt; std::endl;
+    out &lt;&lt; "						var e = b(e, 1)," &lt;&lt; std::endl;
+    out &lt;&lt; "							g = a.nextSibling;" &lt;&lt; std::endl;
+    out &lt;&lt; "						e.appendChild(d);" &lt;&lt; std::endl;
+    out &lt;&lt; "						for (var i = g; i; i = "</span>
+           "g) g = i.nextSibling, e.appendChild(i)"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					}" &lt;&lt; std::endl;
+    out &lt;&lt; "					return d" &lt;&lt; std::endl;
+    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (; !a.nextSibling;) if (a = "</span>
+           "a.parentNode, !a) return;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				for (var a = b(a.nextSibling, 0), d;" &lt;&lt; std::endl;
+    out &lt;&lt; "				(d = a.parentNode) &amp;&amp; d.nodeType === "</span>
+           "1;) a = d;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				c.push(a)" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "			for (var x = /(?:^|\\s)nocode(?:\\s|$)/, m = "</span>
+           "/\\r\\n?|\\n/, j = a.ownerDocument, k = j.createElement(\"li\"); "
+           "a.firstChild;) k.appendChild(a.firstChild);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			for (var c = [k], i = 0; i &lt; c.length; ++i) "</span>
+           "b(c[i]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			d === (d | 0) &amp;&amp; c[0].setAttribute(\"value\", "</span>
+           "d);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			var r = j.createElement(\"ol\");" &lt;&lt; std::endl;
+    out &lt;&lt; "			r.className = \"linenums\";" &lt;&lt; std::endl;
+    out &lt;&lt; "			for (var d = Math.max(0, d - 1 | 0) || 0, i = "</span>
+           "0, n = c.length; i &lt; n; ++i) k = c[i], k.className = \"L\" + (i + d) "
+           "% 10, k.firstChild || k.appendChild(j.createTextNode(\"\\u00a0\")), "
+           "r.appendChild(k);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			a.appendChild(r)" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function p(a, d) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			for (var g = d.length; --g &gt;= 0;) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				var b = d[g];" &lt;&lt; std::endl;
+    out &lt;&lt; "				F.hasOwnProperty(b) ? D.console &amp;&amp; "</span>
+           "console.warn(\"cannot override language handler %s\", b) : F[b] = a"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function I(a, d) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			if (!a || !F.hasOwnProperty(a)) a = "</span>
+           "/^\\s*&lt;/.test(d) ? \"default-markup\" : \"default-code\";"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			return F[a]" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		function K(a) {" &lt;&lt; std::endl;
+    out &lt;&lt; "			var d = a.h;" &lt;&lt; std::endl;
+    out &lt;&lt; "			try {" &lt;&lt; std::endl;
+    out &lt;&lt; "				var g = T(a.c, a.i)," &lt;&lt; std::endl;
+    out &lt;&lt; "					b = g.a;" &lt;&lt; std::endl;
+    out &lt;&lt; "				a.a = b;" &lt;&lt; std::endl;
+    out &lt;&lt; "				a.d = g.d;" &lt;&lt; std::endl;
+    out &lt;&lt; "				a.e = 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "				I(d, b)(a);" &lt;&lt; std::endl;
+    out &lt;&lt; "				var s = "</span>
+           "/\\bMSIE\\s(\\d+)/.exec(navigator.userAgent),"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					s = s &amp;&amp; +s[1] &lt;= 8," &lt;&lt; std::endl;
+    out &lt;&lt; "					d = /\\n/g," &lt;&lt; std::endl;
+    out &lt;&lt; "					x = a.a," &lt;&lt; std::endl;
+    out &lt;&lt; "					m = x.length," &lt;&lt; std::endl;
+    out &lt;&lt; "					g = 0," &lt;&lt; std::endl;
+    out &lt;&lt; "					j = a.d," &lt;&lt; std::endl;
+    out &lt;&lt; "					k = j.length," &lt;&lt; std::endl;
+    out &lt;&lt; "					b = 0," &lt;&lt; std::endl;
+    out &lt;&lt; "					c = a.g," &lt;&lt; std::endl;
+    out &lt;&lt; "					i = c.length," &lt;&lt; std::endl;
+    out &lt;&lt; "					r = 0;" &lt;&lt; std::endl;
+    out &lt;&lt; "				c[i] = m;" &lt;&lt; std::endl;
+    out &lt;&lt; "				var n, e;" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (e = n = 0; e &lt; i;) c[e] !== c[e + "</span>
+           "2] ? (c[n++] = c[e++], c[n++] = c[e++]) : e += 2;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				i = n;" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (e = n = 0; e &lt; i;) {" &lt;&lt; std::endl;
+    out &lt;&lt; "					for (var p = c[e], w = c[e + "</span>
+           "1], t = e + 2; t + 2 &lt;= i &amp;&amp; c[t + 1] === w;) t += 2;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					c[n++] = p;" &lt;&lt; std::endl;
+    out &lt;&lt; "					c[n++] = w;" &lt;&lt; std::endl;
+    out &lt;&lt; "					e = t" &lt;&lt; std::endl;
+    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "				c.length = n;" &lt;&lt; std::endl;
+    out &lt;&lt; "				var f = a.c," &lt;&lt; std::endl;
+    out &lt;&lt; "					h;" &lt;&lt; std::endl;
+    out &lt;&lt; "				if (f) h = f.style.display, "</span>
+           "f.style.display = \"none\";"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				try {" &lt;&lt; std::endl;
+    out &lt;&lt; "					for (; b &lt; k;) {" &lt;&lt; std::endl;
+    out &lt;&lt; "						var l = j[b + 2] || m," &lt;&lt; std::endl;
+    out &lt;&lt; "							B = c[r + 2] || m," &lt;&lt; std::endl;
+    out &lt;&lt; "							t = Math.min(l, B)," &lt;&lt; std::endl;
+    out &lt;&lt; "							A = j[b + 1]," &lt;&lt; std::endl;
+    out &lt;&lt; "							G;" &lt;&lt; std::endl;
+    out &lt;&lt; "						if (A.nodeType !== 1 "</span>
+           "&amp;&amp; (G = x.substring(g, t))) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "							s &amp;&amp; (G = "</span>
+           "G.replace(d, \"\\r\"));"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "							A.nodeValue = G;" &lt;&lt; std::endl;
+    out &lt;&lt; "							var L = A.ownerDocument," &lt;&lt; std::endl;
+    out &lt;&lt; "								o = "</span>
+           "L.createElement(\"span\");"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "							o.className = c[r + 1];" &lt;&lt; std::endl;
+    out &lt;&lt; "							var v = A.parentNode;" &lt;&lt; std::endl;
+    out &lt;&lt; "							v.replaceChild(o, A);" &lt;&lt; std::endl;
+    out &lt;&lt; "							o.appendChild(A);" &lt;&lt; std::endl;
+    out &lt;&lt; "							g &lt; l &amp;&amp; (j[b "</span>
+           "+ 1] = A = L.createTextNode(x.substring(t, l)), v.insertBefore(A, "
+           "o.nextSibling))"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						}" &lt;&lt; std::endl;
+    out &lt;&lt; "						g = t;" &lt;&lt; std::endl;
+    out &lt;&lt; "						g &gt;= l &amp;&amp; (b += 2);" &lt;&lt; std::endl;
+    out &lt;&lt; "						g &gt;= B &amp;&amp; (r += 2)" &lt;&lt; std::endl;
+    out &lt;&lt; "					}" &lt;&lt; std::endl;
+    out &lt;&lt; "				} finally {" &lt;&lt; std::endl;
+    out &lt;&lt; "					if (f) f.style.display = h" &lt;&lt; std::endl;
+    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "			} catch (u) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				D.console &amp;&amp; console.log(u &amp;&amp; u.stack "</span>
+           "|| u)"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "		}" &lt;&lt; std::endl;
+    out &lt;&lt; "		var D = window," &lt;&lt; std::endl;
+    out &lt;&lt; "			y = "</span>
+           "[\"break,continue,do,else,for,if,return,while\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			E = [" &lt;&lt; std::endl;
+    out &lt;&lt; "				[y, "</span>
+           "\"auto,case,char,const,default,double,enum,extern,float,goto,inline,"
+           "int,long,register,short,signed,sizeof,static,struct,switch,typedef,"
+           "union,unsigned,void,volatile\"], "
+           "\"catch,class,delete,false,import,new,operator,private,protected,"
+           "public,this,throw,true,try,typeof\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			M = [E, "</span>
+           "\"alignof,align_union,asm,axiom,bool,concept,concept_map,const_cast,"
+           "constexpr,decltype,delegate,dynamic_cast,explicit,export,friend,"
+           "generic,late_check,mutable,namespace,nullptr,property,reinterpret_"
+           "cast,static_assert,static_cast,template,typeid,typename,using,"
+           "virtual,where\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			N = [E, "</span>
+           "\"abstract,assert,boolean,byte,extends,final,finally,implements,"
+           "import,instanceof,interface,null,native,package,strictfp,super,"
+           "synchronized,throws,transient\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			O = [N, "</span>
+           "\"as,base,by,checked,decimal,delegate,descending,dynamic,event,fixed,"
+           "foreach,from,group,implicit,in,internal,into,is,let,lock,object,out,"
+           "override,orderby,params,partial,readonly,ref,sbyte,sealed,stackalloc,"
+           "string,select,uint,ulong,unchecked,unsafe,ushort,var,virtual,where\"]"
+           ","
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			E = [E, "</span>
+           "\"debugger,eval,export,function,get,null,set,undefined,var,with,"
+           "Infinity,NaN\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			P = [y, "</span>
+           "\"and,as,assert,class,def,del,elif,except,exec,finally,from,global,"
+           "import,in,is,lambda,nonlocal,not,or,pass,print,raise,try,with,yield,"
+           "False,True,None\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			Q = [y, "</span>
+           "\"alias,and,begin,case,class,def,defined,elsif,end,ensure,false,in,"
+           "module,next,nil,not,or,redo,rescue,retry,self,super,then,true,undef,"
+           "unless,until,when,yield,BEGIN,END\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			W = [y, "</span>
+           "\"as,assert,const,copy,drop,enum,extern,fail,false,fn,impl,let,log,"
+           "loop,match,mod,move,mut,priv,pub,pure,ref,self,static,struct,true,"
+           "trait,type,unsafe,use\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			y = [y, "</span>
+           "\"case,done,elif,esac,eval,fi,function,in,local,set,then,until\"],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			R = "</span>
+           "/^(DIR|FILE|vector|(de|priority_)?queue|list|stack|(const_)?iterator|"
+           "(multi)?(set|map)|bitset|u?(int|float)\\d*)\\b/,"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			V = /\\S/," &lt;&lt; std::endl;
+    out &lt;&lt; "			X = v({" &lt;&lt; std::endl;
+    out &lt;&lt; "				keywords: [M, O, E, "</span>
+           "\"caller,delete,die,do,dump,elsif,eval,exit,foreach,for,goto,if,"
+           "import,last,local,my,next,no,our,print,package,redo,require,sub,"
+           "undef,unless,until,use,wantarray,while,BEGIN,END\", P, Q, y],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				hashComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "				cStyleComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "				multiLineStrings: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "				regexLiterals: !0" &lt;&lt; std::endl;
+    out &lt;&lt; "			})," &lt;&lt; std::endl;
+    out &lt;&lt; "			F = {};" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(X, [\"default-code\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(C([], [" &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"pln\", /^[^&lt;?]+/]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"dec\", /^&lt;!\\w[^&gt;]*(?:&gt;|$)/]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"com\", /^&lt;\\!--[\\S\\s]*?(?:--\\&gt;|$)/]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"lang-\", /^&lt;\\?([\\S\\s]+?)(?:\\?&gt;|$)/]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"lang-\", /^&lt;%([\\S\\s]+?)(?:%&gt;|$)/]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"pun\", /^(?:&lt;[%?]|[%?]&gt;)/]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"lang-\", "</span>
+           "/^&lt;xmp\\b[^&gt;]*&gt;([\\S\\s]+?)&lt;\\/xmp\\b[^&gt;]*&gt;/i],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			[\"lang-js\", "</span>
+           "/^&lt;script\\b[^&gt;]*&gt;([\\S\\s]*?)(&lt;\\/script\\b[^&gt;]*&gt;)/i],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			[\"lang-css\", "</span>
+           "/^&lt;style\\b[^&gt;]*&gt;([\\S\\s]*?)(&lt;\\/style\\b[^&gt;]*&gt;)/i],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			[\"lang-in.tag\", /^(&lt;\\/?[a-z][^&lt;&gt;]*&gt;)/i]" &lt;&lt; std::endl;
+    out &lt;&lt; "		]), [\"default-markup\", \"htm\", \"html\", \"mxml\", "</span>
+           "\"xhtml\", \"xml\", \"xsl\"]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "		p(C([" &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"pln\", /^\\s+/, q, \" \\t\\r\\n\"]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"atv\", /^(?:\"[^\"]*\"?|\'[^\']*\'?)/, q, "</span>
+           "\"\\\"\'\"]"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "		], [" &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"tag\", "</span>
+           "/^^&lt;\\/?[a-z](?:[\\w-.:]*\\w)?|\\/?&gt;$/i],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			[\"atn\", "</span>
+           "/^(?!style[\\s=]|on)[a-z](?:[\\w:-]*\\w)?/i],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			[\"lang-uq.val\", "</span>
+           "/^=\\s*([^\\s\"\'&gt;]*(?:[^\\s\"\'/&gt;]|\\/(?=\\s)))/],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			[\"pun\", /^[/&lt;-&gt;]+/]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"lang-js\", /^on\\w+\\s*=\\s*\"([^\"]+)\"/i]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"lang-js\", /^on\\w+\\s*=\\s*\'([^\']+)\'/i]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"lang-js\", "</span>
+           "/^on\\w+\\s*=\\s*([^\\s\"\'&gt;]+)/i],"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			[\"lang-css\", /^style\\s*=\\s*\"([^\"]+)\"/i]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"lang-css\", /^style\\s*=\\s*\'([^\']+)\'/i]," &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"lang-css\", "</span>
+           "/^style\\s*=\\s*([^\\s\"\'&gt;]+)/i]"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "		]), [\"in.tag\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(C([], [" &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"atv\", /^[\\S\\s]+/]" &lt;&lt; std::endl;
+    out &lt;&lt; "		]), [\"uq.val\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: M," &lt;&lt; std::endl;
+    out &lt;&lt; "			hashComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			cStyleComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			types: R" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"c\", \"cc\", \"cpp\", \"cxx\", \"cyc\", \"m\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: \"null,true,false\"" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"json\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: O," &lt;&lt; std::endl;
+    out &lt;&lt; "			hashComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			cStyleComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			verbatimStrings: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			types: R" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"cs\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: N," &lt;&lt; std::endl;
+    out &lt;&lt; "			cStyleComments: !0" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"java\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: y," &lt;&lt; std::endl;
+    out &lt;&lt; "			hashComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			multiLineStrings: !0" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"bash\", \"bsh\", \"csh\", \"sh\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: P," &lt;&lt; std::endl;
+    out &lt;&lt; "			hashComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			multiLineStrings: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			tripleQuotedStrings: !0" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"cv\", \"py\", \"python\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: "</span>
+           "\"caller,delete,die,do,dump,elsif,eval,exit,foreach,for,goto,if,"
+           "import,last,local,my,next,no,our,print,package,redo,require,sub,"
+           "undef,unless,until,use,wantarray,while,BEGIN,END\","
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			hashComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			multiLineStrings: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			regexLiterals: 2" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"perl\", \"pl\", \"pm\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: Q," &lt;&lt; std::endl;
+    out &lt;&lt; "			hashComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			multiLineStrings: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			regexLiterals: !0" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"rb\", \"ruby\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: E," &lt;&lt; std::endl;
+    out &lt;&lt; "			cStyleComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			regexLiterals: !0" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"javascript\", \"js\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: "</span>
+           "\"all,and,by,catch,class,else,extends,false,finally,for,if,in,is,"
+           "isnt,loop,new,no,not,null,of,off,on,or,return,super,then,throw,true,"
+           "try,unless,until,when,while,yes\","
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			hashComments: 3," &lt;&lt; std::endl;
+    out &lt;&lt; "			cStyleComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			multilineStrings: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			tripleQuotedStrings: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			regexLiterals: !0" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"coffee\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(v({" &lt;&lt; std::endl;
+    out &lt;&lt; "			keywords: W," &lt;&lt; std::endl;
+    out &lt;&lt; "			cStyleComments: !0," &lt;&lt; std::endl;
+    out &lt;&lt; "			multilineStrings: !0" &lt;&lt; std::endl;
+    out &lt;&lt; "		}), [\"rc\", \"rs\", \"rust\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		p(C([], [" &lt;&lt; std::endl;
+    out &lt;&lt; "			[\"str\", /^[\\S\\s]+/]" &lt;&lt; std::endl;
+    out &lt;&lt; "		]), [\"regex\"]);" &lt;&lt; std::endl;
+    out &lt;&lt; "		var Y = D.PR = {" &lt;&lt; std::endl;
+    out &lt;&lt; "			createSimpleLexer: C," &lt;&lt; std::endl;
+    out &lt;&lt; "			registerLangHandler: p," &lt;&lt; std::endl;
+    out &lt;&lt; "			sourceDecorator: v," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_ATTRIB_NAME: \"atn\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_ATTRIB_VALUE: \"atv\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_COMMENT: \"com\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_DECLARATION: \"dec\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_KEYWORD: \"kwd\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_LITERAL: \"lit\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_NOCODE: \"nocode\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_PLAIN: \"pln\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_PUNCTUATION: \"pun\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_SOURCE: \"src\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_STRING: \"str\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_TAG: \"tag\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			PR_TYPE: \"typ\"," &lt;&lt; std::endl;
+    out &lt;&lt; "			prettyPrintOne: D.prettyPrintOne = function(a, "</span>
+           "d, g) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				var b = document.createElement(\"div\");" &lt;&lt; std::endl;
+    out &lt;&lt; "				b.innerHTML = \"&lt;pre&gt;\" + a + \"&lt;/pre&gt;\";" &lt;&lt; std::endl;
+    out &lt;&lt; "				b = b.firstChild;" &lt;&lt; std::endl;
+    out &lt;&lt; "				g &amp;&amp; J(b, g, !0);" &lt;&lt; std::endl;
+    out &lt;&lt; "				K({" &lt;&lt; std::endl;
+    out &lt;&lt; "					h: d," &lt;&lt; std::endl;
+    out &lt;&lt; "					j: g," &lt;&lt; std::endl;
+    out &lt;&lt; "					c: b," &lt;&lt; std::endl;
+    out &lt;&lt; "					i: 1" &lt;&lt; std::endl;
+    out &lt;&lt; "				});" &lt;&lt; std::endl;
+    out &lt;&lt; "				return b.innerHTML" &lt;&lt; std::endl;
+    out &lt;&lt; "			}," &lt;&lt; std::endl;
+    out &lt;&lt; "			prettyPrint: D.prettyPrint = function(a, d) {" &lt;&lt; std::endl;
+    out &lt;&lt; "				function g() {" &lt;&lt; std::endl;
+    out &lt;&lt; "					for (var b = "</span>
+           "D.PR_SHOULD_USE_CONTINUATION ? c.now() + 250 : Infinity; i &lt; "
+           "p.length &amp;&amp; c.now() &lt; b; i++) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "						for (var d = p[i], j = "</span>
+           "h, k = d; k = k.previousSibling;) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "							var m = k.nodeType," &lt;&lt; std::endl;
+    out &lt;&lt; "								o = (m "</span>
+           "=== 7 || m === 8) &amp;&amp; k.nodeValue;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "							if (o ? "</span>
+           "!/^\\??prettify\\b/.test(o) : m !== 3 || /\\S/.test(k.nodeValue)) "
+           "break;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "							if (o) {" &lt;&lt; std::endl;
+    out &lt;&lt; "								j = {};" &lt;&lt; std::endl;
+    out &lt;&lt; "								"</span>
+           "o.replace(/\\b(\\w+)=([\\w%+\\-.:]+)/g, function(a, b, c) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "									j[b] = c" &lt;&lt; std::endl;
+    out &lt;&lt; "								});" &lt;&lt; std::endl;
+    out &lt;&lt; "								break" &lt;&lt; std::endl;
+    out &lt;&lt; "							}" &lt;&lt; std::endl;
+    out &lt;&lt; "						}" &lt;&lt; std::endl;
+    out &lt;&lt; "						k = d.className;" &lt;&lt; std::endl;
+    out &lt;&lt; "						if ((j !== h || "</span>
+           "e.test(k)) &amp;&amp; !v.test(k)) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "							m = !1;" &lt;&lt; std::endl;
+    out &lt;&lt; "							for (o = "</span>
+           "d.parentNode; o; o = o.parentNode) if (f.test(o.tagName) &amp;&amp; "
+           "o.className &amp;&amp; e.test(o.className)) {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "								m = !0;" &lt;&lt; std::endl;
+    out &lt;&lt; "								break" &lt;&lt; std::endl;
+    out &lt;&lt; "							}" &lt;&lt; std::endl;
+    out &lt;&lt; "							if (!m) {" &lt;&lt; std::endl;
+    out &lt;&lt; "								"</span>
+           "d.className += \" prettyprinted\";"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "								m = j.lang;" &lt;&lt; std::endl;
+    out &lt;&lt; "								if (!m) {" &lt;&lt; std::endl;
+    out &lt;&lt; "								"</span>
+           "	var m = k.match(n),"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "										y;" &lt;&lt; std::endl;
+    out &lt;&lt; "								"</span>
+           "	if (!m &amp;&amp; (y = U(d)) &amp;&amp; t.test(y.tagName)) m = "
+           "y.className.match(n);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "									m &amp;&amp; (m = m[1])" &lt;&lt; std::endl;
+    out &lt;&lt; "								}" &lt;&lt; std::endl;
+    out &lt;&lt; "								if "</span>
+           "(w.test(d.tagName)) o = 1;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "								else "</span>
+           "var o = d.currentStyle,"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "								"</span>
+           "	u = s.defaultView,"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "								"</span>
+           "	o = (o = o ? o.whiteSpace : u &amp;&amp; u.getComputedStyle ? "
+           "u.getComputedStyle(d, q).getPropertyValue(\"white-space\") : 0) &amp;&amp; "
+           "\"pre\" === o.substring(0, 3);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "								u = j.linenums;" &lt;&lt; std::endl;
+    out &lt;&lt; "								if "</span>
+           "(!(u = u === \"true\" || +u)) u = (u = "
+           "k.match(/\\blinenums\\b(?::(\\d+))?/)) ? u[1] &amp;&amp; u[1].length ? +u[1] "
+           ": !0 : !1;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "								u &amp;&amp; J(d, u, o);" &lt;&lt; std::endl;
+    out &lt;&lt; "								r = {" &lt;&lt; std::endl;
+    out &lt;&lt; "									h: m," &lt;&lt; std::endl;
+    out &lt;&lt; "									c: d," &lt;&lt; std::endl;
+    out &lt;&lt; "									j: u," &lt;&lt; std::endl;
+    out &lt;&lt; "									i: o" &lt;&lt; std::endl;
+    out &lt;&lt; "								};" &lt;&lt; std::endl;
+    out &lt;&lt; "								K(r)" &lt;&lt; std::endl;
+    out &lt;&lt; "							}" &lt;&lt; std::endl;
+    out &lt;&lt; "						}" &lt;&lt; std::endl;
+    out &lt;&lt; "					}" &lt;&lt; std::endl;
+    out &lt;&lt; "					i &lt; p.length ? setTimeout(g, "</span>
+           "250) : \"function\" === typeof a &amp;&amp; a()"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				}" &lt;&lt; std::endl;
+    out &lt;&lt; "				for (var b = d || document.body, s = "</span>
+           "b.ownerDocument || document, b = [b.getElementsByTagName(\"pre\"), "
+           "b.getElementsByTagName(\"code\"), b.getElementsByTagName(\"xmp\")], "
+           "p = [], m = 0; m &lt; b.length; ++m) for (var j = 0, k = b[m].length; j "
+           "&lt; k; ++j) p.push(b[m][j]);"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "				var b = q," &lt;&lt; std::endl;
+    out &lt;&lt; "					c = Date;" &lt;&lt; std::endl;
+    out &lt;&lt; "				c.now || (c = {" &lt;&lt; std::endl;
+    out &lt;&lt; "					now: function() {" &lt;&lt; std::endl;
+    out &lt;&lt; "						return +new Date" &lt;&lt; std::endl;
+    out &lt;&lt; "					}" &lt;&lt; std::endl;
+    out &lt;&lt; "				});" &lt;&lt; std::endl;
+    out &lt;&lt; "				var i = 0," &lt;&lt; std::endl;
+    out &lt;&lt; "					r, n = "</span>
+           "/\\blang(?:uage)?-([\\w.]+)(?!\\S)/,"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "					e = /\\bprettyprint\\b/," &lt;&lt; std::endl;
+    out &lt;&lt; "					v = /\\bprettyprinted\\b/," &lt;&lt; std::endl;
+    out &lt;&lt; "					w = /pre|xmp/i," &lt;&lt; std::endl;
+    out &lt;&lt; "					t = /^code$/i," &lt;&lt; std::endl;
+    out &lt;&lt; "					f = /^(?:pre|code|xmp)$/i," &lt;&lt; std::endl;
+    out &lt;&lt; "					h = {};" &lt;&lt; std::endl;
+    out &lt;&lt; "				g()" &lt;&lt; std::endl;
+    out &lt;&lt; "			}" &lt;&lt; std::endl;
+    out &lt;&lt; "		};" &lt;&lt; std::endl;
+    out &lt;&lt; "		typeof define === \"function\" &amp;&amp; define.amd &amp;&amp; "</span>
+           "define(\"google-code-prettify\", [], function() {"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "			return Y" &lt;&lt; std::endl;
+    out &lt;&lt; "		})" &lt;&lt; std::endl;
+    out &lt;&lt; "	})();" &lt;&lt; std::endl;
+    out &lt;&lt; "}()" &lt;&lt; std::endl;
+    out.close();
+}</span>
+// generate index.html,show the info of all the diagnostics
+void HtmlPrinter::generate_index_html()
+<span style = "background-color:#dfd">{
+    std::string out_filename = output_path + "/index.html";</span>
+    //create index html file
+<span style = "background-color:#dfd">    std::ofstream out(out_filename, std::ios::out | std::ios::trunc);
+    if (!out.is_open())</span>
+    {
+<span style = "background-color:#fdd">        INFO("Error when creating the index.html file\n");
+        return;</span>
+    }
+    //output header information
+<span style = "background-color:#dfd">    out &lt;&lt; "&lt;!DOCTYPE html&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "&lt;html xmlns=\"http://www.w3.org/1999/xhtml\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;head&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;meta charset=\"utf-8\"/&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;title&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            hisa analyis result" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/title&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;link rel=\"stylesheet\" type=\"text/css\" "</span>
+           "href=\"css/style.css\"/&gt;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "    &lt;/head&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;body&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;h1 align=\"center\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            hisa analyze result" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/h1&gt;" &lt;&lt; std::endl;</span>
+    //if statis output option is open, create a jump button for state html
+<span style = "background-color:#dfd">    if (statis)</span>
+    {
+<span style = "background-color:#dfd">        out &lt;&lt; "        &lt;h2 align=\"center\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "            To See More Information About Files And Bugs Statistics" &lt;&lt; std::endl;
+        out &lt;&lt; "        &lt;/h2&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "        &lt;div id=\"button-wrapper\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "            &lt;a href=\"./stats.html\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;button class=\"click-button\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    Clicked Here" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;/button&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "            &lt;/a&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "        &lt;/div&gt;" &lt;&lt; std::endl;</span>
+    }
+    //there are two entries for file name and detailed information by default,
+    //so the column number is initialized to 2
+<span style = "background-color:#dfd">    int col = 2;
+    out &lt;&lt; "        &lt;h2 align=\"center\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            Bug Descriptions" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/h2&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;table id=\"rounded-corner\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;thead&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;th scope=\"col\" class=\"rounded-left\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                        File Name" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;/th&gt;" &lt;&lt; std::endl;</span>
+    //if bug_type output options is open, add the entry of the bug type
+<span style = "background-color:#dfd">    if (bug_type)</span>
+    {
+<span style = "background-color:#dfd">        out &lt;&lt; "                &lt;th scope=\"col\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    Bug Type" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;/th&gt;" &lt;&lt; std::endl;
+        col++;</span>
+    }
+    // if loc output options is open, add the entry of the location 
+<span style = "background-color:#dfd">    if (loc)</span>
+    {
+<span style = "background-color:#dfd">        out &lt;&lt; "                &lt;th scope=\"col\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    Location" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;/th&gt;" &lt;&lt; std::endl;
+        col++;</span>
+    }
+    // if checker output options is open, add the entry of the checker name
+<span style = "background-color:#dfd">    if (checker)</span>
+    {
+<span style = "background-color:#dfd">        out &lt;&lt; "                &lt;th scope=\"col\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    Checker" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;/th&gt;" &lt;&lt; std::endl;
+        col++;</span>
+    }
+    // if note output options is open, add the entry of the description information
+<span style = "background-color:#dfd">    if (note)</span>
+    {
+<span style = "background-color:#dfd">        out &lt;&lt; "                &lt;th scope=\"col\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    Description" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;/th&gt;" &lt;&lt; std::endl;
+        col++;</span>
+    }
+    // if analy_time output options is open, add the entry of the analysis time
+<span style = "background-color:#dfd">    if (analy_time)</span>
+    {
+<span style = "background-color:#dfd">        out &lt;&lt; "                &lt;th scope=\"col\"&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    Analysis time" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;/th&gt;" &lt;&lt; std::endl;
+        col++;</span>
+    }
+<span style = "background-color:#dfd">    out &lt;&lt; "                    &lt;th scope=\"col\" class=\"rounded-right\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                        Details" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;/th&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/thead&gt;" &lt;&lt; std::endl;</span>
+    //output detailed bug information
+<span style = "background-color:#dfd">    out &lt;&lt; "            &lt;tbody&gt;" &lt;&lt; std::endl;
+    auto file_stats = StatsHelper::instance()-&gt;get_file_stats_list();</span>
+    //get file statistics information from StatsHelper, for each item in file stats,
+    //there is a bug type stats list in it. and for each item in type stats, there
+    //is a bug decs stats list in it. then for each item in bug desc stats, output 
+    //detailed information for it.
+<span style = "background-color:#dfd">    for (auto &amp;i : file_stats)</span>
+    {
+<span style = "background-color:#dfd">        auto bug_type_stats = i.get_bug_stats_list();
+        for (auto &amp;j : bug_type_stats)</span>
+        {
+<span style = "background-color:#dfd">            auto bug_decs_stats = j.get_bug_desc_list();
+            for (auto &amp;k : bug_decs_stats)</span>
+            {
+<span style = "background-color:#dfd">                out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+                if (i._filename != "")
+                    out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; i._filename &lt;&lt; "&lt;/td&gt;" &lt;&lt; std::endl;</span>
+                else
+                {
+                    //The clang symbol execution logic will analyze the header files included in
+                    //each file.If an error is analyzed, it will also report an error, but our 
+                    //program shields the output of this error message, because we do not detect 
+                    //the header file by default, so only the output An "unknown header file" 
+                    // information and will not provide detailed information.
+<span style = "background-color:#fdd">                    std::string temp = "unknown header file";
+                    out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; temp &lt;&lt; "&lt;/td&gt;" &lt;&lt; std::endl;
+                }</span>
+<span style = "background-color:#dfd">                if (bug_type)</span>
+                {
+<span style = "background-color:#dfd">                    out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; j._bug_type &lt;&lt; "&lt;/td&gt;" &lt;&lt; std::endl;</span>
+                }
+<span style = "background-color:#dfd">                if (loc)</span>
+                {
+<span style = "background-color:#dfd">                    out &lt;&lt; "                    &lt;td&gt;(" &lt;&lt; k._line_number &lt;&lt; ":" &lt;&lt; k._column_number &lt;&lt; ")&lt;/td&gt;"</span>
+                        &lt;&lt; std::endl;
+                }
+<span style = "background-color:#dfd">                if (checker)</span>
+                {
+<span style = "background-color:#dfd">                    out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; k._checker_name &lt;&lt; "&lt;/td&gt;" &lt;&lt; std::endl;</span>
+                }
+<span style = "background-color:#dfd">                if (note)</span>
+                {
+<span style = "background-color:#dfd">                    out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; k._description &lt;&lt; "&lt;/td&gt;" &lt;&lt; std::endl;</span>
+                }
+<span style = "background-color:#dfd">                if (analy_time)</span>
+                {
+                    //When the file name is "unknown header file", because of we will not output error 
+                    //information across files by default, the analysis time for this entry is zero
+                    //Set the precision to two decimal places
+<span style = "background-color:#dfd">                    out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; std::setiosflags(std::ios::fixed) &lt;&lt; std::setprecision(2)</span>
+                        &lt;&lt; i.get_analysis_time() &lt;&lt; "&lt;/td&gt;" &lt;&lt; std::endl;
+                }
+<span style = "background-color:#dfd">                if (i._filename != "")</span>
+                {
+                    // get the output filename from the absolute path filename of i
+<span style = "background-color:#dfd">                    std::string new_filename = i._filename;</span>
+                    // replace \ or / or . or : to - ,in order to generate a new filename
+<span style = "background-color:#dfd">                    std::replace(new_filename.begin(), new_filename.end(), '/', '-');
+                    std::replace(new_filename.begin(), new_filename.end(), '\\', '-');
+                    std::replace(new_filename.begin(), new_filename.end(), '.', '-');
+                    std::replace(new_filename.begin(), new_filename.end(), ':', '-');
+                    std::string out_filename ="./modules/" + new_filename + ".html";</span>
+                    //create the link to detail html
+<span style = "background-color:#dfd">                    out &lt;&lt; "                    &lt;td&gt;&lt;a href=\"" &lt;&lt; out_filename &lt;&lt; "\"&gt;" &lt;&lt; i._filename &lt;&lt; "&lt;/td&gt;"</span>
+                        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">                }</span>
+                else
+                {
+                    // When the file name is "unknown header file", because of we will not output error
+                    // information across files by default, the detailed infomation will not be provided
+<span style = "background-color:#fdd">                    out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; std::endl;
+                    out &lt;&lt; "                        unknown header file, don't generate details for it" &lt;&lt; std ::endl;
+                    out &lt;&lt; "                    &lt;/td&gt;" &lt;&lt; std::endl;</span>
+                }
+<span style = "background-color:#dfd">                out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+            }
+        }
+    }
+    out &lt;&lt; "            &lt;/tbody&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;tfoot&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;td class=\"rounded-foot-left\"&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    for (int i = 2; i &lt; col; i++)
+        out &lt;&lt; "                &lt;td&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;td class=\"rounded-foot-right\"&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/tfoot&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/table&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;/body&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "&lt;/html&gt;" &lt;&lt; std::endl;
+    out.close();
+}</span>
+// if user open the stats output options, generate stats.index to show the statistic infomation
+void HtmlPrinter::generate_stats_html()
+<span style = "background-color:#dfd">{
+    std::string out_filename = output_path + "/stats.html";
+    std::ofstream out(out_filename, std::ios::out | std::ios::trunc);
+    if (!out.is_open())</span>
+    {
+<span style = "background-color:#fdd">        INFO("Error when creating the stats.html file\n");
+        return;</span>
+    }
+    //output header information
+<span style = "background-color:#dfd">    out &lt;&lt; "&lt;!DOCTYPE html&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "&lt;html xmlns=\"http://www.w3.org/1999/xhtml\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;head&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;meta charset=\"utf-8\"/&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;title&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            hisa analyis statistic" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/title&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;link rel=\"stylesheet\" type=\"text/css\" "</span>
+           "href=\"css/stats.css\"/&gt;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "    &lt;/head&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;body&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;h1 align=\"center\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            hisa analyze result" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/h1&gt;" &lt;&lt; std::endl;</span>
+    //output thanks info
+<span style = "background-color:#dfd">    out &lt;&lt; "        &lt;div id=\"thanks-info\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                Thanks for using our C/C++ code static analysis tool hisa" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/div&gt;" &lt;&lt; std::endl;
+    auto file_stats = StatsHelper::instance()-&gt;get_file_stats_list();</span>
+    //output file statistics overall result information
+<span style = "background-color:#dfd">    out &lt;&lt; "        &lt;div id=\"result-info\"" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                Here are the analysis results about files." &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    int file_num = StatsHelper::instance()-&gt;get_all_file_num();
+    out &lt;&lt; "                In this static analysis, a total of " &lt;&lt; file_num &lt;&lt; " documents were detected."</span>
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    double all_analyze_time = StatsHelper::instance()-&gt;get_all_analysis_time();
+    out &lt;&lt; "                The time to analyze all files is " &lt;&lt; all_analyze_time &lt;&lt; "s." &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    int error_num = 0;
+    for (auto &amp;i : file_stats)</span>
+    {
+<span style = "background-color:#dfd">        if (i.get_all_bug_num() != 0)
+            error_num++;
+    }
+    int correct_num = file_num - error_num;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                The number of files detected to be correct is " &lt;&lt; correct_num &lt;&lt; "." &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                The number of files detected to be in error is " &lt;&lt; error_num &lt;&lt; "." &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                Following is the file statistics information." &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/div&gt;" &lt;&lt; std::endl;</span>
+    //output the detailed file statistics information
+<span style = "background-color:#dfd">    out &lt;&lt; "        &lt;h2 align=\"center\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            File Statistics" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/h2&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;table id=\"rounded-corner\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;thead&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;th scope=\"col\" class=\"rounded-left\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                        File Name" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;/th&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;th scope=\"col\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                        Analysis Time" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;/th&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;th scope=\"col\" class=\"rounded-right\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                        Correct or Error" &lt;&lt; std::endl;
+    out &lt;&lt; "                     &lt;/th&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/thead&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;tbody&gt;" &lt;&lt; std::endl;
+    for (auto &amp;i : file_stats)</span>
+    {
+<span style = "background-color:#dfd">        out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                        "&lt;&lt;i._filename &lt;&lt; std::endl;
+        out &lt;&lt; "                    &lt;/td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                        " &lt;&lt; std::setiosflags(std::ios::fixed) &lt;&lt; std::setprecision(2)</span>
+            &lt;&lt; i.get_analysis_time() &lt;&lt; std::endl;
+<span style = "background-color:#dfd">        out &lt;&lt; "                    &lt;/td&gt;" &lt;&lt; std::endl;
+        bool correct = false;
+        if (i.get_all_bug_num() == 0)</span>
+        {
+<span style = "background-color:#dfd">            correct = true;</span>
+        }
+<span style = "background-color:#dfd">        out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; std::endl;
+        if (correct)</span>
+        {
+            //output the correct words in green
+<span style = "background-color:#dfd">            out &lt;&lt; "                        &lt;p&gt;" &lt;&lt; std::endl;
+            out &lt;&lt; "                            &lt;font color=#00ff00&gt;" &lt;&lt; std::endl;
+            out &lt;&lt; "                                Correct" &lt;&lt; std::endl;
+            out &lt;&lt; "                            &lt;/font&gt;" &lt;&lt; std::endl;
+            out &lt;&lt; "                        &lt;/p&gt;" &lt;&lt; std::endl;
+        }</span>
+        else
+        {
+            // output the error words in red
+<span style = "background-color:#dfd">            out &lt;&lt; "                        &lt;p&gt;" &lt;&lt; std::endl;
+            out &lt;&lt; "                            &lt;font color=#ff0000&gt;" &lt;&lt; std::endl;
+            out &lt;&lt; "                                Error" &lt;&lt; std::endl;
+            out &lt;&lt; "                            &lt;/font&gt;" &lt;&lt; std::endl;
+            out &lt;&lt; "                        &lt;/p&gt;" &lt;&lt; std::endl;</span>
+        }
+<span style = "background-color:#dfd">        out &lt;&lt; "                    &lt;/td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+    }
+    out &lt;&lt; "            &lt;/tbody&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;tfoot&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;td class=\"rounded-foot-left\"&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;td&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;td class=\"rounded-foot-right\"&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/tfoot&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/table&gt;" &lt;&lt; std::endl;
+    auto bug_stats = StatsHelper::instance()-&gt;get_all_bug_stats_list();</span>
+    // output bug type statistics overall result information
+<span style = "background-color:#dfd">    out &lt;&lt; "        &lt;div id=\"result-info\"" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                Here are the analysis results about bugss." &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    int bug_type_num = StatsHelper::instance()-&gt;get_all_bug_type_num();
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                In this static analysis, the number of bug types detected is " &lt;&lt; bug_type_num &lt;&lt; "."</span>
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    int bug_num = StatsHelper::instance()-&gt;get_all_bug_num();
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                The number of all bugs is "&lt;&lt;bug_num&lt;&lt;"." &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                Following is the bug statistic information." &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/p&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/div&gt;" &lt;&lt; std::endl;</span>
+    // output the detailed bug type statistics information
+<span style = "background-color:#dfd">    out &lt;&lt; "        &lt;h2 align=\"center\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            Bug Statistics" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/h2&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;table id=\"rounded-corner\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;thead&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;th scope=\"col\" class=\"rounded-left\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                        Bug Type" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;/th&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;th scope=\"col\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                        Number" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;/th&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                    &lt;th scope=\"col\" class=\"rounded-right\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                        Persent" &lt;&lt; std::endl;
+    out &lt;&lt; "                     &lt;/th&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/thead&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;tbody&gt;" &lt;&lt; std::endl;
+    for (auto &amp;i : bug_stats)</span>
+    {
+<span style = "background-color:#dfd">        out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                        " &lt;&lt; i._bug_type &lt;&lt; std::endl;
+        out &lt;&lt; "                    &lt;/td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                        " &lt;&lt; i.get_num() &lt;&lt; std::endl;
+        out &lt;&lt; "                    &lt;/td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                    &lt;td&gt;" &lt;&lt; std::endl;</span>
+        //Set the precision to two decimal places
+<span style = "background-color:#dfd">        out &lt;&lt; "                        " &lt;&lt; std::setiosflags(std::ios::fixed) &lt;&lt; std::setprecision(2)</span>
+            &lt;&lt; (double)i.get_num() / (double)StatsHelper::instance()-&gt;get_all_bug_num() * 100.0 &lt;&lt; "%"
+            &lt;&lt; std::endl;
+<span style = "background-color:#dfd">        out &lt;&lt; "                    &lt;/td&gt;" &lt;&lt; std::endl;
+        out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+    }
+    out &lt;&lt; "            &lt;/tbody&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;tfoot&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;td class=\"rounded-foot-left\"&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;td&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;td class=\"rounded-foot-right\"&gt;&lt;/td&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;/tr&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/tfoot&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/table&gt;" &lt;&lt; std::endl;</span>
+    //create a jump button for index html
+<span style = "background-color:#dfd">    out &lt;&lt; "        &lt;h2 align=\"center\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            To See More Information About Bug Descriptions" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/h2&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;div id=\"button-wrapper\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;a href=\"./index.html\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;button class=\"click-button\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "                    Clicked Here" &lt;&lt; std::endl;
+    out &lt;&lt; "                &lt;/button&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "            &lt;/a&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;/div&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;/body&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "&lt;/html&gt;" &lt;&lt; std::endl;
+}</span>
+// generate filename's detail html,show the error location and infomation in the source code
+void HtmlPrinter::generate_detail_html(std::string filename)
+<span style = "background-color:#dfd">{</span>
+    //should not create detail html for unknown header file
+<span style = "background-color:#dfd">    if (filename == "")</span>
+    {
+<span style = "background-color:#fdd">        INFO("generate detail html for unknown header file.");
+        return;</span>
+    }
+    // get the output filename from the absolute path filename
+<span style = "background-color:#dfd">    std::string new_filename = filename;</span>
+    //replace \ or / or . or : to - ,in order to generate a new filename
+<span style = "background-color:#dfd">    std::replace(new_filename.begin(), new_filename.end(), '/', '-');
+    std::replace(new_filename.begin(), new_filename.end(), '\\', '-');
+    std::replace(new_filename.begin(), new_filename.end(), '.', '-');
+    std::replace(new_filename.begin(), new_filename.end(), ':', '-');
+    std::string out_filename = output_path + "/modules/" + new_filename + ".html";</span>
+    //create detailed file for this file
+<span style = "background-color:#dfd">    std::ofstream out(out_filename, std::ios::out | std::ios::trunc);
+    if (!out.is_open())</span>
+    {
+<span style = "background-color:#fdd">        INFO("Error when creating the detail.html file\n");
+        return;</span>
+    }
+    //output header information
+<span style = "background-color:#dfd">    out &lt;&lt; "&lt;!DOCTYPE html&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "&lt;html xmlns=\"http://www.w3.org/1999/xhtml\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;head&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;meta charset=\"utf-8\"/&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;title&gt;" &lt;&lt; filename &lt;&lt; "&lt;/title&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "        &lt;link rel=\"stylesheet\" type=\"text/css\" "</span>
+           "href=\"../css/prettyprint.css\"/&gt;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "        &lt;script type=\"text/javascript\" "</span>
+           "src=\"../js/prettyprint.js\"&gt;&lt;/script&gt;"
+        &lt;&lt; std::endl;
+<span style = "background-color:#dfd">    out &lt;&lt; "    &lt;/head&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;body onload=\"prettyPrint()\"&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "		&lt;pre class=\"prettyprint lang-cpp linenums\"&gt;" &lt;&lt; std::endl;</span>
+    //open source code file
+<span style = "background-color:#dfd">    std::ifstream in(filename, std::ios::in);
+    if (!in.is_open())</span>
+    {
+<span style = "background-color:#fdd">        INFO("Error when opening the source file:%s\n", filename.c_str());
+        return;</span>
+    }
+    //generate error line nums list for this file
+<span style = "background-color:#dfd">    std::vector&lt;int&gt; error_line_nums;
+    auto file_stats = StatsHelper::instance()-&gt;get_file_stats_list();
+    for (auto &amp;i : file_stats)</span>
+    {
+<span style = "background-color:#dfd">        if (i._filename == filename)</span>
+        {
+<span style = "background-color:#dfd">            auto bug_stats = i.get_bug_stats_list();
+            for (auto &amp;j : bug_stats)</span>
+            {
+<span style = "background-color:#dfd">                auto bug_descs = j.get_bug_desc_list();
+                for (auto &amp;k : bug_descs)</span>
+                {
+<span style = "background-color:#dfd">                    error_line_nums.push_back(k._line_number);
+                }
+            }
+            break;</span>
+<span style = "background-color:#fdd">        }</span>
+<span style = "background-color:#dfd">    }
+    std::string line;</span>
+    //record line num when read the source code
+<span style = "background-color:#dfd">    int linenum = 0;
+    while (std::getline(in, line))</span>
+    {
+<span style = "background-color:#dfd">        linenum++;
+        int index = 0;</span>
+        //must first transfer &amp;, and then transfer &lt; and &gt;, otherwise the &amp; produced 
+        //after &lt; and &gt; transferation will be transfered again.
+        //transfer &amp; to &amp;amp;
+<span style = "background-color:#dfd">        while (line.find("&amp;", index) != std::string::npos)</span>
+        {
+<span style = "background-color:#dfd">            int loc = line.find("&amp;", index);
+            std::string sub = line.substr(loc + 1);
+            line = line.substr(0, loc + 1);
+            line.replace(loc, loc + 1, "&amp;amp;");
+            line = line + sub;</span>
+            //jump over the transfered "&amp;amp;" to avoid endless loop
+<span style = "background-color:#dfd">            index = loc + 5;
+        }</span>
+        //transfer &lt; to &amp;lt;
+<span style = "background-color:#dfd">        while (line.find("&lt;") != std::string::npos)</span>
+        {
+<span style = "background-color:#dfd">            int loc = line.find("&lt;");
+            std::string sub = line.substr(loc + 1);
+            line = line.substr(0, loc + 1);
+            line.replace(loc, loc + 1, "&amp;lt;");
+            line = line + sub;
+        }</span>
+        //transfer &gt; to &amp;gt;
+<span style = "background-color:#dfd">        while (line.find("&gt;") != std::string::npos)</span>
+        {
+<span style = "background-color:#dfd">            int loc = line.find("&gt;");
+            std::string sub = line.substr(loc + 1);
+            line = line.substr(0, loc + 1);
+            line.replace(loc, loc + 1, "&amp;gt;");
+            line = line + sub;
+        }
+        if (std::find(error_line_nums.begin(), error_line_nums.end(), linenum) != error_line_nums.end())</span>
+        {
+            //If the line number of the line is in line_numbers, it will be marked with red line,
+            //and find the bug type and bug description in StatsHelper and output
+<span style = "background-color:#dfd">            out &lt;&lt; "&lt;span style = \"background-color:#fdd\"&gt;" &lt;&lt; line;
+            for (auto &amp;i : file_stats)</span>
+            {
+<span style = "background-color:#dfd">                if (i._filename == filename)</span>
+                {
+<span style = "background-color:#dfd">                    auto bug_stats = i.get_bug_stats_list();
+                    for (auto &amp;j : bug_stats)</span>
+                    {
+<span style = "background-color:#dfd">                        auto bug_descs = j.get_bug_desc_list();
+                        for (auto &amp;k : bug_descs)</span>
+                        {
+<span style = "background-color:#dfd">                            if (k._line_number == linenum)</span>
+                            {
+<span style = "background-color:#dfd">                                out &lt;&lt; "        " &lt;&lt; j._bug_type &lt;&lt; ":" &lt;&lt; k._description;
+                                break;</span>
+                            }
+<span style = "background-color:#dfd">                        }
+                    }
+                }
+            }
+            out &lt;&lt; "&lt;/span&gt;" &lt;&lt; std::endl;
+        }</span>
+        else
+        {
+<span style = "background-color:#dfd">            out &lt;&lt; line &lt;&lt; std::endl;</span>
+        }
+<span style = "background-color:#dfd">    }
+    out &lt;&lt; "      &lt;/pre&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "    &lt;/body&gt;" &lt;&lt; std::endl;
+    out &lt;&lt; "&lt;/html&gt;" &lt;&lt; std::endl;
+    out.close();
+    in.close();
+}</span>
+// print all file
+void HtmlPrinter::print()
+<span style = "background-color:#dfd">{
+    generate_style_css();
+    generate_prettyprint_css();
+    generate_prettyprint_js();
+    generate_index_html();</span>
+    //if statis output options is open, generate stats.css and stats.html
+<span style = "background-color:#dfd">    if (statis)</span>
+    {
+<span style = "background-color:#dfd">        generate_stats_css();
+        generate_stats_html();</span>
+    }
+    //Generate detailed html for each source code file where the bug was detected
+<span style = "background-color:#dfd">    auto detail_files = StatsHelper::instance()-&gt;get_filename_list();
+    for (auto &amp;i : detail_files)</span>
+    {
+        //when the file is unknown header file, ignore it
+<span style = "background-color:#dfd">        if (i == "")</span>
+<span style = "background-color:#fdd">            continue;</span>
+        else
+        {
+<span style = "background-color:#dfd">            generate_detail_html(i);</span>
+        }
+<span style = "background-color:#dfd">    }
+}</span></pre>
+	</body>
+</html>

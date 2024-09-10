@@ -1,0 +1,539 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>FileSystemTree.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef FILESYSTEM_TREE_H
+#define FILESYSTEM_TREE_H
+#include &lt;filesystem&gt;
+#include &lt;iostream&gt;
+#include &lt;map&gt;
+#include &lt;set&gt;
+#include &lt;stack&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
+#include &lt;cassert&gt;
+
+class FileType;
+
+class FileTreeNode;
+class DirectoryNode;
+class RegularFileNode;
+class OtherFileNode;
+
+class FileSystemTree;
+
+/**
+ * @brief class FileType 
+ * @details this class aims to classify different class types..
+ */
+class FileType
+{
+  public:
+  /**
+   * @brief enum class Type
+   * @details represent specify file types
+   */
+    enum class Type
+    {
+        Directory,
+        RegularFile,
+        OtherFile
+    };
+
+    FileType() = delete;
+<span style = "background-color:#dfd">    FileType(FileType::Type type) : _type(type)
+    {
+    }</span>
+    FileType &amp;operator=(const FileType &amp;) = default;
+
+    /**
+     * @brief get file type
+     * @return FileType
+     */ 
+    FileType::Type get_type() const
+    {
+        return _type;
+    }
+    
+    /**
+     * @brief print FileType into std::string
+     * @return stdstring
+     */ 
+    const std::string to_string() const
+<span style = "background-color:#fdd">    {
+        switch (_type)</span>
+        {
+        case FileType::Type::Directory:
+<span style = "background-color:#fdd">            return "Directory: ";
+            break;</span>
+        case FileType::Type::RegularFile:
+<span style = "background-color:#fdd">            return "Regular: ";
+            break;</span>
+        case FileType::Type::OtherFile:
+<span style = "background-color:#fdd">            return "Other: ";
+            break;</span>
+        default:
+<span style = "background-color:#fdd">            return "Error Type: ";</span>
+            break;
+        }
+<span style = "background-color:#fdd">    }</span>
+
+  private:
+    FileType::Type _type; ///&lt; specify file type
+};
+
+/**
+ * @brief, FileTreeNode reprents a file in tree
+ * @details, a abstract class
+ */ 
+class FileTreeNode
+{
+  public:
+    FileTreeNode() = delete;
+    FileTreeNode(const FileType file_type, const std::filesystem::path &amp;file_path, FileTreeNode *&amp;parent_node)
+<span style = "background-color:#dfd">        : _file_type(file_type), _file_path(file_path), _parent_node(parent_node)
+    {
+    }</span>
+    FileTreeNode &amp;operator=(const FileTreeNode &amp;) = default;
+
+    /**
+     * @brief compare to another FileTree
+     * @param another(FileTreeNode)
+     */ 
+    bool operator==(const FileTreeNode &amp;another)
+    {
+        return this-&gt;_file_path == another._file_path;
+    }
+
+    /**
+     * @brief compare to another FileTree
+     * @param file_path(filesystem::path)
+     */ 
+    bool operator==(const std::filesystem::path file_path)
+    {
+        return this-&gt;_file_path == file_path;
+    }
+
+    /**
+     * @brief judge this node whether the root is
+     * @return true, yes
+     *         false, no
+     */ 
+    bool is_root() const
+    {
+        return _parent_node == nullptr;
+    }
+
+    /**
+     * @brief judge this node whether the leaf is
+     * @return true, yes
+     *         false, no
+     */ 
+    bool is_leaf() const
+    {
+        return is_regular_file() || is_other_file() || (is_directory() &amp;&amp; !has_child());
+    }
+
+    /**
+     * @brief get file type from FileType
+     * @return FileType::Type
+     */ 
+    const FileType::Type get_file_type() const
+    {
+        return _file_type.get_type();
+    }
+
+    /**
+     * @brief get file path of the node
+     * @return filesystem::path
+     */ 
+    const std::filesystem::path &amp;get_file_path() const
+    {
+        return _file_path;
+    }
+
+    /**
+     * @brief get parent node of this node
+     * @return FileTreeNode*(pointer)
+     */ 
+    const FileTreeNode *get_parent() const
+    {
+        return _parent_node;
+    }
+
+    /**
+     * @brief get children nodes of this node
+     * @return vector&lt;FileTreeNode*&gt;
+     */
+    const std::vector&lt;FileTreeNode *&gt; &amp;get_children() const
+    {
+        assert(_file_type.get_type() == FileType::Type::Directory &amp;&amp; "file type errors");
+        
+        return _children;
+    }
+
+    /**
+     * @brief virtual function, print FileTreeNode into std::string
+     * @return std::string
+     */ 
+    virtual const std::string to_string() const = 0;
+
+    /**
+     * @brief virtual function, print FileTreeNode into std::string
+     * @return std::string
+     */ 
+    virtual void add_node(FileTreeNode *&amp;node) = 0;
+
+    /**
+     * @brief virtual function, judge whether the childeren exist
+     * @return true, children nodes exist
+     *         fasle, children nodes don't exist
+     */ 
+    virtual bool has_child() const = 0;
+
+    /**
+     * @brief virtual function, judge whether directory is
+     * @return true, directory
+     *         false, maybe regular file or other file
+     */ 
+    virtual bool is_directory() const = 0;
+
+    /**
+     * @brief virtual function, judge whether regular file is
+     * @return true, regular file
+     *         false, maybe directory or other file
+     */ 
+    virtual bool is_regular_file() const = 0;
+
+    /**
+     * @brief virtual function, judge whether other file is
+     * @return true, other file
+     *         false, maybe regular file or other file
+     */ 
+    virtual bool is_other_file() const = 0;
+
+  protected:
+    FileType _file_type; ///&lt; File Type  of FileTreeNode
+    std::filesystem::path _file_path; ///&lt; File Path of FileTreeNode
+
+    FileTreeNode *_parent_node; ///&lt; parent node of this FileTreeNode
+    std::vector&lt;FileTreeNode *&gt; _children; ///&lt; children nodes of this FileTreeNode
+
+  private:
+};
+
+/**
+ * @brief, a subclass of FileTreeNode reprents a directory in tree
+ * @details, a specify kind of FileTreeNode
+ */ 
+class DirectoryNode : public FileTreeNode
+{
+  public:
+    DirectoryNode(const std::filesystem::path &amp;file_path, FileTreeNode *parent_node)
+<span style = "background-color:#dfd">        : FileTreeNode(FileType(FileType::Type::Directory), file_path, parent_node)
+    {
+    }</span>
+
+    /**
+     * @brief, print directory node in std::string
+     * @return std::string
+     */ 
+    const std::string to_string() const override
+<span style = "background-color:#fdd">    {</span>
+        // TODO: implement more
+<span style = "background-color:#fdd">        return _file_type.to_string() + _file_path.string();
+    }</span>
+
+    /**
+     * @brief implementary function, add FileTreeNode to children nodes
+     */ 
+    void add_node(FileTreeNode *&amp;node) override
+<span style = "background-color:#dfd">    {
+        _children.push_back(node);
+    }</span>
+
+    /**
+     * @brief implementary function
+     */ 
+    bool has_child() const override
+<span style = "background-color:#dfd">    {
+        return !_children.empty();
+    }</span>
+    /**
+     * @brief implementary function
+     * @return true
+     */ 
+    bool is_directory() const override
+<span style = "background-color:#dfd">    {
+        return true;
+    }</span>
+
+    /**
+     * @brief implementary function
+     * @return false
+     */ 
+    bool is_regular_file() const override
+<span style = "background-color:#dfd">    {
+        return false;
+    }</span>
+
+    /**
+     * @brief implementary function
+     * @return false
+     */ 
+    bool is_other_file() const override
+<span style = "background-color:#dfd">    {
+        return false;
+    }</span>
+};
+
+
+/**
+ * @brief, a subclass of FileTreeNode reprents a regular in tree
+ * @details, a specify kind of FileTreeNode
+ */ 
+class RegularFileNode : public FileTreeNode
+{
+  public:
+    RegularFileNode(const std::filesystem::path &amp;file_path, FileTreeNode *parent_node)
+<span style = "background-color:#dfd">        : FileTreeNode(FileType(FileType::Type::RegularFile), file_path, parent_node)
+    {
+    }</span>
+
+    /**
+     * @brief, print regular file node in std::string
+     * @return std::string
+     */ 
+    const std::string to_string() const override
+<span style = "background-color:#fdd">    {
+        return _file_type.to_string() + _file_path.string() + "\n";
+    }</span>
+
+    /**
+     * @brief implementary function
+     * @details this function is banned in this kind of node
+     */ 
+    void add_node(FileTreeNode *&amp;node) override
+<span style = "background-color:#fdd">    {</span>
+        return;
+<span style = "background-color:#fdd">    }</span>
+
+    /**
+     * @brief implementary function
+     * @return false
+     */ 
+    bool has_child() const override
+<span style = "background-color:#fdd">    {
+        return false;
+    }</span>
+
+    /**
+     * @brief implementary function
+     * @return false
+     */ 
+    bool is_directory() const override
+<span style = "background-color:#fdd">    {
+        return false;
+    }</span>
+
+    /**
+     * @brief implementary function
+     * @return true
+     */ 
+    bool is_regular_file() const override
+<span style = "background-color:#dfd">    {
+        return true;
+    }</span>
+
+    /**
+     * @brief implementary function
+     * @return false
+     */ 
+    bool is_other_file() const override
+<span style = "background-color:#fdd">    {
+        return false;
+    }</span>
+};
+
+class OtherFileNode : public FileTreeNode
+{
+  public:
+    OtherFileNode(const std::filesystem::path &amp;file_path, FileTreeNode *parent_node)
+<span style = "background-color:#fdd">        : FileTreeNode(FileType(FileType::Type::OtherFile), file_path, parent_node)
+    {
+    }</span>
+
+    /**
+     * @brief, print other file node in std::string
+     * @return std::string
+     */ 
+    const std::string to_string() const override
+<span style = "background-color:#fdd">    {
+        return _file_type.to_string() + _file_path.string() + "\n";
+    }</span>
+
+    
+    /**
+     * @brief implementary function
+     * @details this function is banned in this kind of node
+     */ 
+    void add_node(FileTreeNode *&amp;node) override
+<span style = "background-color:#fdd">    {</span>
+        return;
+<span style = "background-color:#fdd">    }</span>
+
+    /**
+     * @brief implementary function
+     * @return false
+     */
+    bool has_child() const override
+<span style = "background-color:#fdd">    {
+        return false;
+    }</span>
+
+    
+    /**
+     * @brief implementary function
+     * @return false
+     */ 
+    bool is_directory() const override
+<span style = "background-color:#fdd">    {
+        return false;
+    }</span>
+
+    
+    /**
+     * @brief implementary function
+     * @return false
+     */ 
+    bool is_regular_file() const override
+<span style = "background-color:#fdd">    {
+        return false;
+    }</span>
+
+    
+    /**
+     * @brief implementary function
+     * @return true
+     */ 
+    bool is_other_file() const override
+<span style = "background-color:#fdd">    {
+        return true;
+    }</span>
+};
+
+/**
+ * @brief FileSystemTree, consisting of FileTreeNodes
+ * @details organize the list of tree in FileTree
+ */ 
+class FileSystemTree
+{
+  public:
+    FileSystemTree()
+    {
+        _root = nullptr;
+    }
+<span style = "background-color:#dfd">    FileSystemTree(const std::filesystem::path &amp;entry_path) : _entry_path(entry_path)
+    {
+        init_tree_root();
+    }</span>
+
+    FileSystemTree &amp;operator=(const FileSystemTree &amp;) = default;
+
+    ~FileSystemTree()
+    {
+        delete _root;
+        _root = nullptr;
+    }
+    /**
+     * @brief set initial settings in FileTree
+     * @param entry_path(filesystem::path)
+     */ 
+    void set_tree(const std::filesystem::path &amp;entry_path)
+    {
+        _entry_path = entry_path;
+        if (_root != nullptr)
+        {
+            delete _root;
+        }
+
+        init_tree_root();
+    }
+
+    /**
+     * @brief get root of FileSystemTree
+     * @return FileTreeNode*
+     */ 
+    const FileTreeNode *get_root() const
+    {
+        return _root;
+    }
+
+    /**
+     * @brief get tree nodes map
+     * @return map of &lt;filesystem::path, FileTreeNode*&gt;
+     */ 
+    const std::map&lt;std::filesystem::path, FileTreeNode *&gt; &amp;get_tree_nodes_map() const
+    {
+        return _tree_nodes_map;
+    }
+
+    /**
+     * @brief build tree with file list
+     * @param file_list(set&lt;filesystem::path&gt;)
+     */ 
+    void build_tree(const std::set&lt;std::filesystem::path&gt; &amp;file_list);
+
+  private:
+    /**
+     * @brief initialize tree root
+     */ 
+    void init_tree_root()
+<span style = "background-color:#dfd">    {</span>
+
+<span style = "background-color:#dfd">        if (!std::filesystem::exists(_entry_path))</span>
+        {
+<span style = "background-color:#fdd">            std::cerr &lt;&lt; "Oops, entry does not exists..." &lt;&lt; std::endl;
+            exit(-1);</span>
+        }
+
+<span style = "background-color:#dfd">        if (std::filesystem::is_directory(_entry_path))</span>
+        {
+<span style = "background-color:#dfd">            _root = new DirectoryNode(_entry_path, nullptr);
+        }</span>
+<span style = "background-color:#fdd">        else if (std::filesystem::is_regular_file(_entry_path))</span>
+        {
+<span style = "background-color:#fdd">            _root = new RegularFileNode(_entry_path, nullptr);
+        }</span>
+        else
+        {
+<span style = "background-color:#fdd">            _root = new OtherFileNode(_entry_path, nullptr);</span>
+        }
+
+<span style = "background-color:#dfd">        _tree_nodes_map.insert(std::pair&lt;std::filesystem::path, FileTreeNode *&gt;(_entry_path, _root));
+    }</span>
+
+    /**
+     * @brief parse file path
+     * @param file_path(filesystem::path)
+     */ 
+    std::stack&lt;std::filesystem::path&gt; parse_file_path(const std::filesystem::path &amp;file_path);
+
+  private:
+
+    std::filesystem::path _entry_path; ///&lt; entry path of project folder
+
+    FileTreeNode *_root; ///&lt; root of FileTreeNode
+    std::map&lt;std::filesystem::path, FileTreeNode *&gt; _tree_nodes_map; ///&lt; map of file path and its corresponding tree node
+};
+
+#endif</pre>
+	</body>
+</html>

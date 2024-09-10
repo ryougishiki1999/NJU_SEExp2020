@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/heap/hp_create.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2018, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+#include "heapdef.h"
+
+static int keys_compare(heap_rb_param *param, uchar *key1, uchar *key2);
+static void init_block(HP_BLOCK *block,uint reclength,ulong min_records,
+		       ulong max_records);
+
+/* Create a heap table */
+
+int heap_create(const char *name, HP_CREATE_INFO *create_info,
+                HP_SHARE **res, my_bool *created_new_share)
+{
+  uint i, j, key_segs, max_length, length;
+  HP_SHARE *share= 0;
+  HA_KEYSEG *keyseg;
+  HP_KEYDEF *keydef= create_info-&gt;keydef;
+  uint reclength= create_info-&gt;reclength;
+  uint keys= create_info-&gt;keys;
+  ulong min_records= create_info-&gt;min_records;
+  ulong max_records= create_info-&gt;max_records;
+  DBUG_ENTER("heap_create");
+
+  if (!create_info-&gt;internal_table)
+  {
+    mysql_mutex_lock(&amp;THR_LOCK_heap);
+    share= hp_find_named_heap(name);
+    if (share &amp;&amp; share-&gt;open_count == 0)
+    {
+      hp_free(share);
+      share= 0;
+    }
+  }
+  *created_new_share= (share == NULL);
+
+  if (!share)
+  {
+    HP_KEYDEF *keyinfo;
+    DBUG_PRINT("info",("Initializing new table"));
+    
+    /*
+      We have to store sometimes uchar* del_link in records,
+      so the record length should be at least sizeof(uchar*)
+    */
+    set_if_bigger(reclength, sizeof (uchar*));
+    
+    for (i= key_segs= max_length= 0, keyinfo= keydef; i &lt; keys; i++, keyinfo++)
+    {
+      memset(&amp;keyinfo-&gt;block, 0, sizeof(keyinfo-&gt;block));
+      memset(&amp;keyinfo-&gt;rb_tree, 0, sizeof(keyinfo-&gt;rb_tree));
+      for (j= length= 0; j &lt; keyinfo-&gt;keysegs; j++)
+      {
+	length+= keyinfo-&gt;seg[j].length;
+	if (keyinfo-&gt;seg[j].null_bit)
+	{
+	  length++;
+	  if (!(keyinfo-&gt;flag &amp; HA_NULL_ARE_EQUAL))
+	    keyinfo-&gt;flag|= HA_NULL_PART_KEY;
+	  if (keyinfo-&gt;algorithm == HA_KEY_ALG_BTREE)
+	    keyinfo-&gt;rb_tree.size_of_element++;
+	}
+	switch (keyinfo-&gt;seg[j].type) {
+	case HA_KEYTYPE_SHORT_INT:
+	case HA_KEYTYPE_LONG_INT:
+	case HA_KEYTYPE_FLOAT:
+	case HA_KEYTYPE_DOUBLE:
+	case HA_KEYTYPE_USHORT_INT:
+	case HA_KEYTYPE_ULONG_INT:
+	case HA_KEYTYPE_LONGLONG:
+	case HA_KEYTYPE_ULONGLONG:
+	case HA_KEYTYPE_INT24:
+	case HA_KEYTYPE_UINT24:
+	case HA_KEYTYPE_INT8:
+	  keyinfo-&gt;seg[j].flag|= HA_SWAP_KEY;
+          break;
+        case HA_KEYTYPE_VARBINARY1:
+          /* Case-insensitiveness is handled in coll-&gt;hash_sort */
+          keyinfo-&gt;seg[j].type= HA_KEYTYPE_VARTEXT1;
+          /* fall_through */
+        case HA_KEYTYPE_VARTEXT1:
+          keyinfo-&gt;flag|= HA_VAR_LENGTH_KEY;
+          /*
+            For BTREE algorithm, key length, greater than or equal
+            to 255, is packed on 3 bytes.
+          */
+          if (keyinfo-&gt;algorithm == HA_KEY_ALG_BTREE)
+            length+= size_to_store_key_length(keyinfo-&gt;seg[j].length);
+          else
+            length+= 2;
+          /* Save number of bytes used to store length */
+          keyinfo-&gt;seg[j].bit_start= 1;
+          break;
+        case HA_KEYTYPE_VARBINARY2:
+          /* Case-insensitiveness is handled in coll-&gt;hash_sort */
+          /* fall_through */
+        case HA_KEYTYPE_VARTEXT2:
+          keyinfo-&gt;flag|= HA_VAR_LENGTH_KEY;
+          /*
+            For BTREE algorithm, key length, greater than or equal
+            to 255, is packed on 3 bytes.
+          */
+          if (keyinfo-&gt;algorithm == HA_KEY_ALG_BTREE)
+            length+= size_to_store_key_length(keyinfo-&gt;seg[j].length);
+          else
+            length+= 2;
+          /* Save number of bytes used to store length */
+          keyinfo-&gt;seg[j].bit_start= 2;
+          /*
+            Make future comparison simpler by only having to check for
+            one type
+          */
+          keyinfo-&gt;seg[j].type= HA_KEYTYPE_VARTEXT1;
+          break;
+	default:
+	  break;
+	}
+      }
+      keyinfo-&gt;length= length;
+      length+= keyinfo-&gt;rb_tree.size_of_element + 
+	       ((keyinfo-&gt;algorithm == HA_KEY_ALG_BTREE) ? sizeof(uchar*) : 0);
+      if (length &gt; max_length)
+	max_length= length;
+      key_segs+= keyinfo-&gt;keysegs;
+      if (keyinfo-&gt;algorithm == HA_KEY_ALG_BTREE)
+      {
+        key_segs++; /* additional HA_KEYTYPE_END segment */
+        if (keyinfo-&gt;flag &amp; HA_VAR_LENGTH_KEY)
+          keyinfo-&gt;get_key_length= hp_rb_var_key_length;
+        else if (keyinfo-&gt;flag &amp; HA_NULL_PART_KEY)
+          keyinfo-&gt;get_key_length= hp_rb_null_key_length;
+        else
+          keyinfo-&gt;get_key_length= hp_rb_key_length;
+      }
+    }
+    if (!(share= (HP_SHARE*) my_malloc((uint) sizeof(HP_SHARE)+
+				       keys*sizeof(HP_KEYDEF)+
+				       key_segs*sizeof(HA_KEYSEG),
+				       MYF(MY_ZEROFILL))))
+      goto err;
+    share-&gt;keydef= (HP_KEYDEF*) (share + 1);
+    share-&gt;key_stat_version= 1;
+    keyseg= (HA_KEYSEG*) (share-&gt;keydef + keys);
+    init_block(&amp;share-&gt;block, reclength + 1, min_records, max_records);
+	/* Fix keys */
+    memcpy(share-&gt;keydef, keydef, (size_t) (sizeof(keydef[0]) * keys));
+    for (i= 0, keyinfo= share-&gt;keydef; i &lt; keys; i++, keyinfo++)
+    {
+      keyinfo-&gt;seg= keyseg;
+      memcpy(keyseg, keydef[i].seg,
+	     (size_t) (sizeof(keyseg[0]) * keydef[i].keysegs));
+      keyseg+= keydef[i].keysegs;
+
+      if (keydef[i].algorithm == HA_KEY_ALG_BTREE)
+      {
+	/* additional HA_KEYTYPE_END keyseg */
+	keyseg-&gt;type=     HA_KEYTYPE_END;
+	keyseg-&gt;length=   sizeof(uchar*);
+	keyseg-&gt;flag=     0;
+	keyseg-&gt;null_bit= 0;
+	keyseg++;
+
+	init_tree(&amp;keyinfo-&gt;rb_tree, 0, 0, sizeof(uchar*),
+		  (qsort_cmp2)keys_compare, 1, NULL, NULL);
+	keyinfo-&gt;delete_key= hp_rb_delete_key;
+	keyinfo-&gt;write_key= hp_rb_write_key;
+      }
+      else
+      {
+	init_block(&amp;keyinfo-&gt;block, sizeof(HASH_INFO), min_records,
+		   max_records);
+	keyinfo-&gt;delete_key= hp_delete_key;
+	keyinfo-&gt;write_key= hp_write_key;
+        keyinfo-&gt;hash_buckets= 0;
+      }
+      if ((keyinfo-&gt;flag &amp; HA_AUTO_KEY) &amp;&amp; create_info-&gt;with_auto_increment)
+        share-&gt;auto_key= i + 1;
+    }
+    share-&gt;min_records= min_records;
+    share-&gt;max_records= max_records;
+    share-&gt;max_table_size= create_info-&gt;max_table_size;
+    share-&gt;data_length= share-&gt;index_length= 0;
+    share-&gt;reclength= reclength;
+    share-&gt;blength= 1;
+    share-&gt;keys= keys;
+    share-&gt;max_key_length= max_length;
+    share-&gt;changed= 0;
+    share-&gt;auto_key= create_info-&gt;auto_key;
+    share-&gt;auto_key_type= create_info-&gt;auto_key_type;
+    share-&gt;auto_increment= create_info-&gt;auto_increment;
+    share-&gt;create_time= (long) time((time_t*) 0);
+    /* Must be allocated separately for rename to work */
+    if (!(share-&gt;name= my_strdup(name,MYF(0))))
+    {
+      my_free(share);
+      goto err;
+    }
+    thr_lock_init(&amp;share-&gt;lock);
+    mysql_mutex_init(hp_key_mutex_HP_SHARE_intern_lock,
+                     &amp;share-&gt;intern_lock, MY_MUTEX_INIT_FAST);
+    if (!create_info-&gt;internal_table)
+    {
+      share-&gt;open_list.data= (void*) share;
+      heap_share_list= list_add(heap_share_list,&amp;share-&gt;open_list);
+    }
+    else
+      share-&gt;delete_on_close= 1;
+  }
+  if (!create_info-&gt;internal_table)
+  {
+    if (create_info-&gt;pin_share)
+      ++share-&gt;open_count;
+    mysql_mutex_unlock(&amp;THR_LOCK_heap);
+  }
+
+  *res= share;
+  DBUG_RETURN(0);
+
+err:
+  if (!create_info-&gt;internal_table)
+    mysql_mutex_unlock(&amp;THR_LOCK_heap);
+  DBUG_RETURN(1);
+} /* heap_create */
+
+
+static int keys_compare(heap_rb_param *param, uchar *key1, uchar *key2)
+{
+  uint not_used[2];
+  return ha_key_cmp(param-&gt;keyseg, key1, key2, param-&gt;key_length, 
+		    param-&gt;search_flag, not_used);
+}
+
+static void init_block(HP_BLOCK *block, uint reclength, ulong min_records,
+		       ulong max_records)
+{
+  uint i,recbuffer,records_in_block;
+
+  max_records= MY_MAX(min_records, max_records);
+  if (!max_records)
+    max_records= 1000;			/* As good as quess as anything */
+  recbuffer= (uint) (reclength + sizeof(uchar**) - 1) &amp; ~(sizeof(uchar**) - 1);
+  records_in_block= max_records / 10;
+  if (records_in_block &lt; 10 &amp;&amp; max_records)
+    records_in_block= 10;
+  if (!records_in_block || (ulonglong) records_in_block * recbuffer &gt;
+      (my_default_record_cache_size-sizeof(HP_PTRS)*HP_MAX_LEVELS))
+    records_in_block= (my_default_record_cache_size - sizeof(HP_PTRS) *
+		      HP_MAX_LEVELS) / recbuffer + 1;
+  block-&gt;records_in_block= records_in_block;
+  block-&gt;recbuffer= recbuffer;
+  block-&gt;last_allocated= 0L;
+
+  for (i= 0; i &lt;= HP_MAX_LEVELS; i++)
+    block-&gt;level_info[i].records_under_level=
+      (!i ? 1 : i == 1 ? records_in_block :
+       HP_PTRS_IN_NOD * block-&gt;level_info[i - 1].records_under_level);
+}
+
+
+static inline void heap_try_free(HP_SHARE *share)
+{
+  if (share-&gt;open_count == 0)
+    hp_free(share);
+  else
+    share-&gt;delete_on_close= 1;
+}
+
+
+int heap_delete_table(const char *name)
+{
+  int result;
+  reg1 HP_SHARE *share;
+  DBUG_ENTER("heap_delete_table");
+
+  mysql_mutex_lock(&amp;THR_LOCK_heap);
+  if ((share= hp_find_named_heap(name)))
+  {
+    heap_try_free(share);
+    result= 0;
+  }
+  else
+  {
+    result= my_errno=ENOENT;
+  }
+  mysql_mutex_unlock(&amp;THR_LOCK_heap);
+  DBUG_RETURN(result);
+}
+
+
+void heap_drop_table(HP_INFO *info)
+{
+  DBUG_ENTER("heap_drop_table");
+  mysql_mutex_lock(&amp;THR_LOCK_heap);
+  heap_try_free(info-&gt;s);
+  mysql_mutex_unlock(&amp;THR_LOCK_heap);
+  DBUG_VOID_RETURN;
+}
+
+
+void hp_free(HP_SHARE *share)
+{
+  if (share-&gt;open_list.data)                    /* If not internal table */
+    heap_share_list= list_delete(heap_share_list, &amp;share-&gt;open_list);
+  hp_clear(share);			/* Remove blocks from memory */
+  thr_lock_delete(&amp;share-&gt;lock);
+  mysql_mutex_destroy(&amp;share-&gt;intern_lock);
+  my_free(share-&gt;name);
+  my_free(share);
+  return;
+}
+      </pre>
+    </body>
+</html>

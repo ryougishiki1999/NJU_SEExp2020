@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/heap/hp_extra.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2000, 2004-2006 MySQL AB
+   Use is subject to license terms
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA */
+
+/* Extra functions we want to do with a database */
+/* - Set flags for quicker databasehandler */
+/* - Set databasehandler to normal */
+/* - Reset recordpointers as after open database */
+
+#include "heapdef.h"
+
+static void heap_extra_keyflag(register HP_INFO *info,
+                               enum ha_extra_function function);
+
+
+	/* set extra flags for database */
+
+int heap_extra(register HP_INFO *info, enum ha_extra_function function)
+{
+  DBUG_ENTER("heap_extra");
+
+  switch (function) {
+  case HA_EXTRA_RESET_STATE:
+    heap_reset(info);
+  case HA_EXTRA_NO_READCHECK:
+    info-&gt;opt_flag&amp;= ~READ_CHECK_USED;	/* No readcheck */
+    break;
+  case HA_EXTRA_READCHECK:
+    info-&gt;opt_flag|= READ_CHECK_USED;
+    break;
+  case HA_EXTRA_CHANGE_KEY_TO_UNIQUE:
+  case HA_EXTRA_CHANGE_KEY_TO_DUP:
+    heap_extra_keyflag(info, function);
+    break;
+  default:
+    break;
+  }
+  DBUG_RETURN(0);
+} /* heap_extra */
+
+
+int heap_reset(HP_INFO *info)
+{
+  info-&gt;lastinx= -1;
+  info-&gt;current_record= (ulong) ~0L;
+  info-&gt;current_hash_ptr=0;
+  info-&gt;update=0;
+  info-&gt;next_block=0;
+  return 0;
+}
+
+
+/*
+    Start/Stop Inserting Duplicates Into a Table, WL#1648.
+ */
+static void heap_extra_keyflag(register HP_INFO *info,
+                               enum ha_extra_function function)
+{
+  uint  idx;
+
+  for (idx= 0; idx&lt; info-&gt;s-&gt;keys; idx++)
+  {
+    switch (function) {
+    case HA_EXTRA_CHANGE_KEY_TO_UNIQUE:
+      info-&gt;s-&gt;keydef[idx].flag|= HA_NOSAME;
+      break;
+    case HA_EXTRA_CHANGE_KEY_TO_DUP:
+      info-&gt;s-&gt;keydef[idx].flag&amp;= ~(HA_NOSAME);
+      break;
+    default:
+      break;
+    }
+  }
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,149 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>ArrayBoundChecker.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "ArrayBoundChecker.h"
+
+using namespace clang;
+using namespace ento;
+
+void ArrayBoundChecker::checkLocation(SVal left, bool is_load, const Stmt *statement, CheckerContext &amp;context) const
+<span style = "background-color:#dfd">{</span>
+    // Check for out of bound array element access.
+<span style = "background-color:#dfd">    const MemRegion *region = left.getAsRegion();</span>
+
+<span style = "background-color:#dfd">    if (!region)</span>
+    {
+<span style = "background-color:#dfd">        return;</span>
+    }
+
+<span style = "background-color:#dfd">    std::string region_string = region-&gt;getString(); // debug-test</span>
+
+<span style = "background-color:#dfd">    const ElementRegion *element_region = dyn_cast&lt;ElementRegion&gt;(region);
+    const FieldRegion *field_region = dyn_cast&lt;FieldRegion&gt;(region);</span>
+
+<span style = "background-color:#dfd">    if (!element_region &amp;&amp; !field_region)</span>
+    {
+<span style = "background-color:#dfd">        return;</span>
+    }
+
+<span style = "background-color:#dfd">    if (element_region)</span>
+    {
+        // Get the index of the accessed element
+<span style = "background-color:#dfd">        DefinedOrUnknownSVal index = element_region-&gt;getIndex().castAs&lt;DefinedOrUnknownSVal&gt;();</span>
+
+        // Zero index is always in bound, this also passes ElementRegions created for
+        // pointer casts.
+<span style = "background-color:#dfd">        if (index.isZeroConstant())</span>
+        {
+<span style = "background-color:#dfd">            return;</span>
+        }
+
+<span style = "background-color:#dfd">        ProgramStateRef state = context.getState();</span>
+
+<span style = "background-color:#dfd">        std::string element_region_super_region_string = element_region-&gt;getSuperRegion()-&gt;getString();</span>
+        // Get the size of the array.
+<span style = "background-color:#dfd">        DefinedOrUnknownSVal element_count = getDynamicElementCount(</span>
+            state, element_region-&gt;getSuperRegion(), context.getSValBuilder(), element_region-&gt;getValueType());
+
+<span style = "background-color:#dfd">        ProgramStateRef statement_in_bound = state-&gt;assumeInBound(index, element_count, true);</span>
+
+<span style = "background-color:#dfd">        ProgramStateRef statement_out_bound = state-&gt;assumeInBound(index, element_count, false);</span>
+
+<span style = "background-color:#dfd">        if (statement_out_bound &amp;&amp; !statement_in_bound)</span>
+        {
+<span style = "background-color:#dfd">            ExplodedNode *node = context.generateErrorNode(statement_out_bound);</span>
+
+<span style = "background-color:#dfd">            if (!node)</span>
+            {
+<span style = "background-color:#fdd">                return;</span>
+            }
+
+<span style = "background-color:#dfd">            if (!_builtin_ptr)</span>
+            {
+<span style = "background-color:#dfd">                _builtin_ptr.reset(new BuiltinBug(this, "out-of-bound array access",</span>
+                                                  "Access out-of-bound array element (buffer overflow)"));
+            }
+
+<span style = "background-color:#dfd">            auto report = std::make_unique&lt;PathSensitiveBugReport&gt;(*_builtin_ptr, _builtin_ptr-&gt;getDescription(), node);</span>
+
+<span style = "background-color:#dfd">            report-&gt;addRange(statement-&gt;getSourceRange());</span>
+
+<span style = "background-color:#dfd">            context.emitReport(std::move(report));</span>
+
+<span style = "background-color:#dfd">            return;</span>
+        }
+
+        // Array bound check succeeded.  From this point forward the array bound
+        // should always succeed.
+
+<span style = "background-color:#dfd">        context.addTransition(statement_in_bound);
+    }
+    else if (field_region)</span>
+    {
+<span style = "background-color:#dfd">        const MemRegion *r = field_region-&gt;getSuperRegion();
+        if (!r)</span>
+        {
+<span style = "background-color:#fdd">            return;</span>
+        }
+
+<span style = "background-color:#dfd">        std::string r_string = r-&gt;getString();
+        const ElementRegion *er = dyn_cast&lt;ElementRegion&gt;(r);</span>
+
+<span style = "background-color:#dfd">        if (!er)</span>
+        {
+<span style = "background-color:#dfd">            return;</span>
+        }
+
+<span style = "background-color:#dfd">        er-&gt;getIndex();
+        DefinedOrUnknownSVal index = er-&gt;getIndex().castAs&lt;DefinedOrUnknownSVal&gt;();</span>
+
+<span style = "background-color:#dfd">        if (index.isZeroConstant())</span>
+        {
+<span style = "background-color:#fdd">            return;</span>
+        }
+
+<span style = "background-color:#dfd">        ProgramStateRef state = context.getState();</span>
+
+        DefinedOrUnknownSVal e_count =
+<span style = "background-color:#dfd">            getDynamicElementCount(state, er-&gt;getSuperRegion(), context.getSValBuilder(), er-&gt;getValueType());</span>
+
+<span style = "background-color:#dfd">        ProgramStateRef st_in_bound = state-&gt;assumeInBound(index, e_count, true);
+        ProgramStateRef st_out_bound = state-&gt;assumeInBound(index, e_count, false);</span>
+
+<span style = "background-color:#dfd">        if (st_out_bound &amp;&amp; !st_in_bound)</span>
+        {
+<span style = "background-color:#dfd">            ExplodedNode *node = context.generateErrorNode(st_out_bound);</span>
+
+<span style = "background-color:#dfd">            if (!node)</span>
+            {
+<span style = "background-color:#fdd">                return;</span>
+            }
+
+<span style = "background-color:#dfd">            if (!_builtin_ptr)</span>
+            {
+<span style = "background-color:#dfd">                _builtin_ptr.reset(new BuiltinBug(this, "out-of-bound array access",</span>
+                                                  "Access out-of-bound array element (buffer overflow)"));
+            }
+
+<span style = "background-color:#dfd">            auto report = std::make_unique&lt;PathSensitiveBugReport&gt;(*_builtin_ptr, _builtin_ptr-&gt;getDescription(), node);</span>
+
+<span style = "background-color:#dfd">            report-&gt;addRange(statement-&gt;getSourceRange());</span>
+
+<span style = "background-color:#dfd">            context.emitReport(std::move(report));
+            return;</span>
+        }
+<span style = "background-color:#fdd">        context.addTransition(st_in_bound);
+    }</span>
+<span style = "background-color:#dfd">}</span>
+
+<span style = "background-color:#dfd">CSA_GENERATE_REGISTER_FUNCTION_DEF(ArrayBoundChecker)</span></pre>
+	</body>
+</html>

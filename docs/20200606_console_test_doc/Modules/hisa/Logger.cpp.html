@@ -1,0 +1,47 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>Logger.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "Logger.h"
+#include &lt;cstdarg&gt;
+#include &lt;cstdio&gt;
+#include &lt;sstream&gt;
+#include &lt;string&gt;
+
+unsigned int Logger::filter_log_level = Logger::Debug;
+
+void Logger::log(const char *func, unsigned int line, LogLevel lv, const char *fmt, ...)
+<span style = "background-color:#dfd">{
+    if (lv &gt; filter_log_level)</span>
+<span style = "background-color:#fdd">        return;</span>
+    va_list va;
+<span style = "background-color:#dfd">    va_start(va, fmt);
+    std::ostringstream format;
+    switch (lv)</span>
+    {
+    case Error:
+<span style = "background-color:#fdd">        format &lt;&lt; "[Error]";
+        break;</span>
+    case Warning:
+<span style = "background-color:#dfd">        format &lt;&lt; "[Warning]";
+        break;</span>
+    case Info:
+<span style = "background-color:#fdd">        format &lt;&lt; "[Info]";
+        break;</span>
+    case Debug:
+<span style = "background-color:#fdd">        format &lt;&lt; "[Debug]";</span>
+        break;
+    }
+<span style = "background-color:#dfd">    format &lt;&lt; '[' &lt;&lt; func &lt;&lt; ':' &lt;&lt; line &lt;&lt; "] " &lt;&lt; fmt;
+    vprintf(format.str().c_str(), va);
+    fflush(stdout);
+}</span></pre>
+	</body>
+</html>

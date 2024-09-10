@@ -1,0 +1,114 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>DiagJsonTransform.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "DiagJsonTransform.h"
+#include "../AnalyzerOptions.h"
+namespace Json
+{
+Value &amp;parse(const Diagnostic &amp;diag, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    auto &amp;root = new_object();
+    root.append("bug_type", new_value(diag.bug_type));
+    if (opts.output_checker)
+        root.append("checker_name", new_value(diag.checker_name));
+    auto &amp;loc = new_object();
+    root.append("location", loc);</span>
+
+<span style = "background-color:#dfd">    loc.append("column_number", new_value((int)diag.column_number));
+    loc.append("line_number", new_value((int)diag.line_number));
+    loc.append("file_name", new_value(diag.filename));
+    if (opts.output_description)
+        root.append("description", new_value(diag.description));</span>
+
+    /*root.append("bug_type", new_value(diag.bug_type));
+    root.append("checker_name", new_value(diag.checker_name));
+    auto &amp;loc = new_object();
+    root.append("location", loc);
+
+    loc.append("column_number", new_value((int)diag.column_number));
+    loc.append("line_number", new_value((int)diag.line_number));
+    loc.append("file_name", new_value(diag.filename));
+    root.append("description", new_value(diag.description));*/
+
+<span style = "background-color:#dfd">    return root;
+}</span>
+
+std::string stringify(const Diagnostic &amp;diag, const OutputOptions &amp;opts)
+<span style = "background-color:#fdd">{
+    auto &amp;v = parse(diag, opts);
+    std::string s = stringify(v);
+    v.release();
+    return s;
+}</span>
+
+Value &amp;parse(const Stats &amp;stats)
+<span style = "background-color:#dfd">{
+    auto &amp;root = new_object();
+    root.append("file_name", new_value(stats.filename));
+    root.append("analysis_time", new_value(stats.analysis_time));
+    return root;
+}</span>
+
+std::string stringify(const Stats &amp;stats)
+<span style = "background-color:#fdd">{
+    auto &amp;v = parse(stats);
+    std::string s = stringify(v);
+    v.release();
+    return s;
+}</span>
+
+Value &amp;parse(ResultCollector &amp;rc, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    auto &amp;root = new_object();
+    auto &amp;diags = new_array();
+    root.append("diagnostics", diags);</span>
+
+<span style = "background-color:#dfd">    for (auto &amp;diag : rc.get_diagnostics())</span>
+    {
+<span style = "background-color:#dfd">        diags.append(parse(diag, opts));
+    }</span>
+
+<span style = "background-color:#dfd">    if (opts.output_stats)</span>
+    {
+<span style = "background-color:#dfd">        auto &amp;stats = new_array();
+        auto &amp;bug_type_stats = new_array();
+        root.append("stats", stats);
+        root.append("bug_type_stats", bug_type_stats);</span>
+
+<span style = "background-color:#dfd">        for (auto &amp;status : rc.get_stats())</span>
+        {
+<span style = "background-color:#dfd">            stats.append(parse(status));
+        }</span>
+
+        /*for (auto &amp;p : rc.get_bug_type_map())
+        {
+            auto &amp;bug_type = p.first;
+            auto &amp;num = p.second;
+            auto &amp;bug = new_object();
+            bug.append("bug_type", new_value(bug_type));
+            bug.append("num", new_value(num));
+
+            bug_type_stats.append(bug);
+        }*/
+    }
+<span style = "background-color:#dfd">    return root;
+}</span>
+
+std::string stringify(ResultCollector &amp;rc, const OutputOptions &amp;opts)
+<span style = "background-color:#dfd">{
+    auto &amp;root = parse(rc, opts);
+    std::string s = stringify(root);
+    root.release();
+    return s;
+}</span>
+} // namespace Json</pre>
+	</body>
+</html>

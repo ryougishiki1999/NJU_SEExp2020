@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/plugin/connection_control/security_context_wrapper.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/* Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License, version 2.0,
+   as published by the Free Software Foundation.
+
+   This program is also distributed with certain software (including
+   but not limited to OpenSSL) that is licensed under separate terms,
+   as designated in a particular file or component or in included license
+   documentation.  The authors of MySQL hereby grant you an additional
+   permission to link the program and your derivative works with the
+   separately licensed software that they have included with MySQL.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License, version 2.0, for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+#define MYSQL_SERVER  "We need security context"
+
+#include &lt;sql_class.h&gt;                      /* THD, Security context */
+#include &lt;sql_acl.h&gt;                        /* SUPER_ACL */
+
+#include "security_context_wrapper.h"
+
+namespace connection_control
+{
+  /**
+    Security_context_wrapper constructor.
+
+    @param [in] thd    Handle to THD
+
+    Get security context from thd.
+  */
+  Security_context_wrapper::Security_context_wrapper(MYSQL_THD thd)
+  {
+    m_valid= thd-&gt;security_ctx ? true : false;
+    m_thd= thd;
+  }
+
+
+  /**
+    Get value for given property from security context
+
+    @param [in] property    Property to be checked
+    @param [out] value      Value of the property
+
+    @returns status of property check
+      @retval true Error fetching property value
+      @retval false value contains valid value for given property
+  */
+
+  bool
+  Security_context_wrapper::get_property(const char *property, LEX_CSTRING *value)
+  {
+    value-&gt;length=0;
+    value-&gt;str= 0;
+
+    if (!m_valid || !property)
+      return true;
+    else
+    {
+      if (!strcmp(property, "priv_user"))
+      {
+        if (m_thd-&gt;security_ctx-&gt;priv_user)
+        {
+          value-&gt;str= m_thd-&gt;security_ctx-&gt;priv_user;
+          value-&gt;length= strlen(value-&gt;str);
+        }
+      }
+      else if (!strcmp(property, "priv_host"))
+      {
+        if (m_thd-&gt;security_ctx-&gt;priv_host)
+        {
+          value-&gt;str= m_thd-&gt;security_ctx-&gt;priv_host;
+          value-&gt;length= strlen(value-&gt;str);
+        }
+      }
+      else if (!strcmp(property, "user"))
+      {
+        if (m_thd-&gt;security_ctx-&gt;user)
+        {
+          value-&gt;str= m_thd-&gt;security_ctx-&gt;user;
+          value-&gt;length= strlen(value-&gt;str);
+        }
+      }
+      else if (!strcmp(property, "proxy_user"))
+      {
+        if (m_thd-&gt;security_ctx-&gt;proxy_user)
+        {
+          value-&gt;str= m_thd-&gt;security_ctx-&gt;proxy_user;
+          value-&gt;length= strlen(value-&gt;str);
+        }
+      }
+      else if (!strcmp(property, "host"))
+      {
+        if (m_thd-&gt;security_ctx-&gt;get_host()-&gt;length())
+        {
+          value-&gt;str= m_thd-&gt;security_ctx-&gt;get_host()-&gt;c_ptr();
+          value-&gt;length= strlen(value-&gt;str);
+        }
+      }
+      else if (!strcmp(property, "ip"))
+      {
+        if (m_thd-&gt;security_ctx-&gt;get_ip()-&gt;length())
+        {
+          value-&gt;str= m_thd-&gt;security_ctx-&gt;get_ip()-&gt;c_ptr();
+          value-&gt;length= strlen(value-&gt;str);
+        }
+      }
+      else
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+
+  /**  Get proxy user information from security context */
+
+  const char *
+    Security_context_wrapper::get_proxy_user()
+  {
+    LEX_CSTRING proxy_user;
+    if (get_property("proxy_user", &amp;proxy_user))
+      return 0;
+    return proxy_user.str;
+  }
+
+
+  /** Get priv user information from security context */
+
+  const char *
+    Security_context_wrapper::get_priv_user()
+  {
+    LEX_CSTRING priv_user;
+    if (get_property("priv_user", &amp;priv_user))
+      return 0;
+    return priv_user.str;
+  }
+
+
+  /** Get priv host information from security context */
+
+  const char *
+    Security_context_wrapper::get_priv_host()
+  {
+    LEX_CSTRING priv_host;
+    if (get_property("priv_host", &amp;priv_host))
+      return 0;
+    return priv_host.str;
+  }
+
+
+  /** Get connected user information from security context */
+
+  const char *
+    Security_context_wrapper::get_user()
+  {
+    LEX_CSTRING user;
+    if (get_property("user", &amp;user))
+      return 0;
+    return user.str;
+  }
+
+
+  /** Get connected host information from security context */
+
+  const char *
+    Security_context_wrapper::get_host()
+  {
+    /*
+      We can't use thd-&gt;security_ctx-&gt;priv_host_name()
+      because it returns "%" if hostname is empty.
+      However, thd-&gt;security_ctx-&gt;proxy_user won't have
+      "%" if hostname was empty.
+
+      To be consistent, we will always use
+      'user'@'host'/''@'host'/''@'' type of representation.
+    */
+    LEX_CSTRING host;
+    if (get_property("host", &amp;host))
+      return 0;
+    return host.str;
+  }
+
+
+  /** Get connected ip information from security context */
+
+  const char *
+    Security_context_wrapper::get_ip()
+  {
+    LEX_CSTRING ip;
+    if (get_property("ip", &amp;ip))
+      return 0;
+    return ip.str;
+  }
+
+
+  /** Check if valid security context exists for give THD or not */
+
+  bool
+    Security_context_wrapper::security_context_exists()
+  {
+    return m_valid;
+  }
+
+
+  /** Check whether user has requried privilege or not */
+
+  bool
+    Security_context_wrapper::is_super_user()
+  {
+    if (!m_valid)
+      return false;
+
+    bool has_super= ((m_thd-&gt;security_ctx-&gt;master_access &amp; SUPER_ACL) == SUPER_ACL);
+
+    return has_super;
+  }
+}
+      </pre>
+    </body>
+</html>

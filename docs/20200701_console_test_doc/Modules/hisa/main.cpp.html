@@ -1,0 +1,73 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>main.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "REPL/Shell.h"
+#include "../core/tool/Instance.h"
+#include "../core/Logger.h"
+#include &lt;iostream&gt;
+#include &lt;sstream&gt;
+void analyzing_file_callback(std::unique_ptr&lt;Event&gt; ev)
+<span style = "background-color:#dfd">{
+    AnalyzingFileEvent *aev = static_cast&lt;AnalyzingFileEvent *&gt;(ev.get());
+    std::cout &lt;&lt; "Analyzing " &lt;&lt; aev-&gt;filename &lt;&lt; '\n';
+}</span>
+int main(int argc, char *argv[])
+<span style = "background-color:#dfd">{</span>
+    // init
+<span style = "background-color:#dfd">    HiSAInstance::global_init();</span>
+#ifdef _DEBUG
+    // set log level
+<span style = "background-color:#dfd">    Logger::filter_log_level = Logger::Debug;</span>
+    // temp commandline
+<span style = "background-color:#dfd">    std::string temp_cmd;
+    std::getline(std::cin, temp_cmd);
+    std::vector&lt;std::string&gt; temp_argv_string;
+    std::istringstream temp_ss(temp_cmd);
+    while (!temp_ss.eof())</span>
+    {
+<span style = "background-color:#dfd">        std::string s;
+        temp_ss &gt;&gt; s;
+        temp_argv_string.push_back(s);
+    }
+    std::vector&lt;char *&gt; temp_argv;
+    for (auto i = 0; i &lt; temp_argv_string.size(); ++i)</span>
+    {
+        // ATTENTION: THIS HAS MEMORY BUG. BUT FOR NOW IT'S SAFE.
+        // WE WILL USE THE main's argc,argv instead in future.
+<span style = "background-color:#dfd">        temp_argv.push_back((char *)temp_argv_string[i].c_str());
+    }
+    argc = temp_argv.size();
+    argv = temp_argv.data();</span>
+#else
+    // set log level
+    Logger::filter_log_level = Logger::Info;
+#endif
+<span style = "background-color:#dfd">    if (argc == 1)</span>
+    {
+        Shell shell;
+<span style = "background-color:#dfd">        shell.exec(std::cin);
+        return 0;</span>
+    }
+<span style = "background-color:#dfd">    EventCallbackTable event_table;
+    event_table.set_callback(Event::OnAnalyzingFile, analyzing_file_callback);</span>
+
+<span style = "background-color:#dfd">    HiSAInstance instance(event_table);</span>
+
+<span style = "background-color:#dfd">    INFO("Running...\n");
+    if (instance.run(argc, argv) != 0)</span>
+    {
+<span style = "background-color:#dfd">        WARNING("0ops, clang error detected. Some files may not be analyzed because of it.\n");</span>
+    }
+
+<span style = "background-color:#dfd">    return 0;
+}</span></pre>
+	</body>
+</html>

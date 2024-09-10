@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/mysql-5.6.46/storage/innobase/eval/eval0proc.cc</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*****************************************************************************
+
+Copyright (c) 1998, 2011, Oracle and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License, version 2.0,
+as published by the Free Software Foundation.
+
+This program is also distributed with certain software (including
+but not limited to OpenSSL) that is licensed under separate terms,
+as designated in a particular file or component or in included license
+documentation.  The authors of MySQL hereby grant you an additional
+permission to link the program and your derivative works with the
+separately licensed software that they have included with MySQL.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License, version 2.0, for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+
+*****************************************************************************/
+
+/**************************************************//**
+@file eval/eval0proc.cc
+Executes SQL stored procedures and their control structures
+
+Created 1/20/1998 Heikki Tuuri
+*******************************************************/
+
+#include "eval0proc.h"
+
+#ifdef UNIV_NONINL
+#include "eval0proc.ic"
+#endif
+
+/**********************************************************************//**
+Performs an execution step of an if-statement node.
+@return	query thread to run next or NULL */
+UNIV_INTERN
+que_thr_t*
+if_step(
+/*====*/
+	que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	if_node_t*	node;
+	elsif_node_t*	elsif_node;
+
+	ut_ad(thr);
+
+	node = static_cast&lt;if_node_t*&gt;(thr-&gt;run_node);
+	ut_ad(que_node_get_type(node) == QUE_NODE_IF);
+
+	if (thr-&gt;prev_node == que_node_get_parent(node)) {
+
+		/* Evaluate the condition */
+
+		eval_exp(node-&gt;cond);
+
+		if (eval_node_get_ibool_val(node-&gt;cond)) {
+
+			/* The condition evaluated to TRUE: start execution
+			from the first statement in the statement list */
+
+			thr-&gt;run_node = node-&gt;stat_list;
+
+		} else if (node-&gt;else_part) {
+			thr-&gt;run_node = node-&gt;else_part;
+
+		} else if (node-&gt;elsif_list) {
+			elsif_node = node-&gt;elsif_list;
+
+			for (;;) {
+				eval_exp(elsif_node-&gt;cond);
+
+				if (eval_node_get_ibool_val(
+					    elsif_node-&gt;cond)) {
+
+					/* The condition evaluated to TRUE:
+					start execution from the first
+					statement in the statement list */
+
+					thr-&gt;run_node = elsif_node-&gt;stat_list;
+
+					break;
+				}
+
+				elsif_node = static_cast&lt;elsif_node_t*&gt;(
+					que_node_get_next(elsif_node));
+
+				if (elsif_node == NULL) {
+					thr-&gt;run_node = NULL;
+
+					break;
+				}
+			}
+		} else {
+			thr-&gt;run_node = NULL;
+		}
+	} else {
+		/* Move to the next statement */
+		ut_ad(que_node_get_next(thr-&gt;prev_node) == NULL);
+
+		thr-&gt;run_node = NULL;
+	}
+
+	if (thr-&gt;run_node == NULL) {
+		thr-&gt;run_node = que_node_get_parent(node);
+	}
+
+	return(thr);
+}
+
+/**********************************************************************//**
+Performs an execution step of a while-statement node.
+@return	query thread to run next or NULL */
+UNIV_INTERN
+que_thr_t*
+while_step(
+/*=======*/
+	que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	while_node_t*	node;
+
+	ut_ad(thr);
+
+	node = static_cast&lt;while_node_t*&gt;(thr-&gt;run_node);
+	ut_ad(que_node_get_type(node) == QUE_NODE_WHILE);
+
+	ut_ad((thr-&gt;prev_node == que_node_get_parent(node))
+	      || (que_node_get_next(thr-&gt;prev_node) == NULL));
+
+	/* Evaluate the condition */
+
+	eval_exp(node-&gt;cond);
+
+	if (eval_node_get_ibool_val(node-&gt;cond)) {
+
+		/* The condition evaluated to TRUE: start execution
+		from the first statement in the statement list */
+
+		thr-&gt;run_node = node-&gt;stat_list;
+	} else {
+		thr-&gt;run_node = que_node_get_parent(node);
+	}
+
+	return(thr);
+}
+
+/**********************************************************************//**
+Performs an execution step of an assignment statement node.
+@return	query thread to run next or NULL */
+UNIV_INTERN
+que_thr_t*
+assign_step(
+/*========*/
+	que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	assign_node_t*	node;
+
+	ut_ad(thr);
+
+	node = static_cast&lt;assign_node_t*&gt;(thr-&gt;run_node);
+	ut_ad(que_node_get_type(node) == QUE_NODE_ASSIGNMENT);
+
+	/* Evaluate the value to assign */
+
+	eval_exp(node-&gt;val);
+
+	eval_node_copy_val(node-&gt;var-&gt;alias, node-&gt;val);
+
+	thr-&gt;run_node = que_node_get_parent(node);
+
+	return(thr);
+}
+
+/**********************************************************************//**
+Performs an execution step of a for-loop node.
+@return	query thread to run next or NULL */
+UNIV_INTERN
+que_thr_t*
+for_step(
+/*=====*/
+	que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	for_node_t*	node;
+	que_node_t*	parent;
+	lint		loop_var_value;
+
+	ut_ad(thr);
+
+	node = static_cast&lt;for_node_t*&gt;(thr-&gt;run_node);
+
+	ut_ad(que_node_get_type(node) == QUE_NODE_FOR);
+
+	parent = que_node_get_parent(node);
+
+	if (thr-&gt;prev_node != parent) {
+
+		/* Move to the next statement */
+		thr-&gt;run_node = que_node_get_next(thr-&gt;prev_node);
+
+		if (thr-&gt;run_node != NULL) {
+
+			return(thr);
+		}
+
+		/* Increment the value of loop_var */
+
+		loop_var_value = 1 + eval_node_get_int_val(node-&gt;loop_var);
+	} else {
+		/* Initialize the loop */
+
+		eval_exp(node-&gt;loop_start_limit);
+		eval_exp(node-&gt;loop_end_limit);
+
+		loop_var_value = eval_node_get_int_val(node-&gt;loop_start_limit);
+
+		node-&gt;loop_end_value
+                  = (int) eval_node_get_int_val(node-&gt;loop_end_limit);
+	}
+
+	/* Check if we should do another loop */
+
+	if (loop_var_value &gt; node-&gt;loop_end_value) {
+
+		/* Enough loops done */
+
+		thr-&gt;run_node = parent;
+	} else {
+		eval_node_set_int_val(node-&gt;loop_var, loop_var_value);
+
+		thr-&gt;run_node = node-&gt;stat_list;
+	}
+
+	return(thr);
+}
+
+/**********************************************************************//**
+Performs an execution step of an exit statement node.
+@return	query thread to run next or NULL */
+UNIV_INTERN
+que_thr_t*
+exit_step(
+/*======*/
+	que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	exit_node_t*	node;
+	que_node_t*	loop_node;
+
+	ut_ad(thr);
+
+	node = static_cast&lt;exit_node_t*&gt;(thr-&gt;run_node);
+
+	ut_ad(que_node_get_type(node) == QUE_NODE_EXIT);
+
+	/* Loops exit by setting thr-&gt;run_node as the loop node's parent, so
+	find our containing loop node and get its parent. */
+
+	loop_node = que_node_get_containing_loop_node(node);
+
+	/* If someone uses an EXIT statement outside of a loop, this will
+	trigger. */
+	ut_a(loop_node);
+
+	thr-&gt;run_node = que_node_get_parent(loop_node);
+
+	return(thr);
+}
+
+/**********************************************************************//**
+Performs an execution step of a return-statement node.
+@return	query thread to run next or NULL */
+UNIV_INTERN
+que_thr_t*
+return_step(
+/*========*/
+	que_thr_t*	thr)	/*!&lt; in: query thread */
+{
+	return_node_t*	node;
+	que_node_t*	parent;
+
+	ut_ad(thr);
+
+	node = static_cast&lt;return_node_t*&gt;(thr-&gt;run_node);
+
+	ut_ad(que_node_get_type(node) == QUE_NODE_RETURN);
+
+	parent = node;
+
+	while (que_node_get_type(parent) != QUE_NODE_PROC) {
+
+		parent = que_node_get_parent(parent);
+	}
+
+	ut_a(parent);
+
+	thr-&gt;run_node = que_node_get_parent(parent);
+
+	return(thr);
+}
+      </pre>
+    </body>
+</html>

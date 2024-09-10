@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/signaler.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "signaler.h"
+
+#include &lt;algorithm&gt;
+
+#include &lt;sys/signalfd.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;assert.h&gt;
+
+#include "log.h"
+#include "ioloop.h"
+
+using namespace std;
+
+namespace tnet
+{
+    Signaler::Signaler(int signum, const SignalHandler_t&amp; handler)
+        : m_loop(0)
+        , m_fd(-1)
+        , m_running(false)
+        , m_signums{signum}
+        , m_handler(handler)
+    {
+        m_fd = createSignalFd(m_signums);
+    }
+
+    Signaler::Signaler(const vector&lt;int&gt;&amp; signums, const SignalHandler_t&amp; handler)
+        : m_loop(0)
+        , m_fd(-1)
+        , m_running(false)
+        , m_signums(signums)
+        , m_handler(handler)
+    {
+        m_fd = createSignalFd(m_signums);
+    }
+
+    Signaler::~Signaler()
+    {
+        LOG_INFO("destroyed %d", m_fd);
+        if(m_fd &gt; 0)
+        {
+            close(m_fd);    
+        } 
+    } 
+  
+    int Signaler::createSignalFd(const std::vector&lt;int&gt;&amp; signums)
+    {
+        sigset_t mask;
+        
+        sigemptyset(&amp;mask);
+        for(size_t i = 0; i &lt; signums.size(); ++i)
+        {
+            sigaddset(&amp;mask, signums[i]);
+        }
+
+        if(sigprocmask(SIG_BLOCK, &amp;mask, NULL) &lt; 0)
+        {
+            LOG_ERROR("sigprocmask error");
+            return -1;  
+        } 
+
+        int fd = signalfd(-1, &amp;mask, SFD_NONBLOCK | SFD_CLOEXEC);
+        if(fd &lt; 0)
+        {
+            LOG_ERROR("signalfd error %s", errorMsg(errno));    
+        }
+   
+        return fd;
+    }
+   
+    void Signaler::start(IOLoop* loop)
+    {
+        assert(m_fd &gt; 0);
+        if(m_running)
+        {
+            LOG_WARN("signaler was started");
+            return;    
+        }
+        
+        LOG_INFO("start signaler %d", m_fd);
+        
+        m_running = true;
+        m_loop = loop;
+
+        m_loop-&gt;addHandler(m_fd, TNET_READ, 
+            std::bind(&amp;Signaler::onSignal, shared_from_this(), _1, _2));
+    }
+    
+    void Signaler::stop()
+    {
+        assert(m_fd &gt; 0);
+        if(!m_running)
+        {
+            LOG_WARN("signaler was stopped");
+            return;    
+        }
+
+        LOG_INFO("stop signaler %d", m_fd);
+
+        m_running = false;
+
+        m_loop-&gt;removeHandler(m_fd);
+    }     
+
+    void Signaler::onSignal(IOLoop* loop, int events)
+    {
+        SignalerPtr_t signaler = shared_from_this();
+
+        struct signalfd_siginfo fdsi;
+        ssize_t s = read(m_fd, &amp;fdsi, sizeof(fdsi));
+        if(s != sizeof(fdsi))
+        {
+            LOG_ERROR("onSignal read error");
+            return;    
+        } 
+
+        int signum = fdsi.ssi_signo;
+        if(std::find(m_signums.begin(), m_signums.end(), signum) == m_signums.end())
+        {
+            LOG_ERROR("uexpect signum %d", signum);
+            return;  
+        } 
+    
+        m_handler(signaler, signum);
+    }
+}
+      </pre>
+    </body>
+</html>

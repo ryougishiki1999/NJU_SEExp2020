@@ -1,0 +1,43 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>Event.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#include "Event.h"
+
+<span style = "background-color:#dfd">Event::Event(EventType t) : type(t)
+{
+}</span>
+
+static void default_callback(std::unique_ptr&lt;Event&gt;)
+<span style = "background-color:#dfd">{
+}
+EventCallbackTable::EventCallbackTable() : callbacks(Event::EventCount)
+{
+    for (auto &amp;i : callbacks)</span>
+    {
+<span style = "background-color:#dfd">        i = default_callback;
+    }
+}</span>
+
+void EventCallbackTable::callback(std::unique_ptr&lt;Event&gt; ev)
+<span style = "background-color:#dfd">{
+    callbacks[ev-&gt;type](std::move(ev));
+}</span>
+void EventCallbackTable::set_callback(Event::EventType t, Event::EventCallbackType c)
+<span style = "background-color:#dfd">{
+    callbacks[t] = c;
+}</span>
+
+// AnalyzingFileEvent
+<span style = "background-color:#dfd">AnalyzingFileEvent::AnalyzingFileEvent(const std::string &amp;fn) : Event(OnAnalyzingFile), filename(fn)
+{
+}</span></pre>
+	</body>
+</html>

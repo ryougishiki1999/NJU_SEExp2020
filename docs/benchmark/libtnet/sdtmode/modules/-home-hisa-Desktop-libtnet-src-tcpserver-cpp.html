@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/tcpserver.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "tcpserver.h"
+
+#include &lt;algorithm&gt;
+#include &lt;errno.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/wait.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;assert.h&gt;
+#include &lt;time.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include "address.h"
+#include "sockutil.h"
+#include "log.h"
+#include "acceptor.h"
+#include "connection.h"
+#include "ioloop.h"
+#include "signaler.h"
+#include "timer.h"
+#include "process.h"
+#include "timingwheel.h"
+
+using namespace std;
+
+namespace tnet
+{
+    const int defaultIdleTimeout = 120;
+
+    void dummyRunCallback(IOLoop*)
+    {
+    }
+
+    TcpServer::TcpServer()
+        : m_loop(0)
+    {
+        m_process = std::make_shared&lt;Process&gt;();
+    
+        m_running = false;
+    
+        m_maxIdleTimeout = defaultIdleTimeout;
+
+        m_runCallback = std::bind(&amp;dummyRunCallback, _1);
+    }
+ 
+    TcpServer::~TcpServer()
+    {
+        if(m_loop)
+        {
+            delete m_loop;
+        }
+    }
+
+    int TcpServer::listen(const Address&amp; addr, const ConnEventCallback_t&amp; callback)
+    {
+        LOG_INFO("listen %s:%d", addr.ipstr().c_str(), addr.port());
+        NewConnCallback_t cb = std::bind(&amp;TcpServer::onNewConnection, this, _1, _2, callback);
+        AcceptorPtr_t acceptor = std::make_shared&lt;Acceptor&gt;(cb);
+        if(acceptor-&gt;listen(addr) &lt; 0)
+        {
+            return -1;    
+        }     
+
+        m_acceptors.push_back(acceptor);
+        return 0;
+    }
+
+    void TcpServer::run()
+    {
+        if(m_running)
+        {
+            return;    
+        }
+
+        m_loop = new IOLoop();
+        
+        m_running = true;
+     
+     
+        m_loop-&gt;addCallback(std::bind(&amp;TcpServer::onRun, this));
+
+<span style = "background-color:#fdd">        m_loop-&gt;start();        Memory Leak:Potential memory leak at pointer field 'm_loop'</span>
+    }
+
+    void TcpServer::onRun()
+    {
+        LOG_INFO("tcp server on run");
+        
+        for_each(m_acceptors.begin(), m_acceptors.end(), 
+            std::bind(&amp;Acceptor::start, _1, m_loop));
+
+        vector&lt;int&gt; signums{SIGINT, SIGTERM};
+        m_signaler = std::make_shared&lt;Signaler&gt;(signums, std::bind(&amp;TcpServer::onSignal, this, _1, _2)); 
+        
+        m_signaler-&gt;start(m_loop);
+
+        m_idleWheel = std::make_shared&lt;TimingWheel&gt;(1000, 3600);
+
+        m_idleWheel-&gt;start(m_loop);
+
+        m_runCallback(m_loop);
+    }
+
+    void TcpServer::start(size_t maxProcess)
+    {
+        if(maxProcess &gt; 1)
+        {
+            m_process-&gt;wait(maxProcess, std::bind(&amp;TcpServer::run, this));   
+        }
+        else
+        {
+            run();
+        }
+    }   
+
+    void TcpServer::onStop()
+    {
+        LOG_INFO("tcp server on stop");
+        if(!m_running)
+        {
+            return;    
+        }
+
+        m_running = false;
+
+        m_idleWheel-&gt;stop();
+
+        m_signaler-&gt;stop();
+        
+        for_each_all(m_acceptors, std::bind(&amp;Acceptor::stop, _1));
+         
+        m_loop-&gt;stop();    
+    }
+
+    void TcpServer::stop()
+    {
+        LOG_INFO("stop server");
+        m_process-&gt;stop(); 
+
+        onStop();
+    }
+
+    void TcpServer::onNewConnection(IOLoop* loop, int fd, const ConnEventCallback_t&amp; callback)
+    {
+        ConnectionPtr_t conn = std::make_shared&lt;Connection&gt;(loop, fd);
+        
+        conn-&gt;setEventCallback(callback);
+
+        conn-&gt;onEstablished();
+
+        int afterCheck = m_maxIdleTimeout / 2 + random() % m_maxIdleTimeout;
+        m_idleWheel-&gt;add(std::bind(&amp;TcpServer::onIdleConnCheck, this, _1, WeakConnectionPtr_t(conn)), afterCheck * 1000);
+
+        return;
+    }
+
+    void TcpServer::onIdleConnCheck(const TimingWheelPtr_t&amp; wheel, const WeakConnectionPtr_t&amp; conn)
+    {
+        ConnectionPtr_t c = conn.lock();
+        if(!c)
+        {
+            return;
+        }        
+    
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &amp;t);
+        uint64_t now = t.tv_sec;
+
+        if(now - c-&gt;lastActiveTime() &gt; (uint64_t)m_maxIdleTimeout)
+        {
+            LOG_INFO("timeout, force shutdown");
+            c-&gt;shutDown();
+        }
+        else
+        { 
+            //check interval is (maxIdleTimeout * 9 / 10) * 1000
+            m_idleWheel-&gt;add(std::bind(&amp;TcpServer::onIdleConnCheck, this, _1, WeakConnectionPtr_t(c)), m_maxIdleTimeout * 900);
+        }
+    }
+
+    void TcpServer::onSignal(const SignalerPtr_t&amp; signaler, int signum)
+    {
+        switch(signum)
+        {
+            case SIGINT:
+            case SIGTERM:
+                {
+                    onStop();
+                }
+                break;
+            default:
+                LOG_ERROR("invalid signal %d", signum);
+                break;
+        }    
+    }
+}
+      </pre>
+    </body>
+</html>

@@ -1,0 +1,84 @@
+#rounded-corner
+{
+	font-family: "Lucida Sans Unicode", "Lucida Grande", Sans-Serif;
+	font-size: 12px;
+	margin: 45px;
+	width: 90%;
+  text-align: left;
+  border-collapse: collapse;
+  border-radius: 15px;
+  overflow: hidden;
+}
+#rounded-corner thead th.rounded-left
+{
+  background: #b9c9fd;
+}
+#rounded-corner thead th.rounded-right
+{
+  background: #b9c9fd;
+}
+#rounded-corner th
+{
+  padding: 8px;
+  font-weight: normal;
+  font-size: 13px;
+  color: #039;
+  background: #b9c9fd;
+}
+#rounded-corner td
+{
+  padding: 8px;
+  background: #e5e9f8;
+  border-top: 1px solid #fff;
+  color: #669;
+}
+#rounded-corner tfoot td.rounded-foot-left
+{
+  background: #e5e9f8;
+}
+#rounded-corner tfoot td.rounded-foot-right
+{
+  background: #e5e9f8;
+}
+#rounded-corner tbody tr:hover td
+{
+  background: #cad4fc;
+}
+#button-wrapper
+{
+    margin-left: auto;
+    margin-right: auto;
+    margin-top: 20px;
+    margin-bottom: 20px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    padding-left: 0px;
+    padding-right: 0px;
+    text-align: center;
+    width: 200px;
+    background-color: #fff;
+    border-left: 0px;
+    border-right: 0px;
+    border-top: 0px;
+    border-bottom: 0px;
+}
+.click-button
+{
+    border-width: 1px;
+    border-style: solid;
+    border-color: #eee;
+    background-color: #e5e9f8;
+    color:#038;
+    border-radius: 15px;
+    text-align: center;
+    text-decoration: none;
+    font-size: 16px;
+    cursor: pointer;
+    width: 200px;
+    height: 50px;
+}
+.click-button:hover
+{
+    background-color: #039;
+    color:white;
+}

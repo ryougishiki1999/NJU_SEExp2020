@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>/home/hisa/Desktop/libtnet/src/timer.cpp</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+#include "timer.h"
+
+#include &lt;assert.h&gt;
+#include &lt;sys/timerfd.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;errno.h&gt;
+
+#include "ioloop.h"
+#include "log.h"
+
+namespace tnet
+{
+    const uint64_t milliPerSeconds = 1000;
+    const uint64_t microPerSeconds = 1000000;
+    const uint64_t nanoPerSeconds = 1000000000;
+    const uint64_t nanoPerMilli = 1000000;
+
+    Timer::Timer(const TimerHandler_t&amp; handler, int repeat, int after)
+        : m_loop(0)
+        , m_running(false)
+        , m_handler(handler)
+        , m_repeated(false)
+    {
+        m_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+        if(m_fd &lt; 0)
+        {
+            LOG_ERROR("create timer error %s", errorMsg(errno));
+            return;
+        } 
+
+        reset(repeat, after);    
+    }
+
+    Timer::~Timer()
+    {
+        LOG_INFO("destroyed %d", m_fd);
+        if(m_fd &gt; 0)
+        {
+            close(m_fd);
+        }
+    }
+
+    void Timer::start(IOLoop* loop)
+    {
+        assert(m_fd &gt; 0);
+
+        if(m_running)
+        {
+            LOG_WARN("timer was started");
+            return;    
+        }
+
+        LOG_INFO("start timer %d", m_fd);
+
+        m_loop = loop;
+        
+        m_running = true;
+
+        m_loop-&gt;addHandler(m_fd, TNET_READ, 
+            std::bind(&amp;Timer::onTimer, shared_from_this(), _1, _2));    
+    }
+
+    void Timer::stop()
+    {
+        if(!m_running)
+        {
+            LOG_WARN("timer was stopped");
+            return;
+        }
+
+        m_running = false;
+        m_loop-&gt;removeHandler(m_fd);
+    
+    }
+
+    void Timer::reset(int repeat, int after)
+    {
+        if(m_fd &lt;= 0)
+        {
+            return;    
+        }
+
+        m_repeated = (repeat &gt; 0); 
+
+        struct itimerspec t;
+        if(repeat &gt; 0)
+        {
+            t.it_interval.tv_sec = (uint64_t)repeat / milliPerSeconds;
+            t.it_interval.tv_nsec = ((uint64_t)repeat % milliPerSeconds) * nanoPerMilli;
+        }
+
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &amp;now);
+        t.it_value.tv_sec = now.tv_sec + (uint64_t)after / milliPerSeconds;
+        t.it_value.tv_nsec = now.tv_nsec + ((uint64_t)after % milliPerSeconds) * nanoPerMilli; 
+
+        if(timerfd_settime(m_fd, TFD_TIMER_ABSTIME, &amp;t, NULL) &lt; 0)
+        {
+            LOG_ERROR("set timer error");    
+        } 
+    }
+
+    void Timer::onTimer(IOLoop* loop, int events)
+    {
+        TimerPtr_t timer = shared_from_this();
+
+        uint64_t exp;
+        ssize_t s = read(m_fd, &amp;exp, sizeof(uint64_t));
+        if(s != sizeof(exp))
+        {
+            LOG_ERROR("onTimer read error");       
+        }
+        else
+        {
+            m_handler(timer);     
+    
+            if(!isRepeated())
+            {
+                //timer is an once timer, here stop 
+                timer-&gt;stop();    
+            }
+        }
+    }
+}
+      </pre>
+    </body>
+</html>

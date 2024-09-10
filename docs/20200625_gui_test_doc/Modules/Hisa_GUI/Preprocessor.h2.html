@@ -1,0 +1,260 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>Preprocessor.h</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+#ifndef GUI_PREPROCESSOR_H
+#define GUI_PREPROCESSOR_H
+#include "FileSystemTree.h"
+#include &lt;filesystem&gt;
+#include &lt;map&gt;
+#include &lt;memory&gt;
+#include &lt;mutex&gt;
+#include &lt;queue&gt;
+#include &lt;set&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
+
+#define ROOT_DIRECTORY "."
+#define PARENT_DIRECTORY ".."
+
+#define COMPILE_COMMANDS_FILENAME "compile_commands.json"
+#define COMPILE_FILE_ATTRIBUTE "file"
+
+#define CMAKELIST_FIILENAME "CMakeLists.txt"
+#define CMAKE_PROJECT_COMMAND "project"
+
+#define MAKEFILE_FILENAME "Makefile"
+
+struct PathDepth;
+class TargetCMakeList;
+class TargetMakefile;
+
+class Preprocessor;
+
+//===----------------------------------------------------------
+//				Methods for Utilities
+//===----------------------------------------------------------
+
+static std::string &amp;trim(std::string &amp;str);
+
+struct PathDepth
+{
+    const unsigned int _depth;
+    const std::filesystem::path _path;
+
+    PathDepth(const unsigned int depth, const std::filesystem::path &amp;path) : _depth(depth), _path(path)
+    {
+    }
+};
+
+class TargetCMakeList
+{
+    friend Preprocessor;
+
+  public:
+    TargetCMakeList() : _project_name(""), _file_path("")
+    {
+    }
+    TargetCMakeList(const std::string &amp;project_name, const std::string &amp;file_path)
+        : _project_name(project_name), _file_path(file_path)
+    {
+    }
+    TargetCMakeList &amp;operator=(const TargetCMakeList &amp;) = default;
+    ~TargetCMakeList() = default;
+
+    std::string get_project_name() const
+    {
+        return _project_name;
+    }
+
+    const std::filesystem::path &amp;get_file_path() const
+    {
+        return _file_path;
+    }
+
+  private:
+    std::string _project_name;
+    std::filesystem::path _file_path;
+};
+
+class TargetMakefile
+{
+    friend Preprocessor;
+
+  public:
+    TargetMakefile() : _target_name(""), _file_path("")
+    {
+    }
+    TargetMakefile(const std::string &amp;target_name, const std::string &amp;file_path)
+        : _target_name(target_name), _file_path(file_path)
+    {
+    }
+    TargetMakefile &amp;operator=(const TargetMakefile &amp;) = default;
+    ~TargetMakefile() = default;
+
+    std::string get_target_name() const
+    {
+        return _target_name;
+    }
+
+    const std::filesystem::path &amp;get_file_path() const
+    {
+        return _file_path;
+    }
+
+  private:
+    std::string _target_name;
+    std::filesystem::path _file_path;
+};
+
+//===----------------------------------------------------------
+//				class Preprocessor Decl
+//===----------------------------------------------------------
+
+class Preprocessor
+{
+    typedef std::shared_ptr&lt;Preprocessor&gt; PreprocessorPtr;
+
+    friend void preprocess(const std::string&amp;);
+
+  public:
+    static PreprocessorPtr instance();
+
+    Preprocessor(const Preprocessor &amp;) = delete;
+    Preprocessor &amp;operator=(const Preprocessor &amp;) = delete;
+    ~Preprocessor() = default;
+
+    void clear()
+<span style = "background-color:#dfd">    {
+        delete _tree;
+        _tree = nullptr;
+        _entry_path.clear();
+        _target_source_file_list.clear();
+        _compile_commands_json_list.clear();
+        _corresponding_source_file_map.clear();
+    }</span>
+
+    const std::vector&lt;std::filesystem::path&gt; &amp;get_compile_commands_list()
+    {
+        return _compile_commands_json_list;
+    }
+
+    const std::map&lt;std::filesystem::path, std::set&lt;std::filesystem::path&gt;&gt;&amp; get_corres_file_map() const
+    {
+        return _corresponding_source_file_map;
+    }
+
+    void set_target_source_file_list(const std::set&lt;std::filesystem::path&gt; &amp;target_file_list)
+    {
+        _target_source_file_list = target_file_list;
+    }
+
+    const std::map&lt;unsigned int, std::set&lt;std::filesystem::path&gt;&gt; &amp;get_cmakelist_map() const
+    {
+        return _cmakelist_map;
+    }
+
+    const std::vector&lt;TargetCMakeList&gt; &amp;get_target_cmakelist_list() const
+    {
+        return _target_cmakelist_list;
+    }
+
+    void set_target_cmakelist(const TargetCMakeList &amp;target_cmakelist)
+    {
+        _target_cmakelist = target_cmakelist;
+    }
+
+    const std::map&lt;unsigned int, std::set&lt;std::filesystem::path&gt;&gt; &amp;get_makefile_map() const
+    {
+        return _makefile_map;
+    }
+
+    const std::vector&lt;TargetMakefile&gt; &amp;get_target_makefile_list() const
+    {
+        return _target_makefile_list;
+    }
+
+    void set_target_makefile(const TargetMakefile &amp;target_makefile)
+    {
+        _target_makefile = target_makefile;
+    }
+
+    const FileSystemTree *get_file_tree() const
+    {
+        return _tree;
+    }
+
+    bool resolve_source(const std::string &amp;source);
+
+    void search_compile_commands_json_entry();
+
+    void parse_compile_commands_json_entry();
+
+    void search_cmakelist_makefile_entry();
+
+    void parse_cmakelist_entry();
+
+    void generate_by_target_cmakelist();
+
+    void parse_makefile_entry();
+
+    void generate_by_target_makefile();
+
+    void build_file_tree();
+
+  private:
+    Preprocessor()
+    {
+        _tree = nullptr;
+       
+    }
+
+    void search_compile_commands_json(const std::filesystem::path &amp;directory);
+
+    void search_cmakelist_makefile(const std::filesystem::path &amp;directory);
+
+    const std::set&lt;std::filesystem::path&gt; parse_compile_commands_json(const std::string &amp;json_path);
+
+    void search_cmakelist_makefile(const std::filesystem::path &amp;directory, const unsigned int depth);
+
+    void parse_cmakelist_set(const std::set&lt;std::filesystem::path&gt; &amp;cmakelist_set);
+    void parse_cmakelist(const std::string &amp;cmakelist_path);
+
+  private:
+    static PreprocessorPtr _preprocessor;
+    static std::mutex _m_mutex;
+
+    FileSystemTree *_tree;
+
+    std::filesystem::path _entry_path;
+
+    std::set&lt;std::filesystem::path&gt; _target_source_file_list;
+
+    std::vector&lt;std::filesystem::path&gt; _compile_commands_json_list;
+    // std::vector&lt;std::set&lt;std::filesystem::path&gt;&gt; _all_source_file_list;
+    std::map&lt;std::filesystem::path, std::set&lt;std::filesystem::path&gt;&gt; _corresponding_source_file_map;
+
+    // solving the situation when there exists no compile_commands.json but cmakelists.txt...
+    std::map&lt;unsigned int, std::set&lt;std::filesystem::path&gt;&gt; _cmakelist_map;
+    std::vector&lt;TargetCMakeList&gt; _target_cmakelist_list;
+    TargetCMakeList _target_cmakelist;
+    std::map&lt;unsigned int, std::set&lt;std::filesystem::path&gt;&gt; _makefile_map;
+    std::vector&lt;TargetMakefile&gt; _target_makefile_list;
+    TargetMakefile _target_makefile;
+
+    // do not supply for userers...
+    std::set&lt;unsigned int&gt; _cmakelist_depth_list;
+    std::set&lt;unsigned int&gt; _makefile_depth_list;
+    std::queue&lt;PathDepth&gt; _candidate_dir;
+};
+
+#endif</pre>
+	</body>
+</html>

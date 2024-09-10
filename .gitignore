@@ -1,0 +1,14 @@
+.vscode/
+.vs/
+src/.vs/
+src/out/
+**/CMakeSettings.json
+build*/
+CMakeFiles/
+out/
+**/compile_commands.json
+
+#   linux
+Makefile
+cmake_install.cmake
+CMakeCache.txt

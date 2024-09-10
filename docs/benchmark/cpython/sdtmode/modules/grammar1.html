@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Parser/grammar1.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+
+/* Grammar subroutines needed by parser */
+
+#include "Python.h"
+#include "grammar.h"
+#include "token.h"
+
+/* Return the DFA for the given type */
+
+const dfa *
+PyGrammar_FindDFA(grammar *g, int type)
+{
+    /* Massive speed-up */
+    const dfa *d = &amp;g-&gt;g_dfa[type - NT_OFFSET];
+    assert(d-&gt;d_type == type);
+    return d;
+}
+
+const char *
+PyGrammar_LabelRepr(label *lb)
+{
+    static char buf[100];
+
+    if (lb-&gt;lb_type == ENDMARKER)
+        return "EMPTY";
+    else if (ISNONTERMINAL(lb-&gt;lb_type)) {
+        if (lb-&gt;lb_str == NULL) {
+            PyOS_snprintf(buf, sizeof(buf), "NT%d", lb-&gt;lb_type);
+            return buf;
+        }
+        else
+            return lb-&gt;lb_str;
+    }
+    else if (lb-&gt;lb_type &lt; N_TOKENS) {
+        if (lb-&gt;lb_str == NULL)
+            return _PyParser_TokenNames[lb-&gt;lb_type];
+        else {
+            PyOS_snprintf(buf, sizeof(buf), "%.32s(%.32s)",
+                _PyParser_TokenNames[lb-&gt;lb_type], lb-&gt;lb_str);
+            return buf;
+        }
+    }
+    else {
+        Py_FatalError("invalid label");
+        return NULL;
+    }
+}
+      </pre>
+    </body>
+</html>

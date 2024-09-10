@@ -1,0 +1,90 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+        <meta charset="utf-8"/>
+	    <title>History.cpp</title>
+	    <link href="../../third-party/google-code-prettify/prettify-CppCoverage.css" type="text/css" rel="stylesheet" />
+	    <script type="text/javascript" src="../../third-party/google-code-prettify/prettify.js"></script>
+	</head>
+	<body onload="prettyPrint()">
+        <h4></h4>
+		<pre class="prettyprint lang-cpp linenums">
+ï»¿#include &lt;iostream&gt;
+using namespace std;
+#include "History.h"
+#include&lt;fstream&gt;
+
+//load history from file
+<span style = "background-color:#dfd">void  History::load_history() {
+	ifstream fin;
+	fin.open(file_name,ios::in);
+	if (!fin) {// if file does not exist,create a nenw file</span>
+<span style = "background-color:#fdd">		fin.close();
+		ofstream fout(file_name);
+		fout.close();
+		fin.open(file_name,ios::in);
+	}</span>
+<span style = "background-color:#dfd">	while (!fin.eof()) {
+		item temp;
+		fin &gt;&gt; temp.in_addr &gt;&gt; temp.out_addr &gt;&gt;temp.time&gt;&gt; temp.is_godmode;
+		history_list.push_back(temp);
+	}
+	history_list.pop_back();
+	fin.close();
+    is_loaded=true;
+}</span>
+
+<span style = "background-color:#dfd">void History::clear_history() {
+    if(!is_loaded)return ;
+	history_list.clear();
+	ofstream fout(file_name);
+	fout.close();
+}</span>
+
+<span style = "background-color:#dfd">void History::add_history(item temp) {
+	ofstream fout(file_name,ios::app);
+	fout &lt;&lt; temp.in_addr&lt;&lt;" " &lt;&lt; temp.out_addr &lt;&lt;" "</span>
+		&lt;&lt;temp.time&lt;&lt;" "&lt;&lt;temp.is_godmode&lt;&lt;endl;
+<span style = "background-color:#dfd">	fout.close();
+}</span>
+
+//just delete in the history list,not update file content
+//the write_history function is always called after a series of this operation
+<span style = "background-color:#dfd">bool History::delete_his_by_index(unsigned int i) {
+    if(!is_loaded)return false;
+    if (i &gt;=history_list.size())return false;
+	history_list.erase(history_list.begin() + i);
+    write_history();
+	return true;
+}</span>
+
+//I advise you to use this function only after call a series of delete_by_index
+<span style = "background-color:#dfd">void History::write_history() {
+     if(!is_loaded)return ;
+	ofstream fout(file_name);
+    for (unsigned int i = 0;i &lt; history_list.size();i++) {
+		fout &lt;&lt; history_list[i].in_addr&lt;&lt;" " &lt;&lt; history_list[i].out_addr&lt;&lt;" " </span>
+			&lt;&lt;history_list[i].time&lt;&lt;" "&lt;&lt; history_list[i].is_godmode &lt;&lt; endl;
+<span style = "background-color:#dfd">	}
+	fout.close();
+}</span>
+
+
+<span style = "background-color:#dfd">int History::size(){
+     if(!is_loaded)return 0;
+    return this-&gt;history_list.size();
+}</span>
+
+<span style = "background-color:#dfd">bool History::empty(){
+    if(!is_loaded)return true;
+    return this-&gt;history_list.empty();
+}
+item History::get(int i){
+    item temp;
+    if(!is_loaded)return temp;
+    return this-&gt;history_list[i];
+}</span>
+
+</pre>
+	</body>
+</html>

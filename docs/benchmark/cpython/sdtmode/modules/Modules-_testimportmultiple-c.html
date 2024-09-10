@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Modules/_testimportmultiple.c</title>
+        <link rel="stylesheet" type="text/css" href="../css/prettyprint.css"/>
+        <script type="text/javascript" src="../js/prettyprint.js"></script>
+    </head>
+    <body onload="prettyPrint()">
+		<pre class="prettyprint lang-cpp linenums">
+/*
+ * C extensions module to test importing multiple modules from one compiled
+ * file (issue16421). This file defines 3 modules (_testimportmodule,
+ * foo, bar), only the first one is called the same as the compiled file.
+ */
+#include&lt;Python.h&gt;
+
+static struct PyModuleDef _testimportmultiple = {
+    PyModuleDef_HEAD_INIT,
+    "_testimportmultiple",
+    "_testimportmultiple doc",
+    -1,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
+
+PyMODINIT_FUNC PyInit__testimportmultiple(void)
+{
+    return PyModule_Create(&amp;_testimportmultiple);
+}
+
+static struct PyModuleDef _foomodule = {
+    PyModuleDef_HEAD_INIT,
+    "_testimportmultiple_foo",
+    "_testimportmultiple_foo doc",
+    -1,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
+
+PyMODINIT_FUNC PyInit__testimportmultiple_foo(void)
+{
+    return PyModule_Create(&amp;_foomodule);
+}
+
+static struct PyModuleDef _barmodule = {
+    PyModuleDef_HEAD_INIT,
+    "_testimportmultiple_bar",
+    "_testimportmultiple_bar doc",
+    -1,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
+
+PyMODINIT_FUNC PyInit__testimportmultiple_bar(void){
+    return PyModule_Create(&amp;_barmodule);
+}
+
+      </pre>
+    </body>
+</html>
